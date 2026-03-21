@@ -1,4 +1,4 @@
-import { CheckCircle2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -7,11 +7,48 @@ import { StatLine } from "./stat-line"
 
 type ProcessedCardsPanelProps = {
   completedCards: ResolvedCard[]
+  fuzzyMatchCount: number
+  missingCardCount: number
 }
 
 export function ProcessedCardsPanel({
   completedCards,
+  fuzzyMatchCount,
+  missingCardCount,
 }: ProcessedCardsPanelProps) {
+  const fuzzyMatchLabel =
+    fuzzyMatchCount === 1 ? "1 fuzzy match" : `${fuzzyMatchCount} fuzzy matches`
+  const missingCardLabel =
+    missingCardCount === 1 ? "1 missing card" : `${missingCardCount} missing cards`
+
+  const statusBadges =
+    fuzzyMatchCount || missingCardCount
+      ? [
+          fuzzyMatchCount
+            ? {
+                icon: Search,
+                className: "bg-amber-200 text-amber-900",
+                label: fuzzyMatchLabel,
+              }
+            : null,
+          missingCardCount
+            ? {
+                icon: AlertTriangle,
+                className: "bg-red-500/20 text-red-100",
+                label: missingCardLabel,
+              }
+            : null,
+        ].filter(Boolean)
+      : completedCards.length
+        ? [
+            {
+              icon: CheckCircle2,
+              className: "bg-emerald-50 text-emerald-700",
+              label: "Ready",
+            },
+          ]
+        : []
+
   return (
     <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30 backdrop-blur sm:p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
@@ -23,10 +60,20 @@ export function ProcessedCardsPanel({
             This is the card context the future goldfish agent will use.
           </p>
         </div>
-        {completedCards.length ? (
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-            <CheckCircle2 className="size-3.5" />
-            {completedCards.length} ready
+        {statusBadges.length ? (
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            {statusBadges.map((statusBadge) => (
+              <div
+                key={statusBadge.label}
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium",
+                  statusBadge.className
+                )}
+              >
+                <statusBadge.icon className="size-3.5" />
+                {statusBadge.label}
+              </div>
+            ))}
           </div>
         ) : null}
       </div>
@@ -39,28 +86,23 @@ export function ProcessedCardsPanel({
               className="rounded-2xl border border-white/10 bg-black/20 p-4"
             >
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-stone-950 px-2.5 py-1 text-xs font-medium text-stone-50">
-                  {card.quantity}x
-                </span>
                 <h3 className="text-base font-semibold text-stone-100">
                   {card.name}
                 </h3>
-                <span
-                  className={cn(
-                    "rounded-full px-2.5 py-1 text-xs font-medium",
-                    card.source === "manual"
-                      ? "bg-amber-100 text-amber-800"
-                      : card.source === "fuzzy"
-                        ? "bg-sky-100 text-sky-800"
-                        : "bg-emerald-100 text-emerald-800"
-                  )}
-                >
-                  {card.source === "manual"
-                    ? "Manual text"
-                    : card.source === "fuzzy"
-                      ? "Accepted fuzzy match"
-                      : "Scryfall"}
-                </span>
+                {card.source !== "scryfall" ? (
+                  <span
+                    className={cn(
+                      "rounded-full px-2.5 py-1 text-xs font-medium",
+                      card.source === "manual"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-sky-100 text-sky-800"
+                    )}
+                  >
+                    {card.source === "manual"
+                      ? "Manual text"
+                      : "Accepted fuzzy match"}
+                  </span>
+                ) : null}
               </div>
 
               <div className="space-y-2 text-sm leading-6 text-stone-300">

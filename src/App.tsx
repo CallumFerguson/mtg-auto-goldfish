@@ -102,6 +102,10 @@ export function App() {
       ),
     [missingCards, resolvedCards]
   )
+  const fuzzyMatchCount = fuzzyMatches.length
+  const missingCardCount = missingCards.filter(
+    (card) => !card.manualText.trim()
+  ).length
 
   const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
     event
@@ -292,7 +296,11 @@ export function App() {
           />
 
           <section className="grid gap-6">
-            <ProcessedCardsPanel completedCards={completedCards} />
+            <ProcessedCardsPanel
+              completedCards={completedCards}
+              fuzzyMatchCount={fuzzyMatchCount}
+              missingCardCount={missingCardCount}
+            />
             <FuzzyMatchesPanel
               fuzzyMatches={fuzzyMatches}
               onAcceptMatch={acceptFuzzyMatch}
