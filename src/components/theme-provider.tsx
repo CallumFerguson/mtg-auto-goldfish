@@ -22,14 +22,10 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const [theme] = React.useState<Theme>("dark")
 
-  const setTheme = React.useCallback(
-    (_nextTheme: Theme) => {},
-    []
-  )
+  const setTheme = React.useCallback(() => {}, [])
 
   React.useEffect(() => {
     const root = document.documentElement
-    root.classList.remove("light")
     root.classList.add("dark")
   }, [])
 
