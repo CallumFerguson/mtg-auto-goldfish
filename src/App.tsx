@@ -24,13 +24,19 @@ type ResolvedCard = {
   power?: string
   toughness?: string
   loyalty?: string
-  source: "scryfall" | "manual"
+  source: "scryfall" | "fuzzy" | "manual"
 }
 
 type MissingCard = {
   name: string
   quantity: number
   manualText: string
+}
+
+type FuzzyMatch = {
+  name: string
+  quantity: number
+  suggestedCard: ScryfallCard
 }
 
 type ScryfallCardFace = {
@@ -62,6 +68,7 @@ const SAMPLE_DECKLIST = `1 Sol Ring
 1 Heroic Intervention`
 
 const SCRYFALL_COLLECTION_URL = "https://api.scryfall.com/cards/collection"
+const SCRYFALL_NAMED_URL = "https://api.scryfall.com/cards/named"
 
 function normalizeCardName(rawName: string) {
   return rawName
@@ -175,7 +182,11 @@ function toManaCost(card: ScryfallCard) {
     .join(" // ")
 }
 
-function toResolvedCard(entry: DeckEntry, card: ScryfallCard): ResolvedCard {
+function toResolvedCard(
+  entry: DeckEntry,
+  card: ScryfallCard,
+  source: ResolvedCard["source"] = "scryfall"
+): ResolvedCard {
   const firstFaceWithStats = card.card_faces?.find(
     (face) => face.power || face.toughness || face.loyalty
   )
@@ -189,7 +200,7 @@ function toResolvedCard(entry: DeckEntry, card: ScryfallCard): ResolvedCard {
     power: card.power ?? firstFaceWithStats?.power,
     toughness: card.toughness ?? firstFaceWithStats?.toughness,
     loyalty: card.loyalty ?? firstFaceWithStats?.loyalty,
-    source: "scryfall",
+    source,
   }
 }
 
@@ -203,15 +214,38 @@ function chunk<T>(items: T[], size: number) {
   return chunks
 }
 
+function delay(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+async function fetchNamedCardFuzzy(name: string) {
+  const response = await fetch(
+    `${SCRYFALL_NAMED_URL}?fuzzy=${encodeURIComponent(name)}`,
+    {
+      headers: {
+        Accept: "application/json;q=0.9,*/*;q=0.8",
+      },
+    }
+  )
+
+  if (!response.ok) {
+    return null
+  }
+
+  return (await response.json()) as ScryfallCard
+}
+
 async function fetchCardsByName(names: string[]) {
   const uniqueNames = Array.from(new Set(names))
   const results = new Map<string, ScryfallCard>()
+  const fuzzyMatches = new Map<string, ScryfallCard>()
   const notFound = new Set<string>()
 
   for (const nameChunk of chunk(uniqueNames, 75)) {
     const response = await fetch(SCRYFALL_COLLECTION_URL, {
       method: "POST",
       headers: {
+        Accept: "application/json;q=0.9,*/*;q=0.8",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -239,7 +273,24 @@ async function fetchCardsByName(names: string[]) {
     }
   }
 
-  return { results, notFound }
+  const unresolvedNames = uniqueNames.filter(
+    (name) => !results.has(name.toLowerCase())
+  )
+
+  for (const name of unresolvedNames) {
+    const fuzzyMatch = await fetchNamedCardFuzzy(name)
+
+    if (fuzzyMatch) {
+      fuzzyMatches.set(name.toLowerCase(), fuzzyMatch)
+    } else {
+      notFound.add(name.toLowerCase())
+    }
+
+    // Stay comfortably below Scryfall's published 10 req/sec guidance.
+    await delay(120)
+  }
+
+  return { results, fuzzyMatches, notFound }
 }
 
 function StatLine({
@@ -263,6 +314,7 @@ export function App() {
   const [commanderTwoName, setCommanderTwoName] = useState("")
   const [decklistText, setDecklistText] = useState(SAMPLE_DECKLIST)
   const [resolvedCards, setResolvedCards] = useState<ResolvedCard[]>([])
+  const [fuzzyMatches, setFuzzyMatches] = useState<FuzzyMatch[]>([])
   const [missingCards, setMissingCards] = useState<MissingCard[]>([])
   const [lookupError, setLookupError] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
@@ -400,6 +452,7 @@ export function App() {
     setIsProcessing(true)
     setLookupError("")
     setResolvedCards([])
+    setFuzzyMatches([])
     setMissingCards([])
 
     try {
@@ -408,11 +461,12 @@ export function App() {
         quantity: 1,
       }))
       const allEntries = [...commanderEntries, ...entries]
-      const { results, notFound } = await fetchCardsByName(
+      const { results, fuzzyMatches, notFound } = await fetchCardsByName(
         allEntries.map((entry) => entry.name)
       )
 
       const nextResolvedCards: ResolvedCard[] = []
+      const nextFuzzyMatches: FuzzyMatch[] = []
       const nextMissingCards: MissingCard[] = []
 
       for (const entry of allEntries) {
@@ -421,6 +475,17 @@ export function App() {
 
         if (card) {
           nextResolvedCards.push(toResolvedCard(entry, card))
+          continue
+        }
+
+        const fuzzyMatch = fuzzyMatches.get(lookupKey)
+
+        if (fuzzyMatch) {
+          nextFuzzyMatches.push({
+            name: entry.name,
+            quantity: entry.quantity,
+            suggestedCard: fuzzyMatch,
+          })
           continue
         }
 
@@ -434,6 +499,7 @@ export function App() {
       }
 
       setResolvedCards(nextResolvedCards)
+      setFuzzyMatches(nextFuzzyMatches)
       setMissingCards(nextMissingCards)
     } catch (error) {
       setLookupError(
@@ -452,6 +518,34 @@ export function App() {
         card.name === name ? { ...card, manualText } : card
       )
     )
+  }
+
+  function acceptFuzzyMatch(match: FuzzyMatch) {
+    setResolvedCards((currentCards) => [
+      ...currentCards,
+      toResolvedCard(
+        { name: match.name, quantity: match.quantity },
+        match.suggestedCard,
+        "fuzzy"
+      ),
+    ])
+    setFuzzyMatches((currentMatches) =>
+      currentMatches.filter((currentMatch) => currentMatch.name !== match.name)
+    )
+  }
+
+  function rejectFuzzyMatch(match: FuzzyMatch) {
+    setFuzzyMatches((currentMatches) =>
+      currentMatches.filter((currentMatch) => currentMatch.name !== match.name)
+    )
+    setMissingCards((currentCards) => [
+      ...currentCards,
+      {
+        name: match.name,
+        quantity: match.quantity,
+        manualText: "",
+      },
+    ])
   }
 
   return (
@@ -507,8 +601,10 @@ export function App() {
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                <div className="text-2xl font-semibold">{missingCards.length}</div>
-                <div className="text-sm text-stone-300">need manual text</div>
+                <div className="text-2xl font-semibold">
+                  {fuzzyMatches.length}
+                </div>
+                <div className="text-sm text-stone-300">need fuzzy review</div>
               </div>
             </div>
           </div>
@@ -651,11 +747,15 @@ export function App() {
                             "rounded-full px-2.5 py-1 text-xs font-medium",
                             card.source === "manual"
                               ? "bg-amber-100 text-amber-800"
+                              : card.source === "fuzzy"
+                                ? "bg-sky-100 text-sky-800"
                               : "bg-emerald-100 text-emerald-800"
                           )}
                         >
                           {card.source === "manual"
                             ? "Manual text"
+                            : card.source === "fuzzy"
+                              ? "Accepted fuzzy match"
                             : "Scryfall"}
                         </span>
                       </div>
@@ -690,6 +790,86 @@ export function App() {
               ) : (
                 <div className="rounded-[24px] border border-dashed border-white/10 bg-black/20 px-5 py-10 text-center text-sm leading-6 text-stone-500">
                   Process a deck to preview the final gameplay text package.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30 backdrop-blur sm:p-6">
+              <div className="mb-5 space-y-1">
+                <h2 className="text-2xl font-semibold tracking-tight">
+                  Review fuzzy matches
+                </h2>
+                <p className="text-sm leading-6 text-stone-400">
+                  Exact matches are included automatically. If Scryfall only
+                  finds a fuzzy match, confirm it here before it gets used.
+                </p>
+              </div>
+
+              {fuzzyMatches.length ? (
+                <div className="grid gap-4">
+                  {fuzzyMatches.map((match) => (
+                    <article
+                      key={match.name}
+                      className="rounded-2xl border border-amber-400/25 bg-amber-400/8 p-4"
+                    >
+                      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                        <span className="rounded-full bg-amber-400/20 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.18em] text-amber-100">
+                          Review
+                        </span>
+                        <span className="font-semibold text-stone-100">
+                          {match.quantity}x {match.name}
+                        </span>
+                        <span className="text-stone-400">suggested as</span>
+                        <span className="font-semibold text-amber-100">
+                          {match.suggestedCard.name}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2 text-sm leading-6 text-stone-300">
+                        {toManaCost(match.suggestedCard) ? (
+                          <p>
+                            <span className="font-medium text-stone-100">
+                              Mana cost:
+                            </span>{" "}
+                            {toManaCost(match.suggestedCard)}
+                          </p>
+                        ) : null}
+                        {toTypeLine(match.suggestedCard) ? (
+                          <p>
+                            <span className="font-medium text-stone-100">
+                              Type:
+                            </span>{" "}
+                            {toTypeLine(match.suggestedCard)}
+                          </p>
+                        ) : null}
+                        <p className="whitespace-pre-wrap">
+                          {toOracleText(match.suggestedCard)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <Button
+                          type="button"
+                          className="bg-emerald-600 text-white hover:bg-emerald-500"
+                          onClick={() => acceptFuzzyMatch(match)}
+                        >
+                          Accept match
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-white/10 bg-black/20 text-stone-100 hover:bg-black/35"
+                          onClick={() => rejectFuzzyMatch(match)}
+                        >
+                          Reject and enter manually
+                        </Button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-white/10 bg-black/20 px-5 py-10 text-center text-sm leading-6 text-stone-500">
+                  Any non-exact matches will show up here for review.
                 </div>
               )}
             </div>
