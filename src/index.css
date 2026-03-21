@@ -120,11 +120,52 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
   body {
     @apply bg-background text-foreground;
-    }
+  }
   html {
     @apply font-sans;
-    }
+  }
+}
+
+@layer utilities {
+  .app-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--color-muted-foreground) 55%, transparent)
+      color-mix(in oklch, var(--color-background) 70%, black 30%);
+  }
+
+  .app-scrollbar::-webkit-scrollbar {
+    width: 0.8rem;
+    height: 0.8rem;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-track {
+    background: color-mix(in oklch, var(--color-background) 78%, black 22%);
+    border-radius: 9999px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-muted-foreground) 82%, white 18%),
+      color-mix(in oklch, var(--color-muted-foreground) 90%, black 10%)
+    );
+    border: 3px solid
+      color-mix(in oklch, var(--color-background) 78%, black 22%);
+    border-radius: 9999px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--color-foreground) 38%, var(--color-muted-foreground) 62%),
+      color-mix(in oklch, var(--color-foreground) 30%, var(--color-muted-foreground) 70%)
+    );
+  }
+
+  .app-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

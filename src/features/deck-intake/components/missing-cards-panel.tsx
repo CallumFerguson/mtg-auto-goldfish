@@ -40,7 +40,7 @@ export function MissingCardsPanel({
                   onManualTextChange(card.name, event.target.value)
                 }
                 placeholder="Paste oracle text, type line notes, or any gameplay-relevant reminder text here."
-                className="min-h-32 rounded-2xl border border-amber-400/30 bg-black/25 px-4 py-3 text-sm leading-6 text-stone-100 placeholder:text-stone-500 outline-none transition focus:border-amber-400 focus:ring-4 focus:ring-amber-400/20"
+                className="app-scrollbar min-h-32 rounded-2xl border border-amber-400/30 bg-black/25 px-4 py-3 text-sm leading-6 text-stone-100 placeholder:text-stone-500 outline-none transition focus:border-amber-400 focus:ring-4 focus:ring-amber-400/20"
               />
             </label>
           ))}

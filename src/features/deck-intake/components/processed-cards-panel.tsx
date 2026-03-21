@@ -5,6 +5,13 @@ import { cn } from "@/lib/utils"
 import type { ResolvedCard } from "../types"
 import { StatLine } from "./stat-line"
 
+type StatusBadge = {
+  icon: typeof LoaderCircle
+  className: string
+  label: string
+  iconClassName?: string
+}
+
 type ProcessedCardsPanelProps = {
   completedCards: ResolvedCard[]
   fuzzyMatchCount: number
@@ -23,7 +30,7 @@ export function ProcessedCardsPanel({
   const missingCardLabel =
     missingCardCount === 1 ? "1 missing card" : `${missingCardCount} missing cards`
 
-  const statusBadges =
+  const statusBadges: StatusBadge[] =
     isProcessing
       ? [
           {
@@ -41,15 +48,15 @@ export function ProcessedCardsPanel({
                 className: "bg-amber-200 text-amber-900",
                 label: fuzzyMatchLabel,
               }
-            : null,
+            : undefined,
           missingCardCount
             ? {
                 icon: AlertTriangle,
                 className: "bg-red-500/20 text-red-100",
                 label: missingCardLabel,
               }
-            : null,
-        ].filter(Boolean)
+            : undefined,
+        ].filter((statusBadge): statusBadge is StatusBadge => Boolean(statusBadge))
       : completedCards.length
         ? [
             {
@@ -92,7 +99,7 @@ export function ProcessedCardsPanel({
       </div>
 
       {completedCards.length ? (
-        <div className="grid max-h-[42rem] gap-3 overflow-y-auto pr-1">
+        <div className="app-scrollbar grid max-h-[42rem] gap-3 overflow-y-auto pr-1">
           {completedCards.map((card) => (
             <article
               key={`${card.source}-${card.name}`}

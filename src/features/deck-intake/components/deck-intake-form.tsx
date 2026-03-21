@@ -86,7 +86,7 @@ export function DeckIntakeForm({
             value={decklistText}
             onChange={(event) => onDecklistChange(event.target.value)}
             placeholder={SAMPLE_DECKLIST}
-            className="min-h-80 rounded-[24px] border border-white/10 bg-black/30 px-4 py-3 font-mono text-sm leading-6 text-stone-100 placeholder:text-stone-500 outline-none transition focus:border-amber-400/70 focus:bg-black/40 focus:ring-4 focus:ring-amber-400/20"
+            className="app-scrollbar min-h-80 rounded-[24px] border border-white/10 bg-black/30 px-4 py-3 font-mono text-sm leading-6 text-stone-100 placeholder:text-stone-500 outline-none transition focus:border-amber-400/70 focus:bg-black/40 focus:ring-4 focus:ring-amber-400/20"
           />
         </label>
 
