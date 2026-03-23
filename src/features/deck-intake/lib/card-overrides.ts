@@ -151,3 +151,25 @@ export function clearCardOverride(name: string) {
   delete overrides[lookupKey]
   saveCardOverrides(overrides)
 }
+
+export function clearCardOverrides(names: string[]) {
+  const overrides = loadCardOverrides()
+  let hasChanges = false
+
+  for (const name of names) {
+    const lookupKey = normalizeName(name)
+
+    if (!lookupKey || !overrides[lookupKey]) {
+      continue
+    }
+
+    delete overrides[lookupKey]
+    hasChanges = true
+  }
+
+  if (!hasChanges) {
+    return
+  }
+
+  saveCardOverrides(overrides)
+}

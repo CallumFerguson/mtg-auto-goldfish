@@ -3,7 +3,8 @@ import { AlertTriangle, CheckCircle2, LoaderCircle, Search, X } from "lucide-rea
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-import type { ResolvedCard } from "../types"
+import { toManaCost, toOracleText, toTypeLine } from "../lib/scryfall"
+import type { FuzzyMatch, MissingCard, ResolvedCard } from "../types"
 import { StatLine } from "./stat-line"
 
 type StatusBadge = {
@@ -15,20 +16,34 @@ type StatusBadge = {
 
 type ProcessedCardsPanelProps = {
   completedCards: ResolvedCard[]
+  fuzzyMatches: FuzzyMatch[]
+  missingCards: MissingCard[]
   fuzzyMatchCount: number
   missingCardCount: number
   isProcessing: boolean
+  onAcceptFuzzyMatch: (match: FuzzyMatch) => void
+  onAcceptManualCard: (name: string) => void
   onCancelFuzzyMatch: (card: ResolvedCard) => void
-  onDeleteManualText: (card: ResolvedCard) => void
+  onClearOverrides: () => void
+  onEditManualCard: (name: string) => void
+  onRejectFuzzyMatch: (match: FuzzyMatch) => void
+  onManualTextChange: (name: string, manualText: string) => void
 }
 
 export function ProcessedCardsPanel({
   completedCards,
+  fuzzyMatches,
+  missingCards,
   fuzzyMatchCount,
   missingCardCount,
   isProcessing,
+  onAcceptFuzzyMatch,
+  onAcceptManualCard,
   onCancelFuzzyMatch,
-  onDeleteManualText,
+  onClearOverrides,
+  onEditManualCard,
+  onRejectFuzzyMatch,
+  onManualTextChange,
 }: ProcessedCardsPanelProps) {
   const fuzzyMatchLabel =
     fuzzyMatchCount === 1 ? "1 fuzzy match" : `${fuzzyMatchCount} fuzzy matches`
@@ -71,6 +86,24 @@ export function ProcessedCardsPanel({
             },
           ]
         : []
+  const commanderCards = completedCards.filter((card) => card.isCommander)
+  const acceptedFuzzyCards = completedCards.filter(
+    (card) => !card.isCommander && card.source === "fuzzy"
+  )
+  const pendingMissingCards = missingCards.filter((card) => !card.isAccepted)
+  const manualCards = completedCards.filter(
+    (card) => !card.isCommander && card.source === "manual"
+  )
+  const regularCards = completedCards.filter(
+    (card) =>
+      !card.isCommander &&
+      card.source !== "fuzzy" &&
+      card.source !== "manual"
+  )
+  const hasCurrentOverrides =
+    completedCards.some(
+      (card) => card.source === "fuzzy" || card.source === "manual"
+    ) || missingCards.some((card) => Boolean(card.rejectedSuggestion))
 
   return (
     <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30 backdrop-blur sm:p-6">
@@ -83,8 +116,18 @@ export function ProcessedCardsPanel({
             This is the card context the future goldfish agent will use.
           </p>
         </div>
-        {statusBadges.length ? (
+        {statusBadges.length || hasCurrentOverrides ? (
           <div className="flex flex-wrap items-start justify-end gap-2">
+            {hasCurrentOverrides ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="border-white/10 bg-black/20 text-stone-100 hover:bg-black/35"
+                onClick={onClearOverrides}
+              >
+                Clear fuzzy/manual overrides
+              </Button>
+            ) : null}
             {statusBadges.map((statusBadge) => (
               <div
                 key={statusBadge.label}
@@ -103,9 +146,9 @@ export function ProcessedCardsPanel({
         ) : null}
       </div>
 
-      {completedCards.length ? (
+      {completedCards.length || fuzzyMatches.length || missingCards.length ? (
         <div className="app-scrollbar grid max-h-[42rem] gap-3 overflow-y-auto pr-1">
-          {completedCards.map((card) => (
+          {commanderCards.map((card) => (
             <article
               key={`${card.source}-${card.name}`}
               className="rounded-2xl border border-white/10 bg-black/20 p-4"
@@ -114,43 +157,271 @@ export function ProcessedCardsPanel({
                 <h3 className="text-base font-semibold text-stone-100">
                   {card.name}
                 </h3>
-                {card.isCommander ? (
-                  <span className="rounded-full bg-violet-200 px-2.5 py-1 text-xs font-medium text-violet-900">
-                    Commander
+                <span className="rounded-full bg-violet-200 px-2.5 py-1 text-xs font-medium text-violet-900">
+                  Commander
+                </span>
+                {card.source === "fuzzy" ? (
+                  <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                    Accepted fuzzy match
                   </span>
                 ) : null}
-                {card.source !== "scryfall" ? (
-                  <span
-                    className={cn(
-                      "rounded-full px-2.5 py-1 text-xs font-medium",
-                      card.source === "manual"
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-sky-100 text-sky-800"
-                    )}
-                  >
-                    {card.source === "manual"
-                      ? "Manual text"
-                      : "Accepted fuzzy match"}
+                {card.source === "manual" ? (
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                    Manual entry
                   </span>
                 ) : null}
-                {card.source !== "scryfall" ? (
+                {card.source === "fuzzy" ? (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     className="ml-auto h-8 rounded-full px-3 text-stone-300 hover:bg-white/10 hover:text-stone-100"
-                    onClick={() =>
-                      card.source === "manual"
-                        ? onDeleteManualText(card)
-                        : onCancelFuzzyMatch(card)
-                    }
+                    onClick={() => onCancelFuzzyMatch(card)}
                   >
                     <X className="size-3.5" />
-                    {card.source === "manual"
-                      ? "Delete text"
-                      : "Cancel fuzzy match"}
+                    Cancel fuzzy match
                   </Button>
                 ) : null}
+                {card.source === "manual" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-8 rounded-full px-3 text-stone-300 hover:bg-white/10 hover:text-stone-100"
+                    onClick={() => onEditManualCard(card.requestedName)}
+                  >
+                    Edit
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="space-y-2 text-sm leading-6 text-stone-300">
+                {card.manaCost ? (
+                  <p>
+                    <span className="font-medium text-stone-100">
+                      Mana cost:
+                    </span>{" "}
+                    {card.manaCost}
+                  </p>
+                ) : null}
+                {card.typeLine ? (
+                  <p>
+                    <span className="font-medium text-stone-100">Type:</span>{" "}
+                    {card.typeLine}
+                  </p>
+                ) : null}
+                <StatLine
+                  power={card.power}
+                  toughness={card.toughness}
+                  loyalty={card.loyalty}
+                />
+                <p className="whitespace-pre-wrap">{card.oracleText}</p>
+              </div>
+            </article>
+          ))}
+
+          {fuzzyMatches.map((match) => (
+            <article
+              key={match.name}
+              className="rounded-2xl border border-amber-400/25 bg-amber-400/8 p-4"
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                <span className="rounded-full bg-amber-400/20 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.18em] text-amber-100">
+                  Fuzzy review
+                </span>
+                <span className="font-semibold text-stone-100">
+                  {match.quantity}x {match.name}
+                </span>
+                <span className="text-stone-400">suggested as</span>
+                <span className="font-semibold text-amber-100">
+                  {match.suggestedCard.name}
+                </span>
+              </div>
+
+              <div className="space-y-2 text-sm leading-6 text-stone-300">
+                {toManaCost(match.suggestedCard) ? (
+                  <p>
+                    <span className="font-medium text-stone-100">
+                      Mana cost:
+                    </span>{" "}
+                    {toManaCost(match.suggestedCard)}
+                  </p>
+                ) : null}
+                {toTypeLine(match.suggestedCard) ? (
+                  <p>
+                    <span className="font-medium text-stone-100">Type:</span>{" "}
+                    {toTypeLine(match.suggestedCard)}
+                  </p>
+                ) : null}
+                <p className="whitespace-pre-wrap">
+                  {toOracleText(match.suggestedCard)}
+                </p>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button
+                  type="button"
+                  className="bg-emerald-600 text-white hover:bg-emerald-500"
+                  onClick={() => onAcceptFuzzyMatch(match)}
+                >
+                  Accept match
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-white/10 bg-black/20 text-stone-100 hover:bg-black/35"
+                  onClick={() => onRejectFuzzyMatch(match)}
+                >
+                  Reject and enter manually
+                </Button>
+              </div>
+            </article>
+          ))}
+
+          {acceptedFuzzyCards.map((card) => (
+            <article
+              key={`${card.source}-${card.name}`}
+              className="rounded-2xl border border-white/10 bg-black/20 p-4"
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-stone-100">
+                  {card.name}
+                </h3>
+                <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                  Accepted fuzzy match
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-8 rounded-full px-3 text-stone-300 hover:bg-white/10 hover:text-stone-100"
+                  onClick={() => onCancelFuzzyMatch(card)}
+                >
+                  <X className="size-3.5" />
+                  Cancel fuzzy match
+                </Button>
+              </div>
+
+              <div className="space-y-2 text-sm leading-6 text-stone-300">
+                {card.manaCost ? (
+                  <p>
+                    <span className="font-medium text-stone-100">
+                      Mana cost:
+                    </span>{" "}
+                    {card.manaCost}
+                  </p>
+                ) : null}
+                {card.typeLine ? (
+                  <p>
+                    <span className="font-medium text-stone-100">Type:</span>{" "}
+                    {card.typeLine}
+                  </p>
+                ) : null}
+                <StatLine
+                  power={card.power}
+                  toughness={card.toughness}
+                  loyalty={card.loyalty}
+                />
+                <p className="whitespace-pre-wrap">{card.oracleText}</p>
+              </div>
+            </article>
+          ))}
+
+          {pendingMissingCards.map((card) => (
+            <label
+              key={card.name}
+              className="grid gap-2 rounded-2xl border border-red-400/20 bg-red-500/5 p-4"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-sm text-red-100">
+                <span className="rounded-full bg-red-500/20 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.18em]">
+                  Missing
+                </span>
+                <span className="font-semibold">
+                  {card.quantity}x {card.name}
+                </span>
+              </div>
+              <textarea
+                value={card.manualText}
+                onChange={(event) =>
+                  onManualTextChange(card.name, event.target.value)
+                }
+                placeholder="Paste oracle text, type line notes, or any gameplay-relevant reminder text here."
+                className="app-scrollbar min-h-32 rounded-2xl border border-red-400/25 bg-black/25 px-4 py-3 text-sm leading-6 text-stone-100 placeholder:text-stone-500 outline-none transition focus:border-red-400 focus:ring-4 focus:ring-red-400/20"
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  className="bg-emerald-600 text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!card.manualText.trim()}
+                  onClick={() => onAcceptManualCard(card.name)}
+                >
+                  Accept text
+                </Button>
+              </div>
+            </label>
+          ))}
+
+          {manualCards.map((card) => (
+            <article
+              key={`${card.source}-${card.name}`}
+              className="rounded-2xl border border-white/10 bg-black/20 p-4"
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-stone-100">
+                  {card.name}
+                </h3>
+                {card.source === "manual" ? (
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                    Manual entry
+                  </span>
+                ) : null}
+                {card.source === "manual" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-8 rounded-full px-3 text-stone-300 hover:bg-white/10 hover:text-stone-100"
+                    onClick={() => onEditManualCard(card.requestedName)}
+                  >
+                    Edit
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="space-y-2 text-sm leading-6 text-stone-300">
+                {card.manaCost ? (
+                  <p>
+                    <span className="font-medium text-stone-100">
+                      Mana cost:
+                    </span>{" "}
+                    {card.manaCost}
+                  </p>
+                ) : null}
+                {card.typeLine ? (
+                  <p>
+                    <span className="font-medium text-stone-100">Type:</span>{" "}
+                    {card.typeLine}
+                  </p>
+                ) : null}
+                <StatLine
+                  power={card.power}
+                  toughness={card.toughness}
+                  loyalty={card.loyalty}
+                />
+                <p className="whitespace-pre-wrap">{card.oracleText}</p>
+              </div>
+            </article>
+          ))}
+
+          {regularCards.map((card) => (
+            <article
+              key={`${card.source}-${card.name}`}
+              className="rounded-2xl border border-white/10 bg-black/20 p-4"
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-stone-100">
+                  {card.name}
+                </h3>
               </div>
 
               <div className="space-y-2 text-sm leading-6 text-stone-300">

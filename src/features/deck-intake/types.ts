@@ -22,6 +22,8 @@ export type MissingCard = {
   name: string
   quantity: number
   manualText: string
+  isAccepted: boolean
+  rejectedSuggestion?: ScryfallCard
 }
 
 export type ScryfallCardFace = {

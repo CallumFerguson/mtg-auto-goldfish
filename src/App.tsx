@@ -6,12 +6,11 @@ import {
   DEFAULT_DECKLIST,
 } from "@/features/deck-intake/constants"
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
-import { FuzzyMatchesPanel } from "@/features/deck-intake/components/fuzzy-matches-panel"
 import { HeroSection } from "@/features/deck-intake/components/hero-section"
-import { MissingCardsPanel } from "@/features/deck-intake/components/missing-cards-panel"
 import { ProcessedCardsPanel } from "@/features/deck-intake/components/processed-cards-panel"
 import {
   clearCardOverride,
+  clearCardOverrides,
   getCardOverride,
   saveAcceptedFuzzyMatch,
   saveManualCardText,
@@ -104,38 +103,25 @@ export function App() {
       const commanderLookup = new Set(
         commanders.map((name) => name.trim().toLowerCase())
       )
-
       const manualCards: ResolvedCard[] = missingCards
-        .filter((card) => card.manualText.trim())
+        .filter((card) => card.isAccepted && card.manualText.trim())
         .map((card) => ({
           requestedName: card.name,
           name: card.name,
           quantity: card.quantity,
           manaCost: "",
-          typeLine: "Manual entry",
+          typeLine: "",
           oracleText: card.manualText.trim(),
           source: "manual" as const,
           isCommander: commanderLookup.has(card.name.trim().toLowerCase()),
         }))
 
-      const allCompletedCards = manualCards.concat(resolvedCards)
-
-      return [
-        ...allCompletedCards.filter((card) => card.isCommander),
-        ...allCompletedCards.filter(
-          (card) => !card.isCommander && card.source !== "scryfall"
-        ),
-        ...allCompletedCards.filter(
-          (card) => !card.isCommander && card.source === "scryfall"
-        ),
-      ]
+      return [...resolvedCards, ...manualCards]
     },
     [commanders, missingCards, resolvedCards]
   )
   const fuzzyMatchCount = fuzzyMatches.length
-  const missingCardCount = missingCards.filter(
-    (card) => !card.manualText.trim()
-  ).length
+  const missingCardCount = missingCards.filter((card) => !card.isAccepted).length
 
   const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
     event
@@ -246,6 +232,7 @@ export function App() {
             name: entry.name,
             quantity: entry.quantity,
             manualText: savedOverride.manualText,
+            isAccepted: true,
           })
           continue
         }
@@ -276,6 +263,7 @@ export function App() {
             name: entry.name,
             quantity: entry.quantity,
             manualText: "",
+            isAccepted: false,
           })
         }
       }
@@ -313,12 +301,34 @@ export function App() {
   }, [])
 
   function updateManualText(name: string, manualText: string) {
-    saveManualCardText(name, manualText)
-
     setMissingCards((currentCards) =>
       currentCards.map((card) =>
         card.name === name ? { ...card, manualText } : card
       )
+    )
+  }
+
+  function acceptManualCard(name: string) {
+    setMissingCards((currentCards) =>
+      currentCards.map((card) => {
+        if (card.name !== name) {
+          return card
+        }
+
+        const manualText = card.manualText.trim()
+
+        if (!manualText) {
+          return card
+        }
+
+        saveManualCardText(name, manualText)
+
+        return {
+          ...card,
+          manualText,
+          isAccepted: true,
+        }
+      })
     )
   }
 
@@ -356,6 +366,8 @@ export function App() {
         name: match.name,
         quantity: match.quantity,
         manualText: "",
+        isAccepted: false,
+        rejectedSuggestion: match.suggestedCard,
       },
     ])
   }
@@ -390,19 +402,65 @@ export function App() {
     ])
   }
 
-  function deleteManualCardText(card: ResolvedCard) {
-    if (card.source !== "manual") {
-      return
-    }
-
-    saveManualCardText(card.requestedName, "")
+  function editManualCard(name: string) {
+    clearCardOverride(name)
 
     setMissingCards((currentCards) =>
-      currentCards.map((currentCard) =>
-        currentCard.name === card.requestedName
-          ? { ...currentCard, manualText: "" }
-          : currentCard
+      currentCards.map((card) =>
+        card.name === name ? { ...card, isAccepted: false } : card
       )
+    )
+  }
+
+  function clearCurrentOverrides() {
+    const currentOverrideNames = [
+      ...resolvedCards
+        .filter((card) => card.source === "fuzzy")
+        .map((card) => card.requestedName),
+      ...missingCards
+        .filter((card) => card.isAccepted || card.rejectedSuggestion)
+        .map((card) => card.name),
+    ]
+
+    clearCardOverrides(currentOverrideNames)
+
+    setResolvedCards((currentCards) =>
+      currentCards.filter((card) => card.source !== "fuzzy")
+    )
+    setFuzzyMatches((currentMatches) => [
+      ...currentMatches,
+      ...resolvedCards
+        .filter((card) => card.source === "fuzzy" && card.matchedCard)
+        .map((card) => ({
+          name: card.requestedName,
+          quantity: card.quantity,
+          suggestedCard: card.matchedCard!,
+        })),
+      ...missingCards
+        .filter((card) => card.rejectedSuggestion)
+        .map((card) => ({
+          name: card.name,
+          quantity: card.quantity,
+          suggestedCard: card.rejectedSuggestion!,
+        })),
+    ])
+    setMissingCards((currentCards) =>
+      currentCards.flatMap((card) => {
+        if (card.rejectedSuggestion) {
+          return []
+        }
+
+        if (card.isAccepted) {
+          return [
+            {
+              ...card,
+              isAccepted: false,
+            },
+          ]
+        }
+
+        return [card]
+      })
     )
   }
 
@@ -436,19 +494,17 @@ export function App() {
           <section className="grid gap-6">
             <ProcessedCardsPanel
               completedCards={completedCards}
+              fuzzyMatches={fuzzyMatches}
+              missingCards={missingCards}
               fuzzyMatchCount={fuzzyMatchCount}
               missingCardCount={missingCardCount}
               isProcessing={isProcessing}
+              onAcceptFuzzyMatch={acceptFuzzyMatch}
+              onAcceptManualCard={acceptManualCard}
               onCancelFuzzyMatch={cancelAcceptedFuzzyMatch}
-              onDeleteManualText={deleteManualCardText}
-            />
-            <FuzzyMatchesPanel
-              fuzzyMatches={fuzzyMatches}
-              onAcceptMatch={acceptFuzzyMatch}
-              onRejectMatch={rejectFuzzyMatch}
-            />
-            <MissingCardsPanel
-              missingCards={missingCards}
+              onClearOverrides={clearCurrentOverrides}
+              onEditManualCard={editManualCard}
+              onRejectFuzzyMatch={rejectFuzzyMatch}
               onManualTextChange={updateManualText}
             />
           </section>
