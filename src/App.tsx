@@ -493,6 +493,8 @@ export function App() {
 
           <section className="grid gap-6">
             <ProcessedCardsPanel
+              commanderOneName={commanderOne}
+              commanderTwoName={commanderTwo}
               completedCards={completedCards}
               fuzzyMatches={fuzzyMatches}
               missingCards={missingCards}
