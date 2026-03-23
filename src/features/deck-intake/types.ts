@@ -4,6 +4,7 @@ export type DeckEntry = {
 }
 
 export type ResolvedCard = {
+  requestedName: string
   name: string
   quantity: number
   manaCost: string
@@ -13,6 +14,8 @@ export type ResolvedCard = {
   toughness?: string
   loyalty?: string
   source: "scryfall" | "fuzzy" | "manual"
+  matchedCard?: ScryfallCard
+  isCommander?: boolean
 }
 
 export type MissingCard = {

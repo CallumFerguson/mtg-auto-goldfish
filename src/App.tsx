@@ -10,6 +10,12 @@ import { FuzzyMatchesPanel } from "@/features/deck-intake/components/fuzzy-match
 import { HeroSection } from "@/features/deck-intake/components/hero-section"
 import { MissingCardsPanel } from "@/features/deck-intake/components/missing-cards-panel"
 import { ProcessedCardsPanel } from "@/features/deck-intake/components/processed-cards-panel"
+import {
+  clearCardOverride,
+  getCardOverride,
+  saveAcceptedFuzzyMatch,
+  saveManualCardText,
+} from "@/features/deck-intake/lib/card-overrides"
 import { parseCommanderInput, parseDecklist } from "@/features/deck-intake/lib/deck-parser"
 import {
   fetchCardsByName,
@@ -93,20 +99,37 @@ export function App() {
     hasValidCommanderSetup && hasValidDeckCount && !isProcessing
 
   const completedCards = useMemo(
-    () =>
-      resolvedCards.concat(
-        missingCards
-          .filter((card) => card.manualText.trim())
-          .map((card) => ({
-            name: card.name,
-            quantity: card.quantity,
-            manaCost: "",
-            typeLine: "Manual entry",
-            oracleText: card.manualText.trim(),
-            source: "manual" as const,
-          }))
-      ),
-    [missingCards, resolvedCards]
+    () => {
+      const commanderLookup = new Set(
+        commanders.map((name) => name.trim().toLowerCase())
+      )
+
+      const manualCards: ResolvedCard[] = missingCards
+        .filter((card) => card.manualText.trim())
+        .map((card) => ({
+          requestedName: card.name,
+          name: card.name,
+          quantity: card.quantity,
+          manaCost: "",
+          typeLine: "Manual entry",
+          oracleText: card.manualText.trim(),
+          source: "manual" as const,
+          isCommander: commanderLookup.has(card.name.trim().toLowerCase()),
+        }))
+
+      const allCompletedCards = manualCards.concat(resolvedCards)
+
+      return [
+        ...allCompletedCards.filter((card) => card.isCommander),
+        ...allCompletedCards.filter(
+          (card) => !card.isCommander && card.source !== "scryfall"
+        ),
+        ...allCompletedCards.filter(
+          (card) => !card.isCommander && card.source === "scryfall"
+        ),
+      ]
+    },
+    [commanders, missingCards, resolvedCards]
   )
   const fuzzyMatchCount = fuzzyMatches.length
   const missingCardCount = missingCards.filter(
@@ -192,6 +215,9 @@ export function App() {
         delay(MIN_PROCESSING_DURATION_MS),
       ])
       const { results, fuzzyMatches, notFound } = lookupResponse
+      const commanderLookup = new Set(
+        cleanedCommanders.map((name) => name.trim().toLowerCase())
+      )
 
       const nextResolvedCards: ResolvedCard[] = []
       const nextFuzzyMatches: FuzzyMatch[] = []
@@ -199,10 +225,34 @@ export function App() {
 
       for (const entry of allEntries) {
         const lookupKey = entry.name.toLowerCase()
+        const savedOverride = getCardOverride(entry.name)
+
+        if (savedOverride?.kind === "fuzzy") {
+          nextResolvedCards.push(
+            {
+              ...toResolvedCard(entry, savedOverride.card, "fuzzy"),
+              isCommander: commanderLookup.has(lookupKey),
+            }
+          )
+          continue
+        }
+
+        if (savedOverride?.kind === "manual") {
+          nextMissingCards.push({
+            name: entry.name,
+            quantity: entry.quantity,
+            manualText: savedOverride.manualText,
+          })
+          continue
+        }
+
         const card = results.get(lookupKey)
 
         if (card) {
-          nextResolvedCards.push(toResolvedCard(entry, card))
+          nextResolvedCards.push({
+            ...toResolvedCard(entry, card),
+            isCommander: commanderLookup.has(lookupKey),
+          })
           continue
         }
 
@@ -241,6 +291,8 @@ export function App() {
   }
 
   function updateManualText(name: string, manualText: string) {
+    saveManualCardText(name, manualText)
+
     setMissingCards((currentCards) =>
       currentCards.map((card) =>
         card.name === name ? { ...card, manualText } : card
@@ -249,13 +301,21 @@ export function App() {
   }
 
   function acceptFuzzyMatch(match: FuzzyMatch) {
+    saveAcceptedFuzzyMatch(match.name, match.suggestedCard)
+
     setResolvedCards((currentCards) => [
       ...currentCards,
-      toResolvedCard(
-        { name: match.name, quantity: match.quantity },
-        match.suggestedCard,
-        "fuzzy"
-      ),
+      {
+        ...toResolvedCard(
+          { name: match.name, quantity: match.quantity },
+          match.suggestedCard,
+          "fuzzy"
+        ),
+        isCommander: commanders.some(
+          (commander) =>
+            commander.trim().toLowerCase() === match.name.trim().toLowerCase()
+        ),
+      },
     ])
     setFuzzyMatches((currentMatches) =>
       currentMatches.filter((currentMatch) => currentMatch.name !== match.name)
@@ -263,6 +323,8 @@ export function App() {
   }
 
   function rejectFuzzyMatch(match: FuzzyMatch) {
+    clearCardOverride(match.name)
+
     setFuzzyMatches((currentMatches) =>
       currentMatches.filter((currentMatch) => currentMatch.name !== match.name)
     )
@@ -274,6 +336,52 @@ export function App() {
         manualText: "",
       },
     ])
+  }
+
+  function cancelAcceptedFuzzyMatch(card: ResolvedCard) {
+    if (card.source !== "fuzzy" || !card.matchedCard) {
+      return
+    }
+
+    const matchedCard = card.matchedCard
+
+    clearCardOverride(card.requestedName)
+
+    setResolvedCards((currentCards) =>
+      currentCards.filter(
+        (currentCard) =>
+          !(
+            currentCard.source === "fuzzy" &&
+            currentCard.requestedName === card.requestedName
+          )
+      )
+    )
+    setFuzzyMatches((currentMatches) => [
+      ...currentMatches.filter(
+        (currentMatch) => currentMatch.name !== card.requestedName
+      ),
+      {
+        name: card.requestedName,
+        quantity: card.quantity,
+        suggestedCard: matchedCard,
+      },
+    ])
+  }
+
+  function deleteManualCardText(card: ResolvedCard) {
+    if (card.source !== "manual") {
+      return
+    }
+
+    saveManualCardText(card.requestedName, "")
+
+    setMissingCards((currentCards) =>
+      currentCards.map((currentCard) =>
+        currentCard.name === card.requestedName
+          ? { ...currentCard, manualText: "" }
+          : currentCard
+      )
+    )
   }
 
   return (
@@ -309,6 +417,8 @@ export function App() {
               fuzzyMatchCount={fuzzyMatchCount}
               missingCardCount={missingCardCount}
               isProcessing={isProcessing}
+              onCancelFuzzyMatch={cancelAcceptedFuzzyMatch}
+              onDeleteManualText={deleteManualCardText}
             />
             <FuzzyMatchesPanel
               fuzzyMatches={fuzzyMatches}

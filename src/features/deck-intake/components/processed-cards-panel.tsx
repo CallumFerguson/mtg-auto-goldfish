@@ -1,5 +1,6 @@
-import { AlertTriangle, CheckCircle2, LoaderCircle, Search } from "lucide-react"
+import { AlertTriangle, CheckCircle2, LoaderCircle, Search, X } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 import type { ResolvedCard } from "../types"
@@ -17,6 +18,8 @@ type ProcessedCardsPanelProps = {
   fuzzyMatchCount: number
   missingCardCount: number
   isProcessing: boolean
+  onCancelFuzzyMatch: (card: ResolvedCard) => void
+  onDeleteManualText: (card: ResolvedCard) => void
 }
 
 export function ProcessedCardsPanel({
@@ -24,6 +27,8 @@ export function ProcessedCardsPanel({
   fuzzyMatchCount,
   missingCardCount,
   isProcessing,
+  onCancelFuzzyMatch,
+  onDeleteManualText,
 }: ProcessedCardsPanelProps) {
   const fuzzyMatchLabel =
     fuzzyMatchCount === 1 ? "1 fuzzy match" : `${fuzzyMatchCount} fuzzy matches`
@@ -109,6 +114,11 @@ export function ProcessedCardsPanel({
                 <h3 className="text-base font-semibold text-stone-100">
                   {card.name}
                 </h3>
+                {card.isCommander ? (
+                  <span className="rounded-full bg-violet-200 px-2.5 py-1 text-xs font-medium text-violet-900">
+                    Commander
+                  </span>
+                ) : null}
                 {card.source !== "scryfall" ? (
                   <span
                     className={cn(
@@ -122,6 +132,24 @@ export function ProcessedCardsPanel({
                       ? "Manual text"
                       : "Accepted fuzzy match"}
                   </span>
+                ) : null}
+                {card.source !== "scryfall" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-8 rounded-full px-3 text-stone-300 hover:bg-white/10 hover:text-stone-100"
+                    onClick={() =>
+                      card.source === "manual"
+                        ? onDeleteManualText(card)
+                        : onCancelFuzzyMatch(card)
+                    }
+                  >
+                    <X className="size-3.5" />
+                    {card.source === "manual"
+                      ? "Delete text"
+                      : "Cancel fuzzy match"}
+                  </Button>
                 ) : null}
               </div>
 

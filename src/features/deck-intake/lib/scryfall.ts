@@ -79,6 +79,7 @@ export function toResolvedCard(
   )
 
   return {
+    requestedName: entry.name,
     name: card.name,
     quantity: entry.quantity,
     manaCost: toManaCost(card),
@@ -88,6 +89,7 @@ export function toResolvedCard(
     toughness: card.toughness ?? firstFaceWithStats?.toughness,
     loyalty: card.loyalty ?? firstFaceWithStats?.loyalty,
     source,
+    matchedCard: source === "fuzzy" ? card : undefined,
   }
 }
 
@@ -309,7 +311,6 @@ export async function fetchCardsByName(names: string[]) {
       notFound.add(lookupKey)
       setCachedNotFound(cache, lookupKey)
     }
-
     await delay(120)
   }
 
