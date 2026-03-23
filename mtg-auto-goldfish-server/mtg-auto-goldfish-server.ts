@@ -9,8 +9,36 @@ import { GameStore } from './game-store.js'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 3001
 const SERVER_NAME = 'mtg-auto-goldfish-server'
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]
 
 const gameStore = new GameStore()
+const gameCardSchema = z.object({
+  name: z.string().trim().min(1).describe('The card name.'),
+  cardText: z.string().trim().min(1).describe('The gameplay-relevant card text.'),
+})
+const createGameSchema = z
+  .object({
+    commanders: z
+      .array(gameCardSchema)
+      .min(1)
+      .max(2)
+      .describe('The commander or partner pair for this game.'),
+    deck: z.array(gameCardSchema).describe('The main-deck cards for this game.'),
+  })
+  .superRefine((value, context) => {
+    const expectedDeckSize = value.commanders.length === 1 ? 99 : 98
+
+    if (value.deck.length !== expectedDeckSize) {
+      context.addIssue({
+        code: 'custom',
+        path: ['deck'],
+        message: `Deck must contain exactly ${expectedDeckSize} cards when there ${value.commanders.length === 1 ? 'is 1 commander' : 'are 2 commanders'}.`,
+      })
+    }
+  })
 
 function createServer() {
   const server = new McpServer(
@@ -30,7 +58,7 @@ function createServer() {
     {
       title: 'Draw Card',
       description:
-        'Draw one or more cards from the preloaded library for an existing game ID that was created outside MCP.',
+        'Draw one or more cards from the stored library for an existing game ID that was created outside MCP.',
       inputSchema: {
         gameId: z
           .uuid()
@@ -41,7 +69,7 @@ function createServer() {
       },
       outputSchema: {
         gameId: z.uuid(),
-        cards: z.array(z.string()),
+        cards: z.array(gameCardSchema),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
@@ -82,7 +110,7 @@ function createServer() {
         content: [
           {
             type: 'text',
-            text: `Drew ${response.cards.length} card(s): ${response.cards.join(', ')}. ${response.cardsRemaining} cards remain in the library.`,
+            text: `Drew ${response.cards.length} card(s): ${response.cards.map(card => card.name).join(', ')}. ${response.cardsRemaining} cards remain in the library.`,
           },
         ],
         structuredContent: response,
@@ -97,6 +125,18 @@ async function main() {
   const host = process.env.HOST ?? DEFAULT_HOST
   const port = getPort(process.env.PORT)
   const app = createMcpExpressApp({ host })
+  const allowedOrigins = getAllowedOrigins(process.env.ALLOWED_ORIGINS)
+
+  app.use((req: Request, res: Response, next) => {
+    applyCors(req, res, allowedOrigins)
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).end()
+      return
+    }
+
+    next()
+  })
 
   app.get('/health', (_req: Request, res: Response) => {
     res.status(200).json({
@@ -105,10 +145,26 @@ async function main() {
     })
   })
 
-  app.post('/games', (_req: Request, res: Response) => {
-    const game = gameStore.createGame()
+  app.post('/games', (req: Request, res: Response) => {
+    const parsedRequest = createGameSchema.safeParse(req.body)
 
-    logInfo('new', `${shortId(game.gameId)} games=${game.totalGames}`)
+    if (!parsedRequest.success) {
+      res.status(400).json({
+        error: 'Invalid request body.',
+        details: parsedRequest.error.issues,
+      })
+      return
+    }
+
+    const game = gameStore.createGame(
+      parsedRequest.data.commanders,
+      parsedRequest.data.deck,
+    )
+
+    logInfo(
+      'new',
+      `${shortId(game.gameId)} commanders=${game.commanderCount} cards=${game.cardsRemaining} games=${game.totalGames}`,
+    )
 
     res.status(201).json(game)
   })
@@ -189,6 +245,33 @@ function getPort(rawPort: string | undefined) {
   }
 
   return parsedPort
+}
+
+function getAllowedOrigins(rawOrigins: string | undefined) {
+  if (!rawOrigins?.trim()) {
+    return DEFAULT_ALLOWED_ORIGINS
+  }
+
+  return rawOrigins
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean)
+}
+
+function applyCors(
+  req: Request,
+  res: Response,
+  allowedOrigins: readonly string[],
+) {
+  const requestOrigin = req.headers.origin
+
+  if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+    res.setHeader('Access-Control-Allow-Origin', requestOrigin)
+    res.setHeader('Vary', 'Origin')
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 }
 
 function shortId(gameId: string) {

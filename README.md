@@ -38,16 +38,43 @@ This repo now includes a standalone HTTP server for deck goldfishing experiments
 
 Current API surface:
 
-- `POST /games`: creates a new in-memory game and returns a `gameId`.
-- MCP tool `draw_card`: draws one or more cards from the preloaded deck for the supplied `gameId` and `count`.
+- `POST /games`: creates a new in-memory game from the provided commanders and deck and returns a `gameId`.
+- MCP tool `draw_card`: draws one or more cards from the stored deck for the supplied `gameId` and `count`.
 
 Behavior:
 
-- Each new game starts with the same preloaded deck.
+- Each new game uses only the commanders and deck submitted in its own `POST /games` request.
+- `POST /games` requires exactly `1` or `2` commanders.
+- `POST /games` requires exactly `99` deck cards when there is `1` commander, or exactly `98` deck cards when there are `2` commanders.
 - Games are stored in memory only.
 - Any game older than 1 hour is automatically removed.
 - The app is expected to create the game over HTTP first, then pass that `gameId` into the LLM prompt.
 - The MCP endpoint is served over HTTP at `/mcp`.
+
+### Create a game
+
+Request body:
+
+```json
+{
+  "commanders": [
+    {
+      "name": "Pantlaza, Sun-Favored",
+      "cardText": "Whenever Pantlaza, Sun-Favored or another Dinosaur enters..."
+    }
+  ],
+  "deck": [
+    {
+      "name": "Sol Ring",
+      "cardText": "{T}: Add {C}{C}."
+    },
+    {
+      "name": "Cultivate",
+      "cardText": "Search your library for up to two basic land cards..."
+    }
+  ]
+}
+```
 
 ### Run locally
 
@@ -89,7 +116,7 @@ Configure LM Studio to connect to the running HTTP MCP endpoint instead of spawn
 
 The intended flow is:
 
-1. The app calls `POST /games` and receives a `gameId`.
+1. The app calls `POST /games` with the commander array and the full deck list and receives a `gameId`.
 2. The app includes that `gameId` in the model prompt or tool context.
 3. The model can call `draw_card`, but it cannot create a game through MCP.
 

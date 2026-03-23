@@ -194,12 +194,15 @@ export function ProcessedCardsPanel({
               {card.typeLine}
             </p>
           ) : null}
+          <p className="whitespace-pre-wrap">
+            <span className="font-medium text-stone-100">Text:</span>{" "}
+            {card.oracleText}
+          </p>
           <StatLine
             power={card.power}
             toughness={card.toughness}
             loyalty={card.loyalty}
           />
-          <p className="whitespace-pre-wrap">{card.oracleText}</p>
         </div>
       </article>
     )

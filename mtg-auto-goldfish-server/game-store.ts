@@ -1,19 +1,23 @@
 import { randomUUID } from 'node:crypto'
 
-import { PRELOADED_DECK } from './preloaded-deck.js'
-
 const ONE_HOUR_IN_MS = 60 * 60 * 1000
+
+export type GameCard = {
+  name: string
+  cardText: string
+}
 
 type GameRecord = {
   id: string
   createdAt: number
-  library: string[]
+  commanders: GameCard[]
+  library: GameCard[]
 }
 
 export type DrawResult =
   | {
       ok: true
-      cards: string[]
+      cards: GameCard[]
       cardsRemaining: number
     }
   | {
@@ -32,14 +36,15 @@ export class GameStore {
     cleanupTimer.unref()
   }
 
-  createGame() {
+  createGame(commanders: readonly GameCard[], deck: readonly GameCard[]) {
     this.deleteExpiredGames()
 
     const id = randomUUID()
     const game: GameRecord = {
       id,
       createdAt: Date.now(),
-      library: shuffle(PRELOADED_DECK),
+      commanders: [...commanders],
+      library: shuffle(deck),
     }
 
     this.games.set(id, game)
@@ -47,6 +52,7 @@ export class GameStore {
     return {
       gameId: game.id,
       createdAt: new Date(game.createdAt).toISOString(),
+      commanderCount: game.commanders.length,
       cardsRemaining: game.library.length,
       totalGames: this.games.size,
     }
@@ -85,7 +91,7 @@ export class GameStore {
   }
 }
 
-function shuffle(cards: readonly string[]) {
+function shuffle(cards: readonly GameCard[]) {
   const shuffledCards = [...cards]
 
   for (let index = shuffledCards.length - 1; index > 0; index -= 1) {

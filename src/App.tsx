@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import type { ComponentProps } from "react"
 
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
+import { GoldfishSimulationPanel } from "@/features/deck-intake/components/goldfish-simulation-panel"
 import { HeroSection } from "@/features/deck-intake/components/hero-section"
 import { ProcessedCardsPanel } from "@/features/deck-intake/components/processed-cards-panel"
 import { ResetDeckModal } from "@/features/deck-intake/components/reset-deck-modal"
@@ -30,9 +31,37 @@ import type {
 } from "@/features/deck-intake/types"
 
 const MIN_PROCESSING_DURATION_MS = 250
+const GOLDFISH_SERVER_URL =
+  import.meta.env.VITE_GOLDFISH_SERVER_URL ?? "http://127.0.0.1:3001"
+
+type GameCardPayload = {
+  name: string
+  cardText: string
+}
 
 function delay(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+function toGameplayCardText(card: ResolvedCard) {
+  const sections = [
+    card.manaCost ? `Mana Cost: ${card.manaCost}` : "",
+    card.typeLine ? `Type: ${card.typeLine}` : "",
+    card.oracleText ? `Text: ${card.oracleText}` : "",
+    card.power && card.toughness
+      ? `Power/Toughness: ${card.power}/${card.toughness}`
+      : "",
+    card.loyalty ? `Loyalty: ${card.loyalty}` : "",
+  ].filter(Boolean)
+
+  return sections.join("\n")
+}
+
+function expandResolvedCard(card: ResolvedCard) {
+  return Array.from({ length: card.quantity }, () => ({
+    name: card.name,
+    cardText: toGameplayCardText(card),
+  }))
 }
 
 export function App() {
@@ -50,6 +79,9 @@ export function App() {
   const [lookupError, setLookupError] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const [isResetModalOpen, setIsResetModalOpen] = useState(false)
+  const [isStartingSimulation, setIsStartingSimulation] = useState(false)
+  const [simulationError, setSimulationError] = useState("")
+  const [gameId, setGameId] = useState("")
 
   const parsedDeck = useMemo(() => parseDecklist(decklistText), [decklistText])
   const totalCards = parsedDeck.reduce(
@@ -133,6 +165,47 @@ export function App() {
     commanderOneName === DEFAULT_DECK_INPUT.commanderOneName &&
     commanderTwoName === DEFAULT_DECK_INPUT.commanderTwoName &&
     decklistText === DEFAULT_DECK_INPUT.decklistText
+
+  const commanderCards = useMemo(
+    () => completedCards.filter((card) => card.isCommander),
+    [completedCards]
+  )
+  const deckCards = useMemo(
+    () => completedCards.filter((card) => !card.isCommander),
+    [completedCards]
+  )
+  const completedCardQuantity = useMemo(
+    () => completedCards.reduce((total, card) => total + card.quantity, 0),
+    [completedCards]
+  )
+  const commanderQuantity = useMemo(
+    () => commanderCards.reduce((total, card) => total + card.quantity, 0),
+    [commanderCards]
+  )
+  const deckQuantity = useMemo(
+    () => deckCards.reduce((total, card) => total + card.quantity, 0),
+    [deckCards]
+  )
+  const isDeckReady =
+    hasValidCommanderSetup &&
+    hasValidDeckCount &&
+    !isProcessing &&
+    fuzzyMatchCount === 0 &&
+    missingCardCount === 0 &&
+    commanderQuantity === commanderCount &&
+    deckQuantity === totalCards &&
+    completedCardQuantity === commanderCount + totalCards
+
+  const simulationPayload = useMemo(() => {
+    if (!isDeckReady) {
+      return null
+    }
+
+    return {
+      commanders: commanderCards.flatMap(expandResolvedCard),
+      deck: deckCards.flatMap(expandResolvedCard),
+    }
+  }, [commanderCards, deckCards, isDeckReady])
 
   const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
     event
@@ -293,6 +366,58 @@ export function App() {
     }
   }
 
+  async function startSimulation() {
+    if (!simulationPayload) {
+      return
+    }
+
+    setIsStartingSimulation(true)
+    setSimulationError("")
+
+    try {
+      const response = await fetch(`${GOLDFISH_SERVER_URL}/games`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(simulationPayload satisfies {
+          commanders: GameCardPayload[]
+          deck: GameCardPayload[]
+        }),
+      })
+
+      const payload = (await response.json()) as
+        | { gameId?: string; error?: string }
+        | { details?: Array<{ message?: string }> }
+
+      if (!response.ok) {
+        const detailMessage =
+          "details" in payload && Array.isArray(payload.details)
+            ? payload.details.map((detail) => detail.message).filter(Boolean).join(" ")
+            : ""
+        throw new Error(
+          detailMessage ||
+            ("error" in payload && payload.error) ||
+            "Failed to create a game."
+        )
+      }
+
+      if (!("gameId" in payload) || !payload.gameId) {
+        throw new Error("The server response did not include a game ID.")
+      }
+
+      setGameId(payload.gameId)
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error
+          ? error.message
+          : "Failed to create a game."
+      )
+    } finally {
+      setIsStartingSimulation(false)
+    }
+  }
+
   useEffect(() => {
     saveStoredDeckInput({
       commanderOneName,
@@ -319,6 +444,11 @@ export function App() {
     void processDeck({ skipMinProcessingDuration: true })
   }, [])
 
+  useEffect(() => {
+    setGameId("")
+    setSimulationError("")
+  }, [commanderOneName, commanderTwoName, decklistText])
+
   function requestResetToSampleDeck() {
     if (isSampleDeckActive) {
       return
@@ -337,6 +467,8 @@ export function App() {
     setLookupError("")
     setIsProcessing(false)
     setIsResetModalOpen(false)
+    setGameId("")
+    setSimulationError("")
   }
 
   function updateManualText(name: string, manualText: string) {
@@ -552,6 +684,14 @@ export function App() {
             />
           </section>
         </div>
+
+        <GoldfishSimulationPanel
+          canStart={isDeckReady}
+          isStarting={isStartingSimulation}
+          gameId={gameId}
+          errorMessage={simulationError}
+          onStart={startSimulation}
+        />
       </div>
 
       <ResetDeckModal
