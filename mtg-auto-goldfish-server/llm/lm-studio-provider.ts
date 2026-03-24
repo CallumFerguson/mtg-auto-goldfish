@@ -9,18 +9,26 @@ export const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234"
 
 export type PromptProcessorOptions = {
   baseUrl?: string
+
   apiToken?: string
+
   fetchImpl?: typeof fetch
+
   mcpServerUrl?: string
+
   mcpServerLabel?: string
 }
 
 type LmStudioModelsResponse = {
   models: Array<{
     type: "llm" | "embedding"
+
     key: string
+
     display_name: string
+
     size_bytes: number
+
     loaded_instances: Array<{
       id: string
     }>
@@ -30,14 +38,17 @@ type LmStudioModelsResponse = {
 type LmStudioOutputItem =
   | {
       type: "message"
+
       content: string
     }
   | {
       type: "reasoning"
+
       content: string
     }
   | {
       type: string
+
       content?: string
     }
 
@@ -47,6 +58,7 @@ type LmStudioChatResponse = {
 
 type LmStudioChatStreamEndEvent = {
   type: "chat.end"
+
   result?: LmStudioChatResponse
 }
 
@@ -56,18 +68,25 @@ export function createLmStudioPromptProcessor(
   const baseUrl = normalizeBaseUrl(
     options.baseUrl ?? LM_STUDIO_DEFAULT_BASE_URL
   )
+
   const apiToken = options.apiToken?.trim() || undefined
+
   const fetchImpl = options.fetchImpl ?? fetch
+
   const mcpServerUrl = options.mcpServerUrl?.trim()
+
   const mcpServerLabel = options.mcpServerLabel?.trim() || "mtg-auto-goldfish"
 
   return {
     async processPrompt(prompt: string): Promise<PromptProcessingResult> {
       const loadedModels = await listLoadedTextModels({
         apiToken,
+
         baseUrl,
+
         fetchImpl,
       })
+
       const selectedModel = pickLargestLoadedModel(loadedModels)
 
       if (!selectedModel) {
@@ -78,19 +97,29 @@ export function createLmStudioPromptProcessor(
 
       const chatResponse = await requestJson<LmStudioChatResponse>(
         fetchImpl,
+
         `${baseUrl}/api/v1/chat`,
+
         {
           method: "POST",
+
           headers: buildHeaders(apiToken),
+
           body: JSON.stringify({
             model: selectedModel.key,
+
             input: prompt,
+
             integrations: buildIntegrations({
               mcpServerLabel,
+
               mcpServerUrl,
             }),
+
             temperature: 0,
+
             stream: false,
+
             store: false,
           }),
         }
@@ -106,18 +135,24 @@ export function createLmStudioPromptProcessor(
 
       return {
         result,
+
         model: selectedModel,
       }
     },
+
     async processPromptStream(
       prompt: string,
+
       onEvent: (event: PromptStreamEvent) => void
     ): Promise<PromptProcessingResult> {
       const loadedModels = await listLoadedTextModels({
         apiToken,
+
         baseUrl,
+
         fetchImpl,
       })
+
       const selectedModel = pickLargestLoadedModel(loadedModels)
 
       if (!selectedModel) {
@@ -128,21 +163,30 @@ export function createLmStudioPromptProcessor(
 
       onEvent({
         type: "start",
+
         model: selectedModel,
       })
 
       const response = await fetchImpl(`${baseUrl}/api/v1/chat`, {
         method: "POST",
+
         headers: buildHeaders(apiToken),
+
         body: JSON.stringify({
           model: selectedModel.key,
+
           input: prompt,
+
           integrations: buildIntegrations({
             mcpServerLabel,
+
             mcpServerUrl,
           }),
+
           temperature: 0,
+
           stream: true,
+
           store: false,
         }),
       })
@@ -156,49 +200,115 @@ export function createLmStudioPromptProcessor(
       }
 
       let finalResult = ""
+
       let finalReasoning = ""
+      let pendingMessageStartPayload: Record<
+        string,
+        string | undefined
+      > | null = null
+      let pendingMessageWhitespace = ""
+      let hasFlushedMessageBlock = false
 
       await consumeSseStream(response, (eventName, payload) => {
         switch (eventName) {
           case "chat.start":
+
           case "model_load.start":
+
           case "model_load.end":
+
           case "prompt_processing.start":
+
           case "prompt_processing.end":
+
           case "reasoning.start":
+
           case "reasoning.end":
-          case "message.start":
-          case "message.end":
             onEvent({
               type: "status",
+
               event: eventName,
+
               modelInstanceId: asStringRecord(payload).model_instance_id,
             })
+
+            break
+
+          case "message.start":
+            pendingMessageStartPayload = asStringRecord(payload)
+            pendingMessageWhitespace = ""
+            hasFlushedMessageBlock = false
+            break
+          case "message.end":
+            if (hasFlushedMessageBlock) {
+              onEvent({
+                type: "status",
+                event: eventName,
+                modelInstanceId: asStringRecord(payload).model_instance_id,
+              })
+            }
+            pendingMessageStartPayload = null
+            pendingMessageWhitespace = ""
+            hasFlushedMessageBlock = false
             break
           case "model_load.progress":
+
           case "prompt_processing.progress":
             onEvent({
               type: "status",
+
               event: eventName,
+
               progress: asNumberRecord(payload).progress,
+
               modelInstanceId: asStringRecord(payload).model_instance_id,
             })
+
             break
+
           case "reasoning.delta": {
             const content = asContentRecord(payload).content
 
             if (typeof content === "string") {
               onEvent({
                 type: "reasoning",
+
                 delta: content,
               })
             }
+
             break
           }
+
           case "message.delta": {
             const content = asContentRecord(payload).content
 
             if (typeof content === "string") {
+              if (!hasFlushedMessageBlock) {
+                if (!content.trim()) {
+                  pendingMessageWhitespace += content
+                  break
+                }
+
+                onEvent({
+                  type: "status",
+                  event: "message.start",
+                  modelInstanceId:
+                    pendingMessageStartPayload?.model_instance_id ??
+                    asStringRecord(payload).model_instance_id,
+                })
+
+                if (pendingMessageWhitespace) {
+                  onEvent({
+                    type: "message",
+                    delta: pendingMessageWhitespace,
+                  })
+                  pendingMessageWhitespace = ""
+                }
+
+                hasFlushedMessageBlock = true
+              }
+
               onEvent({
                 type: "message",
                 delta: content,
@@ -206,65 +316,97 @@ export function createLmStudioPromptProcessor(
             }
             break
           }
+
           case "tool_call.start":
             onEvent({
               type: "tool",
+
               event: eventName,
+
               tool: extractToolName(payload),
+
               provider: extractProviderLabel(payload),
             })
+
             break
+
           case "tool_call.arguments":
             onEvent({
               type: "tool",
+
               event: eventName,
+
               tool: extractToolName(payload),
+
               provider: extractProviderLabel(payload),
+
               argumentsText: safeJsonStringify(
                 asObjectRecord(payload).arguments
               ),
             })
+
             break
+
           case "tool_call.success":
             onEvent({
               type: "tool",
+
               event: eventName,
+
               tool: extractToolName(payload),
+
               provider: extractProviderLabel(payload),
+
               argumentsText: safeJsonStringify(
                 asObjectRecord(payload).arguments
               ),
+
               output: asStringRecord(payload).output,
             })
+
             break
+
           case "tool_call.failure":
             onEvent({
               type: "tool",
+
               event: eventName,
+
               error:
                 asStringRecord(payload).reason ??
                 asStringRecord(asObjectRecord(payload).error).message,
             })
+
             break
+
           case "error":
             onEvent({
               type: "error",
+
               error:
                 asStringRecord(asObjectRecord(payload).error).message ??
                 "LM Studio reported a streaming error.",
             })
+
             break
+
           case "chat.end": {
             const endPayload = payload as LmStudioChatStreamEndEvent
+
             finalResult = extractMessageText(endPayload.result ?? {})
+
             finalReasoning = extractReasoningText(endPayload.result ?? {})
+
             break
           }
+
           default:
             onEvent({
               type: "status",
+
               event: eventName,
             })
+
             break
         }
       })
@@ -277,13 +419,17 @@ export function createLmStudioPromptProcessor(
 
       const result = {
         result: finalResult,
+
         model: selectedModel,
       }
 
       onEvent({
         type: "done",
+
         result: finalResult,
+
         reasoning: finalReasoning,
+
         model: selectedModel,
       })
 
@@ -310,6 +456,7 @@ function buildHeaders(apiToken: string | undefined) {
 
 function buildIntegrations(options: {
   mcpServerLabel: string
+
   mcpServerUrl?: string
 }) {
   if (!options.mcpServerUrl) {
@@ -319,7 +466,9 @@ function buildIntegrations(options: {
   return [
     {
       type: "ephemeral_mcp" as const,
+
       server_label: options.mcpServerLabel,
+
       server_url: options.mcpServerUrl,
     },
   ]
@@ -327,26 +476,36 @@ function buildIntegrations(options: {
 
 async function listLoadedTextModels(options: {
   baseUrl: string
+
   apiToken?: string
+
   fetchImpl: typeof fetch
 }): Promise<LoadedTextModel[]> {
   const response = await requestJson<LmStudioModelsResponse>(
     options.fetchImpl,
+
     `${options.baseUrl}/api/v1/models`,
+
     {
       method: "GET",
+
       headers: buildHeaders(options.apiToken),
     }
   )
 
   return response.models
+
     .filter(
       (model) => model.type === "llm" && model.loaded_instances.length > 0
     )
+
     .map((model) => ({
       key: model.key,
+
       displayName: model.display_name,
+
       sizeBytes: model.size_bytes,
+
       instanceIds: model.loaded_instances.map((instance) => instance.id),
     }))
 }
@@ -357,17 +516,25 @@ function pickLargestLoadedModel(models: LoadedTextModel[]) {
 
 function extractMessageText(response: LmStudioChatResponse) {
   return (response.output ?? [])
+
     .filter(isMessageOutput)
+
     .map((item) => item.content.trim())
+
     .filter(Boolean)
+
     .join("\n\n")
 }
 
 function extractReasoningText(response: LmStudioChatResponse) {
   return (response.output ?? [])
+
     .filter(isReasoningOutput)
+
     .map((item) => item.content.trim())
+
     .filter(Boolean)
+
     .join("\n\n")
 }
 
@@ -385,22 +552,27 @@ function isReasoningOutput(
 
 async function consumeSseStream(
   response: Response,
+
   onEvent: (eventName: string, payload: unknown) => void
 ) {
   const decoder = new TextDecoder()
+
   let buffer = ""
 
   for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
     buffer += decoder.decode(chunk, { stream: true })
+
     buffer = buffer.replace(/\r\n/g, "\n")
 
     let boundaryIndex = buffer.indexOf("\n\n")
 
     while (boundaryIndex >= 0) {
       const rawEvent = buffer.slice(0, boundaryIndex)
+
       buffer = buffer.slice(boundaryIndex + 2)
 
       emitSseEvent(rawEvent, onEvent)
+
       boundaryIndex = buffer.indexOf("\n\n")
     }
   }
@@ -414,19 +586,25 @@ async function consumeSseStream(
 
 function emitSseEvent(
   rawEvent: string,
+
   onEvent: (eventName: string, payload: unknown) => void
 ) {
   const lines = rawEvent
+
     .split("\n")
+
     .map((line) => line.trimEnd())
+
     .filter(Boolean)
 
   let eventName = "message"
+
   const dataLines: string[] = []
 
   for (const line of lines) {
     if (line.startsWith("event:")) {
       eventName = line.slice("event:".length).trim()
+
       continue
     }
 
@@ -440,6 +618,7 @@ function emitSseEvent(
   }
 
   const payloadText = dataLines.join("\n")
+
   const payload = JSON.parse(payloadText) as unknown
 
   onEvent(eventName, payload)
@@ -481,6 +660,7 @@ function extractProviderLabel(value: unknown) {
 
 function extractToolName(value: unknown) {
   const payload = asObjectRecord(value)
+
   const functionRecord = asObjectRecord(payload.function)
 
   if (typeof payload.tool === "string") {
@@ -516,7 +696,9 @@ function safeJsonStringify(value: unknown) {
 
 async function requestJson<T>(
   fetchImpl: typeof fetch,
+
   input: string,
+
   init: RequestInit
 ): Promise<T> {
   const response = await fetchImpl(input, init)
@@ -534,6 +716,7 @@ async function buildErrorMessage(response: Response) {
   if (contentType.includes("application/json")) {
     const payload = (await response.json()) as {
       error?: string
+
       message?: string
     }
 
