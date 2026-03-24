@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import type { ComponentProps } from "react"
+import type { ComponentProps, Dispatch, SetStateAction } from "react"
 
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
 import { GoldfishSimulationPanel } from "@/features/deck-intake/components/goldfish-simulation-panel"
@@ -13,7 +13,10 @@ import {
   saveAcceptedFuzzyMatch,
   saveManualCardText,
 } from "@/features/deck-intake/lib/card-overrides"
-import { parseCommanderInput, parseDecklist } from "@/features/deck-intake/lib/deck-parser"
+import {
+  parseCommanderInput,
+  parseDecklist,
+} from "@/features/deck-intake/lib/deck-parser"
 import {
   DEFAULT_DECK_INPUT,
   loadStoredDeckInput,
@@ -39,6 +42,47 @@ type GameCardPayload = {
   cardText: string
 }
 
+type PromptStreamEvent =
+  | {
+      type: "start"
+      model: {
+        displayName: string
+        key: string
+      }
+    }
+  | {
+      type: "status"
+      event: string
+      progress?: number
+      modelInstanceId?: string
+    }
+  | {
+      type: "reasoning"
+      delta: string
+    }
+  | {
+      type: "message"
+      delta: string
+    }
+  | {
+      type: "tool"
+      event: string
+      tool?: string
+      provider?: string
+      argumentsText?: string
+      output?: string
+      error?: string
+    }
+  | {
+      type: "error"
+      error: string
+    }
+  | {
+      type: "done"
+      result: string
+      reasoning: string
+    }
+
 function delay(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
@@ -62,6 +106,133 @@ function expandResolvedCard(card: ResolvedCard) {
     name: card.name,
     cardText: toGameplayCardText(card),
   }))
+}
+
+function appendSimulationLine(
+  setSimulationResult: Dispatch<SetStateAction<string>>,
+  line: string
+) {
+  setSimulationResult((current) => `${current}${line}\n`)
+}
+
+function appendSimulationText(
+  setSimulationResult: Dispatch<SetStateAction<string>>,
+  text: string
+) {
+  setSimulationResult((current) => `${current}${text}`)
+}
+
+function formatProgress(progress: number | undefined) {
+  if (typeof progress !== "number" || Number.isNaN(progress)) {
+    return ""
+  }
+
+  return ` ${Math.round(progress * 100)}%`
+}
+
+function handlePromptStreamEvent(
+  event: PromptStreamEvent,
+  setSimulationResult: Dispatch<SetStateAction<string>>
+) {
+  switch (event.type) {
+    case "start":
+      appendSimulationLine(
+        setSimulationResult,
+        `[model] ${event.model.displayName} (${event.model.key})`
+      )
+      appendSimulationLine(setSimulationResult, "")
+      return
+    case "status":
+      appendSimulationLine(
+        setSimulationResult,
+        `[${event.event}]${formatProgress(event.progress)}`
+      )
+      return
+    case "reasoning":
+      appendSimulationText(setSimulationResult, event.delta)
+      return
+    case "message":
+      appendSimulationText(setSimulationResult, event.delta)
+      return
+    case "tool": {
+      const label = event.tool ? `${event.event} ${event.tool}` : event.event
+      appendSimulationLine(setSimulationResult, "")
+      appendSimulationLine(setSimulationResult, `[${label}]`)
+
+      if (event.provider) {
+        appendSimulationLine(setSimulationResult, `provider: ${event.provider}`)
+      }
+
+      if (event.argumentsText) {
+        appendSimulationLine(
+          setSimulationResult,
+          `arguments: ${event.argumentsText}`
+        )
+      }
+
+      if (event.output) {
+        appendSimulationLine(setSimulationResult, `output: ${event.output}`)
+      }
+
+      if (event.error) {
+        appendSimulationLine(setSimulationResult, `error: ${event.error}`)
+      }
+
+      appendSimulationLine(setSimulationResult, "")
+      return
+    }
+    case "error":
+      appendSimulationLine(setSimulationResult, "")
+      appendSimulationLine(setSimulationResult, `[error] ${event.error}`)
+      return
+    case "done":
+      appendSimulationLine(setSimulationResult, "")
+      appendSimulationLine(setSimulationResult, "[chat.end]")
+      return
+  }
+}
+
+async function readPromptStream(
+  response: Response,
+  setSimulationResult: Dispatch<SetStateAction<string>>
+) {
+  if (!response.body) {
+    throw new Error("The server response did not include a stream body.")
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+
+      if (!trimmedLine) {
+        continue
+      }
+
+      const event = JSON.parse(trimmedLine) as PromptStreamEvent
+      handlePromptStreamEvent(event, setSimulationResult)
+    }
+  }
+
+  const trailing = `${buffer}${decoder.decode()}`.trim()
+
+  if (trailing) {
+    const event = JSON.parse(trailing) as PromptStreamEvent
+    handlePromptStreamEvent(event, setSimulationResult)
+  }
 }
 
 export function App() {
@@ -138,30 +309,29 @@ export function App() {
   const canProcess =
     hasValidCommanderSetup && hasValidDeckCount && !isProcessing
 
-  const completedCards = useMemo(
-    () => {
-      const commanderLookup = new Set(
-        commanders.map((name) => name.trim().toLowerCase())
-      )
-      const manualCards: ResolvedCard[] = missingCards
-        .filter((card) => card.isAccepted && card.manualText.trim())
-        .map((card) => ({
-          requestedName: card.name,
-          name: card.name,
-          quantity: card.quantity,
-          manaCost: "",
-          typeLine: "",
-          oracleText: card.manualText.trim(),
-          source: "manual" as const,
-          isCommander: commanderLookup.has(card.name.trim().toLowerCase()),
-        }))
+  const completedCards = useMemo(() => {
+    const commanderLookup = new Set(
+      commanders.map((name) => name.trim().toLowerCase())
+    )
+    const manualCards: ResolvedCard[] = missingCards
+      .filter((card) => card.isAccepted && card.manualText.trim())
+      .map((card) => ({
+        requestedName: card.name,
+        name: card.name,
+        quantity: card.quantity,
+        manaCost: "",
+        typeLine: "",
+        oracleText: card.manualText.trim(),
+        source: "manual" as const,
+        isCommander: commanderLookup.has(card.name.trim().toLowerCase()),
+      }))
 
-      return [...resolvedCards, ...manualCards]
-    },
-    [commanders, missingCards, resolvedCards]
-  )
+    return [...resolvedCards, ...manualCards]
+  }, [commanders, missingCards, resolvedCards])
   const fuzzyMatchCount = fuzzyMatches.length
-  const missingCardCount = missingCards.filter((card) => !card.isAccepted).length
+  const missingCardCount = missingCards.filter(
+    (card) => !card.isAccepted
+  ).length
   const isSampleDeckActive =
     commanderOneName === DEFAULT_DECK_INPUT.commanderOneName &&
     commanderTwoName === DEFAULT_DECK_INPUT.commanderTwoName &&
@@ -215,7 +385,9 @@ export function App() {
     await processDeck()
   }
 
-  async function processDeck(options?: { skipMinProcessingDuration?: boolean }) {
+  async function processDeck(options?: {
+    skipMinProcessingDuration?: boolean
+  }) {
     const cleanedCommanders = [commanderOneInput, commanderTwoInput]
       .map((commander) => commander.name)
       .filter(Boolean)
@@ -285,7 +457,9 @@ export function App() {
         quantity: 1,
       }))
       const allEntries = [...commanderEntries, ...entries]
-      const lookupPromise = fetchCardsByName(allEntries.map((entry) => entry.name))
+      const lookupPromise = fetchCardsByName(
+        allEntries.map((entry) => entry.name)
+      )
       const [lookupResponse] = options?.skipMinProcessingDuration
         ? [await lookupPromise]
         : await Promise.all([lookupPromise, delay(MIN_PROCESSING_DURATION_MS)])
@@ -303,12 +477,10 @@ export function App() {
         const savedOverride = getCardOverride(entry.name)
 
         if (savedOverride?.kind === "fuzzy") {
-          nextResolvedCards.push(
-            {
-              ...toResolvedCard(entry, savedOverride.card, "fuzzy"),
-              isCommander: commanderLookup.has(lookupKey),
-            }
-          )
+          nextResolvedCards.push({
+            ...toResolvedCard(entry, savedOverride.card, "fuzzy"),
+            isCommander: commanderLookup.has(lookupKey),
+          })
           continue
         }
 
@@ -383,10 +555,12 @@ export function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(simulationPayload satisfies {
-          commanders: GameCardPayload[]
-          deck: GameCardPayload[]
-        }),
+        body: JSON.stringify(
+          simulationPayload satisfies {
+            commanders: GameCardPayload[]
+            deck: GameCardPayload[]
+          }
+        ),
       })
 
       const payload = (await response.json()) as
@@ -396,7 +570,10 @@ export function App() {
       if (!response.ok) {
         const detailMessage =
           "details" in payload && Array.isArray(payload.details)
-            ? payload.details.map((detail) => detail.message).filter(Boolean).join(" ")
+            ? payload.details
+                .map((detail) => detail.message)
+                .filter(Boolean)
+                .join(" ")
             : ""
         throw new Error(
           detailMessage ||
@@ -413,21 +590,23 @@ export function App() {
 
       setGameId(nextGameId)
 
-      const promptResponse = await fetch(`${GOLDFISH_SERVER_URL}/process-prompt`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: `draw 7 cards with game id ${nextGameId}`,
-        }),
-      })
-
-      const promptPayload = (await promptResponse.json()) as
-        | { result?: string; error?: string }
-        | { details?: Array<{ message?: string }> }
+      const promptResponse = await fetch(
+        `${GOLDFISH_SERVER_URL}/process-prompt`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: `draw 7 cards with game id ${nextGameId}`,
+          }),
+        }
+      )
 
       if (!promptResponse.ok) {
+        const promptPayload = (await promptResponse.json()) as
+          | { result?: string; error?: string }
+          | { details?: Array<{ message?: string }> }
         const detailMessage =
           "details" in promptPayload && Array.isArray(promptPayload.details)
             ? promptPayload.details
@@ -442,21 +621,10 @@ export function App() {
         )
       }
 
-      if (
-        !("result" in promptPayload) ||
-        typeof promptPayload.result !== "string"
-      ) {
-        throw new Error(
-          "The server response did not include a simulation result."
-        )
-      }
-
-      setSimulationResult(promptPayload.result)
+      await readPromptStream(promptResponse, setSimulationResult)
     } catch (error) {
       setSimulationError(
-        error instanceof Error
-          ? error.message
-          : "Failed to create a game."
+        error instanceof Error ? error.message : "Failed to create a game."
       )
     } finally {
       setIsStartingSimulation(false)
@@ -480,7 +648,9 @@ export function App() {
       .map((commander) => commander.name)
       .filter(Boolean)
     const entries = parseDecklist(decklistText)
-    const allNames = cleanedCommanders.concat(entries.map((entry) => entry.name))
+    const allNames = cleanedCommanders.concat(
+      entries.map((entry) => entry.name)
+    )
 
     if (!allNames.length || !areCardsAvailableInCache(allNames)) {
       return

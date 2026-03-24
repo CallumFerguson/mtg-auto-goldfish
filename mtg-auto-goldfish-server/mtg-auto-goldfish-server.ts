@@ -1,27 +1,31 @@
-import type { Request, Response } from 'express'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { z } from 'zod/v4'
+import type { Request, Response } from "express"
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
+import { z } from "zod/v4"
 
-import { GameStore } from './game-store.js'
-import { createPromptProcessor } from './llm/index.js'
+import { GameStore } from "./game-store.js"
+import { createPromptProcessor } from "./llm/index.js"
 
-const DEFAULT_HOST = '127.0.0.1'
+const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_PORT = 3001
-const SERVER_NAME = 'mtg-auto-goldfish-server'
+const SERVER_NAME = "mtg-auto-goldfish-server"
 const DEFAULT_ALLOWED_ORIGINS = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
 ]
 
 const gameStore = new GameStore()
 const gameCardSchema = z.object({
-  name: z.string().trim().min(1).describe('The card name.'),
-  cardText: z.string().trim().min(1).describe('The gameplay-relevant card text.'),
+  name: z.string().trim().min(1).describe("The card name."),
+  cardText: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The gameplay-relevant card text."),
 })
 const processPromptSchema = z.object({
-  prompt: z.string().trim().min(1).describe('The prompt to run locally.'),
+  prompt: z.string().trim().min(1).describe("The prompt to run locally."),
 })
 const createGameSchema = z
   .object({
@@ -29,17 +33,19 @@ const createGameSchema = z
       .array(gameCardSchema)
       .min(1)
       .max(2)
-      .describe('The commander or partner pair for this game.'),
-    deck: z.array(gameCardSchema).describe('The main-deck cards for this game.'),
+      .describe("The commander or partner pair for this game."),
+    deck: z
+      .array(gameCardSchema)
+      .describe("The main-deck cards for this game."),
   })
   .superRefine((value, context) => {
     const expectedDeckSize = value.commanders.length === 1 ? 99 : 98
 
     if (value.deck.length !== expectedDeckSize) {
       context.addIssue({
-        code: 'custom',
-        path: ['deck'],
-        message: `Deck must contain exactly ${expectedDeckSize} cards when there ${value.commanders.length === 1 ? 'is 1 commander' : 'are 2 commanders'}.`,
+        code: "custom",
+        path: ["deck"],
+        message: `Deck must contain exactly ${expectedDeckSize} cards when there ${value.commanders.length === 1 ? "is 1 commander" : "are 2 commanders"}.`,
       })
     }
   })
@@ -48,28 +54,28 @@ function createServer() {
   const server = new McpServer(
     {
       name: SERVER_NAME,
-      version: '0.0.1',
+      version: "0.0.1",
     },
     {
       capabilities: {
         logging: {},
       },
-    },
+    }
   )
 
   server.registerTool(
-    'draw_card',
+    "draw_card",
     {
-      title: 'Draw Card',
+      title: "Draw Card",
       description:
-        'Draw one or more cards from the stored library for an existing game ID that was created outside MCP.',
+        "Draw one or more cards from the stored library for an existing game ID that was created outside MCP.",
       inputSchema: {
         gameId: z
           .uuid()
           .describe(
-            'The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool.',
+            "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
           ),
-        count: z.number().int().positive().describe('How many cards to draw.'),
+        count: z.number().int().positive().describe("How many cards to draw."),
       },
       outputSchema: {
         gameId: z.uuid(),
@@ -81,17 +87,17 @@ function createServer() {
       const drawResult = gameStore.drawCards(gameId, count)
 
       if (!drawResult.ok) {
-        logWarn('draw', `${shortId(gameId)} ${drawResult.reason}`)
+        logWarn("draw", `${shortId(gameId)} ${drawResult.reason}`)
 
         const message =
-          drawResult.reason === 'game_not_found'
-            ? 'Game not found. It may be invalid, may not have been created yet, or may have expired after one hour.'
-            : 'That game has no cards left in its library.'
+          drawResult.reason === "game_not_found"
+            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            : "That game has no cards left in its library."
 
         return {
           content: [
             {
-              type: 'text',
+              type: "text",
               text: message,
             },
           ],
@@ -106,20 +112,20 @@ function createServer() {
       }
 
       logInfo(
-        'draw',
-        `${shortId(gameId)} n=${response.cards.length} left=${response.cardsRemaining}`,
+        "draw",
+        `${shortId(gameId)} n=${response.cards.length} left=${response.cardsRemaining}`
       )
 
       return {
         content: [
           {
-            type: 'text',
-            text: `Drew ${response.cards.length} card(s): ${response.cards.map(card => card.name).join(', ')}. ${response.cardsRemaining} cards remain in the library.`,
+            type: "text",
+            text: `Drew ${response.cards.length} card(s): ${response.cards.map((card) => card.name).join(", ")}. ${response.cardsRemaining} cards remain in the library.`,
           },
         ],
         structuredContent: response,
       }
-    },
+    }
   )
 
   return server
@@ -140,7 +146,7 @@ async function main() {
   app.use((req: Request, res: Response, next) => {
     applyCors(req, res, allowedOrigins)
 
-    if (req.method === 'OPTIONS') {
+    if (req.method === "OPTIONS") {
       res.status(204).end()
       return
     }
@@ -148,19 +154,19 @@ async function main() {
     next()
   })
 
-  app.get('/health', (_req: Request, res: Response) => {
+  app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({
       ok: true,
       service: SERVER_NAME,
     })
   })
 
-  app.post('/games', (req: Request, res: Response) => {
+  app.post("/games", (req: Request, res: Response) => {
     const parsedRequest = createGameSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
       res.status(400).json({
-        error: 'Invalid request body.',
+        error: "Invalid request body.",
         details: parsedRequest.error.issues,
       })
       return
@@ -168,23 +174,23 @@ async function main() {
 
     const game = gameStore.createGame(
       parsedRequest.data.commanders,
-      parsedRequest.data.deck,
+      parsedRequest.data.deck
     )
 
     logInfo(
-      'new',
-      `${shortId(game.gameId)} commanders=${game.commanderCount} cards=${game.cardsRemaining} games=${game.totalGames}`,
+      "new",
+      `${shortId(game.gameId)} commanders=${game.commanderCount} cards=${game.cardsRemaining} games=${game.totalGames}`
     )
 
     res.status(201).json(game)
   })
 
-  app.post('/process-prompt', async (req: Request, res: Response) => {
+  app.post("/process-prompt", async (req: Request, res: Response) => {
     const parsedRequest = processPromptSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
       res.status(400).json({
-        error: 'Invalid request body.',
+        error: "Invalid request body.",
         details: parsedRequest.error.issues,
       })
       return
@@ -193,19 +199,40 @@ async function main() {
     const { prompt } = parsedRequest.data
 
     try {
-      const response = await promptProcessor.processPrompt(prompt)
+      res.status(200)
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8")
+      res.setHeader("Cache-Control", "no-cache")
+      res.setHeader("Connection", "keep-alive")
 
-      logInfo(
-        'prompt',
-        `len=${prompt.length} model=${response.model.key} size=${response.model.sizeBytes}`,
+      const response = await promptProcessor.processPromptStream(
+        prompt,
+        (event) => {
+          res.write(`${JSON.stringify(event)}\n`)
+        }
       )
 
-      res.status(200).json(response)
+      logInfo(
+        "prompt",
+        `len=${prompt.length} model=${response.model.key} size=${response.model.sizeBytes}`
+      )
+
+      res.end()
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to process prompt.'
+        error instanceof Error ? error.message : "Failed to process prompt."
 
-      logWarn('prompt', message)
+      logWarn("prompt", message)
+
+      if (res.headersSent) {
+        res.write(
+          `${JSON.stringify({
+            type: "error",
+            error: message,
+          })}\n`
+        )
+        res.end()
+        return
+      }
 
       res.status(502).json({
         error: message,
@@ -213,7 +240,7 @@ async function main() {
     }
   })
 
-  app.post('/mcp', async (req: Request, res: Response) => {
+  app.post("/mcp", async (req: Request, res: Response) => {
     const server = createServer()
 
     try {
@@ -224,19 +251,19 @@ async function main() {
       await server.connect(transport)
       await transport.handleRequest(req, res, req.body)
 
-      res.on('close', () => {
+      res.on("close", () => {
         void transport.close()
         void server.close()
       })
     } catch (error) {
-      console.error('Error handling MCP request:', error)
+      console.error("Error handling MCP request:", error)
 
       if (!res.headersSent) {
         res.status(500).json({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           error: {
             code: -32603,
-            message: 'Internal server error',
+            message: "Internal server error",
           },
           id: null,
         })
@@ -244,23 +271,23 @@ async function main() {
     }
   })
 
-  app.get('/mcp', (_req: Request, res: Response) => {
+  app.get("/mcp", (_req: Request, res: Response) => {
     res.status(405).json({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       error: {
         code: -32000,
-        message: 'Method not allowed.',
+        message: "Method not allowed.",
       },
       id: null,
     })
   })
 
-  app.delete('/mcp', (_req: Request, res: Response) => {
+  app.delete("/mcp", (_req: Request, res: Response) => {
     res.status(405).json({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       error: {
         code: -32000,
-        message: 'Method not allowed.',
+        message: "Method not allowed.",
       },
       id: null,
     })
@@ -268,7 +295,7 @@ async function main() {
 
   app.listen(port, host, (error?: Error) => {
     if (error) {
-      console.error('Failed to start server:', error)
+      console.error("Failed to start server:", error)
       process.exit(1)
     }
 
@@ -297,8 +324,8 @@ function getAllowedOrigins(rawOrigins: string | undefined) {
   }
 
   return rawOrigins
-    .split(',')
-    .map(origin => origin.trim())
+    .split(",")
+    .map((origin) => origin.trim())
     .filter(Boolean)
 }
 
@@ -307,8 +334,8 @@ function getLocalMcpServerUrl(host: string, port: number) {
 }
 
 function normalizeLocalHost(host: string) {
-  if (host === '0.0.0.0' || host === '::') {
-    return '127.0.0.1'
+  if (host === "0.0.0.0" || host === "::") {
+    return "127.0.0.1"
   }
 
   return host
@@ -317,17 +344,17 @@ function normalizeLocalHost(host: string) {
 function applyCors(
   req: Request,
   res: Response,
-  allowedOrigins: readonly string[],
+  allowedOrigins: readonly string[]
 ) {
   const requestOrigin = req.headers.origin
 
   if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
-    res.setHeader('Access-Control-Allow-Origin', requestOrigin)
-    res.setHeader('Vary', 'Origin')
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin)
+    res.setHeader("Vary", "Origin")
   }
 
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
 }
 
 function shortId(gameId: string) {
@@ -342,7 +369,7 @@ function logWarn(event: string, message: string) {
   console.warn(`[${event}] ${message}`)
 }
 
-main().catch(error => {
-  console.error('Server error:', error)
+main().catch((error) => {
+  console.error("Server error:", error)
   process.exit(1)
 })

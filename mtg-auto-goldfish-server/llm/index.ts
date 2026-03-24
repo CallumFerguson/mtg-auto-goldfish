@@ -1,7 +1,7 @@
 import {
   type PromptProcessorOptions,
   createLmStudioPromptProcessor,
-} from './lm-studio-provider.js'
+} from "./lm-studio-provider.js"
 
 export type LoadedTextModel = {
   key: string
@@ -15,12 +15,55 @@ export type PromptProcessingResult = {
   model: LoadedTextModel
 }
 
+export type PromptStreamEvent =
+  | {
+      type: "start"
+      model: LoadedTextModel
+    }
+  | {
+      type: "status"
+      event: string
+      progress?: number
+      modelInstanceId?: string
+    }
+  | {
+      type: "reasoning"
+      delta: string
+    }
+  | {
+      type: "message"
+      delta: string
+    }
+  | {
+      type: "tool"
+      event: string
+      tool?: string
+      provider?: string
+      argumentsText?: string
+      output?: string
+      error?: string
+    }
+  | {
+      type: "error"
+      error: string
+    }
+  | {
+      type: "done"
+      result: string
+      reasoning: string
+      model: LoadedTextModel
+    }
+
 export interface PromptProcessor {
   processPrompt(prompt: string): Promise<PromptProcessingResult>
+  processPromptStream(
+    prompt: string,
+    onEvent: (event: PromptStreamEvent) => void
+  ): Promise<PromptProcessingResult>
 }
 
 export function createPromptProcessor(
-  options: PromptProcessorOptions = {},
+  options: PromptProcessorOptions = {}
 ): PromptProcessor {
   return createLmStudioPromptProcessor(options)
 }

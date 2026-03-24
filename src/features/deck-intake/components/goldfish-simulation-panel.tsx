@@ -23,7 +23,7 @@ export function GoldfishSimulationPanel({
     <section className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30 backdrop-blur sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-amber-100">
+          <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-amber-100 uppercase">
             <Sparkles className="size-3.5" />
             Auto goldfish simulation
           </div>
@@ -32,9 +32,10 @@ export function GoldfishSimulationPanel({
               Start a simulation
             </h2>
             <p className="max-w-3xl text-sm leading-6 text-stone-400">
-              Once the full commander and deck package is resolved, create a game
-              on the local goldfish server, then ask the local model to draw a
-              seven-card starting hand for that game.
+              Once the full commander and deck package is resolved, create a
+              game on the local goldfish server, then ask the local model to
+              draw a seven-card starting hand for that game while streaming
+              reasoning, tool calls, and the final answer live.
             </p>
           </div>
         </div>
@@ -72,16 +73,16 @@ export function GoldfishSimulationPanel({
       {isStarting ? (
         <div className="mt-4 flex items-center gap-3 rounded-[24px] border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100">
           <LoaderCircle className="size-4 animate-spin" />
-          <span>Drawing starting hand</span>
+          <span>Streaming simulation</span>
         </div>
       ) : null}
 
       {result ? (
         <div className="mt-4 rounded-[24px] border border-emerald-400/20 bg-emerald-500/10 p-4">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-200">
-            Simulation result
+          <p className="text-xs font-medium tracking-[0.18em] text-emerald-200 uppercase">
+            Simulation stream
           </p>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-emerald-50">
+          <p className="mt-2 text-sm leading-6 whitespace-pre-wrap text-emerald-50">
             {result}
           </p>
         </div>
