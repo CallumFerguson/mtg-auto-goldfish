@@ -20,6 +20,7 @@ type SimulationActivity = {
 type GoldfishSimulationPanelProps = {
   canStart: boolean
   isStarting: boolean
+  isCreatingDevGame: boolean
   gameId: string
   result: string
   finalAnswerStatus: "idle" | "streaming" | "done"
@@ -27,6 +28,7 @@ type GoldfishSimulationPanelProps = {
   activities: SimulationActivity[]
   errorMessage: string
   onOpenPromptStream: () => void
+  onCreateDevGame: () => void
   onStart: () => void
 }
 
@@ -45,6 +47,7 @@ function ActivityIcon({ status }: Pick<SimulationActivity, "status">) {
 export function GoldfishSimulationPanel({
   canStart,
   isStarting,
+  isCreatingDevGame,
   gameId,
   result,
   finalAnswerStatus,
@@ -52,6 +55,7 @@ export function GoldfishSimulationPanel({
   activities,
   errorMessage,
   onOpenPromptStream,
+  onCreateDevGame,
   onStart,
 }: GoldfishSimulationPanelProps) {
   const isNearBottomRef = useRef(false)
@@ -156,9 +160,29 @@ export function GoldfishSimulationPanel({
 
           <Button
             type="button"
+            variant="outline"
+            className="h-11 rounded-full border-sky-400/25 bg-sky-500/10 px-5 text-sky-100 hover:bg-sky-500/20 hover:text-sky-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
+            disabled={!canStart || isStarting || isCreatingDevGame}
+            onClick={onCreateDevGame}
+          >
+            {isCreatingDevGame ? (
+              <>
+                <LoaderCircle className="animate-spin" />
+                Creating test game
+              </>
+            ) : (
+              <>
+                <Sparkles />
+                Dev: create + copy ID
+              </>
+            )}
+          </Button>
+
+          <Button
+            type="button"
             size="lg"
             className="h-11 rounded-full bg-amber-500 px-5 text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-400"
-            disabled={!canStart || isStarting}
+            disabled={!canStart || isStarting || isCreatingDevGame}
             onClick={onStart}
           >
             {isStarting ? (

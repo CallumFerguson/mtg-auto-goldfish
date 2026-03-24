@@ -227,9 +227,7 @@ function createServer() {
         const message =
           drawResult.reason === "game_not_found"
             ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
-            : drawResult.reason === "starting_hand_already_drawn"
-              ? "The starting hand has already been drawn for that game."
-              : "That game has no cards left in its library."
+            : "The starting hand has already been drawn for that game."
 
         return {
           content: [
@@ -258,6 +256,82 @@ function createServer() {
           {
             type: "text",
             text: `Drew starting hand: ${response.cards.map((card) => card.name).join(", ")}. ${response.cardsRemaining} cards remain in the library.`,
+          },
+        ],
+        structuredContent: response,
+      }
+    }
+  )
+
+  server.registerTool(
+    "mulligan",
+    {
+      title: "Mulligan",
+      description:
+        "Return the starting hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn.",
+      inputSchema: {
+        gameId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
+          ),
+      },
+      outputSchema: {
+        gameId: z.string(),
+        cards: z.array(gameCardSchema),
+        cardsRemaining: z.number().int().nonnegative(),
+        mulliganCount: z.number().int().positive(),
+        cardsToBottomIfKept: z.number().int().nonnegative(),
+        reminder: z.string(),
+      },
+    },
+    async ({ gameId }) => {
+      const mulliganResult = gameStore.mulligan(gameId)
+
+      if (!mulliganResult.ok) {
+        logWarn("mulligan", `${shortId(gameId)} ${mulliganResult.reason}`)
+
+        const message =
+          mulliganResult.reason === "game_not_found"
+            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            : "You can only mulligan after drawing your starting hand."
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: message,
+            },
+          ],
+          isError: true,
+        }
+      }
+
+      const reminder = formatMulliganReminder(
+        mulliganResult.mulliganCount,
+        mulliganResult.cardsToBottomIfKept
+      )
+      const response = {
+        gameId,
+        cards: mulliganResult.cards,
+        cardsRemaining: mulliganResult.cardsRemaining,
+        mulliganCount: mulliganResult.mulliganCount,
+        cardsToBottomIfKept: mulliganResult.cardsToBottomIfKept,
+        reminder,
+      }
+
+      logInfo(
+        "mulligan",
+        `${shortId(gameId)} n=${response.cards.length} mulligans=${response.mulliganCount} left=${response.cardsRemaining}`
+      )
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Mulliganed into: ${response.cards.map((card) => card.name).join(", ")}. ${response.cardsRemaining} cards remain in the library. ${response.reminder}`,
           },
         ],
         structuredContent: response,
@@ -492,6 +566,36 @@ function applyCors(
 
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
   res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+}
+
+function formatMulliganReminder(
+  mulliganCount: number,
+  cardsToBottomIfKept: number
+) {
+  if (mulliganCount === 1) {
+    return "That was your first mulligan, which is free in Commander, so you can keep all 7 cards."
+  }
+
+  return `That was your ${toOrdinal(mulliganCount)} mulligan, so if you keep that hand you must put ${cardsToBottomIfKept} ${cardsToBottomIfKept === 1 ? "card" : "cards"} on the bottom of the deck.`
+}
+
+function toOrdinal(value: number) {
+  const mod100 = value % 100
+
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${value}th`
+  }
+
+  switch (value % 10) {
+    case 1:
+      return `${value}st`
+    case 2:
+      return `${value}nd`
+    case 3:
+      return `${value}rd`
+    default:
+      return `${value}th`
+  }
 }
 
 function shortId(gameId: string) {

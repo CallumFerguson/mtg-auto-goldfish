@@ -408,6 +408,7 @@ export function App() {
   const [isResetModalOpen, setIsResetModalOpen] = useState(false)
   const [isPromptStreamModalOpen, setIsPromptStreamModalOpen] = useState(false)
   const [isStartingSimulation, setIsStartingSimulation] = useState(false)
+  const [isCreatingDevGame, setIsCreatingDevGame] = useState(false)
   const [simulationError, setSimulationError] = useState("")
   const [gameId, setGameId] = useState("")
   const [simulationResult, setSimulationResult] = useState("")
@@ -540,6 +541,50 @@ export function App() {
       deck: deckCards.flatMap(expandResolvedCard),
     }
   }, [commanderCards, deckCards, isDeckReady])
+
+  async function createGame() {
+    if (!simulationPayload) {
+      throw new Error("The deck is not ready for simulation yet.")
+    }
+
+    const response = await fetch(`${GOLDFISH_SERVER_URL}/games`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        simulationPayload satisfies {
+          commanders: GameCardPayload[]
+          deck: GameCardPayload[]
+        }
+      ),
+    })
+
+    const payload = (await response.json()) as
+      | { gameId?: string; error?: string }
+      | { details?: Array<{ message?: string }> }
+
+    if (!response.ok) {
+      const detailMessage =
+        "details" in payload && Array.isArray(payload.details)
+          ? payload.details
+            .map((detail) => detail.message)
+            .filter(Boolean)
+            .join(" ")
+          : ""
+      throw new Error(
+        detailMessage ||
+          ("error" in payload && payload.error) ||
+          "Failed to create a game."
+      )
+    }
+
+    if (!("gameId" in payload) || !payload.gameId) {
+      throw new Error("The server response did not include a game ID.")
+    }
+
+    return payload.gameId
+  }
 
   const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
     event
@@ -716,43 +761,7 @@ export function App() {
     setSimulationActivities([])
 
     try {
-      const response = await fetch(`${GOLDFISH_SERVER_URL}/games`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(
-          simulationPayload satisfies {
-            commanders: GameCardPayload[]
-            deck: GameCardPayload[]
-          }
-        ),
-      })
-
-      const payload = (await response.json()) as
-        | { gameId?: string; error?: string }
-        | { details?: Array<{ message?: string }> }
-
-      if (!response.ok) {
-        const detailMessage =
-          "details" in payload && Array.isArray(payload.details)
-            ? payload.details
-              .map((detail) => detail.message)
-              .filter(Boolean)
-              .join(" ")
-            : ""
-        throw new Error(
-          detailMessage ||
-          ("error" in payload && payload.error) ||
-          "Failed to create a game."
-        )
-      }
-
-      if (!("gameId" in payload) || !payload.gameId) {
-        throw new Error("The server response did not include a game ID.")
-      }
-
-      const nextGameId = payload.gameId
+      const nextGameId = await createGame()
 
       setGameId(nextGameId)
 
@@ -800,6 +809,32 @@ export function App() {
       )
     } finally {
       setIsStartingSimulation(false)
+    }
+  }
+
+  async function createDevGame() {
+    if (!simulationPayload) {
+      return
+    }
+
+    setIsCreatingDevGame(true)
+    setSimulationError("")
+    setSimulationResult("")
+    setFinalAnswerStatus("idle")
+    setRawPromptStream("")
+    setSimulationActivities([])
+
+    try {
+      const nextGameId = await createGame()
+
+      setGameId(nextGameId)
+      await navigator.clipboard.writeText(nextGameId)
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error ? error.message : "Failed to create a game."
+      )
+    } finally {
+      setIsCreatingDevGame(false)
     }
   }
 
@@ -1085,6 +1120,7 @@ export function App() {
         <GoldfishSimulationPanel
           canStart={isDeckReady}
           isStarting={isStartingSimulation}
+          isCreatingDevGame={isCreatingDevGame}
           gameId={gameId}
           result={simulationResult}
           finalAnswerStatus={finalAnswerStatus}
@@ -1092,6 +1128,7 @@ export function App() {
           activities={simulationActivities}
           errorMessage={simulationError}
           onOpenPromptStream={() => setIsPromptStreamModalOpen(true)}
+          onCreateDevGame={createDevGame}
           onStart={startSimulation}
         />
       </div>

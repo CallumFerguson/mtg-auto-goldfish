@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 const ONE_HOUR_IN_MS = 60 * 60 * 1000
+const STARTING_HAND_SIZE = 7
 
 export type GameCard = {
   name: string
@@ -11,8 +12,10 @@ type GameRecord = {
   id: string
   createdAt: number
   commanders: GameCard[]
+  initialLibrary: GameCard[]
   library: GameCard[]
   hasDrawnStartingHand: boolean
+  mulliganCount: number
 }
 
 export type DrawResult =
@@ -33,6 +36,19 @@ export type DrawStartingHandResult =
       reason: 'starting_hand_already_drawn'
     }
 
+export type MulliganResult =
+  | {
+      ok: true
+      cards: GameCard[]
+      cardsRemaining: number
+      mulliganCount: number
+      cardsToBottomIfKept: number
+    }
+  | {
+      ok: false
+      reason: 'game_not_found' | 'starting_hand_not_drawn'
+    }
+
 export class GameStore {
   private readonly games = new Map<string, GameRecord>()
 
@@ -48,12 +64,15 @@ export class GameStore {
     this.deleteExpiredGames()
 
     const id = randomUUID()
+    const shuffledLibrary = shuffle(deck)
     const game: GameRecord = {
       id,
       createdAt: Date.now(),
       commanders: [...commanders],
-      library: shuffle(deck),
+      initialLibrary: [...shuffledLibrary],
+      library: [...shuffledLibrary],
       hasDrawnStartingHand: false,
+      mulliganCount: 0,
     }
 
     this.games.set(id, game)
@@ -130,12 +149,39 @@ export class GameStore {
 
     game.hasDrawnStartingHand = true
 
-    const cards = game.library.splice(0, 7)
+    const cards = game.library.splice(0, STARTING_HAND_SIZE)
 
     return {
       ok: true,
       cards,
       cardsRemaining: game.library.length,
+    }
+  }
+
+  mulligan(gameId: string): MulliganResult {
+    this.deleteExpiredGames()
+
+    const game = this.games.get(gameId)
+
+    if (!game) {
+      return { ok: false, reason: 'game_not_found' }
+    }
+
+    if (!game.hasDrawnStartingHand) {
+      return { ok: false, reason: 'starting_hand_not_drawn' }
+    }
+
+    game.library = shuffle(game.initialLibrary)
+    game.mulliganCount += 1
+
+    const cards = game.library.splice(0, STARTING_HAND_SIZE)
+
+    return {
+      ok: true,
+      cards,
+      cardsRemaining: game.library.length,
+      mulliganCount: game.mulliganCount,
+      cardsToBottomIfKept: Math.max(0, game.mulliganCount - 1),
     }
   }
 
