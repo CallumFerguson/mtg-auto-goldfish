@@ -766,14 +766,14 @@ export function App() {
       setGameId(nextGameId)
 
       const promptResponse = await fetch(
-        `${GOLDFISH_SERVER_URL}/process-prompt`,
+        `${GOLDFISH_SERVER_URL}/simulate-drawing-starting-hand`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            prompt: `draw the starting hand with game id ${nextGameId}, then draw 1 more card`,
+            gameId: nextGameId,
           }),
         }
       )
@@ -792,7 +792,7 @@ export function App() {
         throw new Error(
           detailMessage ||
           ("error" in promptPayload && promptPayload.error) ||
-          "Failed to process the simulation prompt."
+          "Failed to simulate drawing the starting hand."
         )
       }
 
