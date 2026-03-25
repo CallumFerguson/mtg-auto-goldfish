@@ -9,6 +9,7 @@ import {
 import { useEffect, useRef } from "react"
 
 import { Button } from "@/components/ui/button"
+import { GoldfishAnswerMarkdown } from "@/features/deck-intake/components/goldfish-answer-markdown"
 
 type SimulationActivity = {
   id: string
@@ -289,9 +290,7 @@ export function GoldfishSimulationPanel({
                           <p className="text-sm font-medium text-stone-100">
                             Final answer
                           </p>
-                          <p className="mt-2 text-sm leading-6 whitespace-pre-wrap text-stone-300">
-                            {run.result}
-                          </p>
+                          <GoldfishAnswerMarkdown content={run.result} />
                         </div>
                       </div>
                     </div>
