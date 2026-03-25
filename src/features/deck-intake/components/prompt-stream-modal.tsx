@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useLayoutEffect, useRef } from "react"
 import { Eye, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,10 @@ export function PromptStreamModal({
   streamText,
   onClose,
 }: PromptStreamModalProps) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const streamContentRef = useRef<HTMLPreElement | null>(null)
+  const isNearBottomRef = useRef(true)
+
   useEffect(() => {
     if (!isOpen) {
       return
@@ -35,6 +39,104 @@ export function PromptStreamModal({
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isOpen, onClose])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+
+    if (!scrollContainer) {
+      return
+    }
+
+    const currentScrollContainer = scrollContainer
+
+    function updateIsNearBottom() {
+      const distanceToBottom =
+        currentScrollContainer.scrollHeight -
+        currentScrollContainer.scrollTop -
+        currentScrollContainer.clientHeight
+
+      isNearBottomRef.current = distanceToBottom <= 100
+    }
+
+    updateIsNearBottom()
+    currentScrollContainer.addEventListener("scroll", updateIsNearBottom, {
+      passive: true,
+    })
+
+    return () => {
+      currentScrollContainer.removeEventListener("scroll", updateIsNearBottom)
+    }
+  }, [isOpen])
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+
+    if (!scrollContainer) {
+      return
+    }
+
+    scrollContainer.scrollTop = scrollContainer.scrollHeight
+    isNearBottomRef.current = true
+  }, [isOpen])
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+
+    if (!scrollContainer || !isNearBottomRef.current) {
+      return
+    }
+
+    scrollContainer.scrollTop = scrollContainer.scrollHeight
+  }, [isOpen, streamText])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+    const streamContent = streamContentRef.current
+
+    if (!scrollContainer || !streamContent) {
+      return
+    }
+
+    let previousHeight = scrollContainer.scrollHeight
+
+    const observer = new ResizeObserver(() => {
+      const nextHeight = scrollContainer.scrollHeight
+
+      if (nextHeight === previousHeight) {
+        return
+      }
+
+      previousHeight = nextHeight
+
+      if (!isNearBottomRef.current) {
+        return
+      }
+
+      scrollContainer.scrollTop = nextHeight
+    })
+
+    observer.observe(streamContent)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [isOpen, streamText])
 
   if (!isOpen) {
     return null
@@ -84,8 +186,14 @@ export function PromptStreamModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden p-6">
-          <div className="app-scrollbar max-h-[min(70vh,48rem)] overflow-y-scroll rounded-[24px] border border-white/10 bg-black/35 p-4 pr-3">
-            <pre className="font-mono text-xs leading-6 break-words whitespace-pre-wrap text-stone-200">
+          <div
+            ref={scrollContainerRef}
+            className="app-scrollbar max-h-[min(70vh,48rem)] overflow-y-scroll rounded-[24px] border border-white/10 bg-black/35 p-4 pr-3"
+          >
+            <pre
+              ref={streamContentRef}
+              className="font-mono text-xs leading-6 break-words whitespace-pre-wrap text-stone-200"
+            >
               {streamText.trim() || "No prompt stream yet."}
             </pre>
           </div>
