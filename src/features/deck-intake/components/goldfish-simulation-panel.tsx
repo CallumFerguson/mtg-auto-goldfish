@@ -44,6 +44,18 @@ function ActivityIcon({ status }: Pick<SimulationActivity, "status">) {
   return <LoaderCircle className="size-5 animate-spin text-amber-200" />
 }
 
+function FinalAnswerIcon({
+  finalAnswerStatus,
+}: {
+  finalAnswerStatus: GoldfishSimulationPanelProps["finalAnswerStatus"]
+}) {
+  if (finalAnswerStatus === "done") {
+    return <CheckCircle2 className="size-5 text-emerald-300" />
+  }
+
+  return <LoaderCircle className="size-5 animate-spin text-amber-200" />
+}
+
 export function GoldfishSimulationPanel({
   canStart,
   isStarting,
@@ -209,7 +221,7 @@ export function GoldfishSimulationPanel({
         </div>
       ) : null}
 
-      {activities.length ? (
+      {activities.length || result ? (
         <div className="mt-4 rounded-[24px] border border-white/10 bg-black/20 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -256,25 +268,25 @@ export function GoldfishSimulationPanel({
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      ) : null}
+            {result ? (
+              <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5">
+                    <FinalAnswerIcon finalAnswerStatus={finalAnswerStatus} />
+                  </div>
 
-      {result ? (
-        <div className="mt-4 rounded-[24px] border border-emerald-400/20 bg-emerald-500/10 p-4">
-          <div className="flex items-center gap-2">
-            {finalAnswerStatus === "done" ? (
-              <CheckCircle2 className="size-4 text-emerald-300" />
-            ) : (
-              <LoaderCircle className="size-4 animate-spin text-emerald-200" />
-            )}
-            <p className="text-xs font-medium tracking-[0.18em] text-emerald-200 uppercase">
-              Final answer
-            </p>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-stone-100">
+                      Final answer
+                    </p>
+                    <p className="mt-2 text-sm leading-6 whitespace-pre-wrap text-stone-300">
+                      {result}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
-          <p className="mt-2 text-sm leading-6 whitespace-pre-wrap text-emerald-50">
-            {result}
-          </p>
         </div>
       ) : null}
 
