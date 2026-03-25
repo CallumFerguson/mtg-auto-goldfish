@@ -808,20 +808,16 @@ function buildStartingHandSimulationPrompt(
   const cardNames = initialLibrary.map((card) => card.name)
   const uniqueCards = dedupeCardsByNameAndText(initialLibrary)
 
-  return [
-    DRAW_STARTING_HAND_PROMPT,
-    "",
-    `Game ID: ${gameId}`,
-    "",
-    "Cards in initialLibrary:",
-    ...cardNames.map((cardName, index) => `${index + 1}. ${cardName}`),
-    "",
-    "Unique cards with card text:",
-    ...uniqueCards.map(
-      (card, index) =>
-        `${index + 1}. ${card.name}\nCard text: ${card.cardText}`
-    ),
-  ].join("\n")
+  return `${DRAW_STARTING_HAND_PROMPT}
+
+Game ID: ${gameId}
+
+Decklist:
+${cardNames.join("\n")}
+
+Card reference:
+${uniqueCards.map(card => `${card.name}\n${card.cardText}\n`).join("\n")}
+`.trim();
 }
 
 function dedupeCardsByNameAndText(cards: readonly GameCard[]) {
