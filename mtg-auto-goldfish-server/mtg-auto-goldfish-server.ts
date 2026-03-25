@@ -4,8 +4,9 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { z } from "zod/v4"
 
-import { GameStore } from "./game-store.js"
+import { GameStore, type GameCard } from "./game-store.js"
 import { createPromptProcessor } from "./llm/index.js"
+import { DRAW_STARTING_HAND_PROMPT } from "./llm/prompt-constants.js"
 
 const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_PORT = 3001
@@ -14,6 +15,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]
+const GAME_NOT_FOUND_MESSAGE =
+  "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
 
 const gameStore = new GameStore()
 const gameCardSchema = z.object({
@@ -26,6 +29,9 @@ const gameCardSchema = z.object({
 })
 const processPromptSchema = z.object({
   prompt: z.string().trim().min(1).describe("The prompt to run locally."),
+})
+const simulateDrawingStartingHandSchema = z.object({
+  gameId: z.string().trim().min(1).describe("The game ID to simulate."),
 })
 const createGameSchema = z
   .object({
@@ -93,7 +99,7 @@ function createServer() {
 
         const message =
           drawResult.reason === "game_not_found"
-            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            ? GAME_NOT_FOUND_MESSAGE
             : "That game has no cards left in its library."
 
         return {
@@ -160,7 +166,7 @@ function createServer() {
 
         const message =
           drawResult.reason === "game_not_found"
-            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            ? GAME_NOT_FOUND_MESSAGE
             : "That game has no cards left in its library."
 
         return {
@@ -226,7 +232,7 @@ function createServer() {
 
         const message =
           drawResult.reason === "game_not_found"
-            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            ? GAME_NOT_FOUND_MESSAGE
             : "The starting hand has already been drawn for that game."
 
         return {
@@ -295,7 +301,7 @@ function createServer() {
 
         const message =
           mulliganResult.reason === "game_not_found"
-            ? "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+            ? GAME_NOT_FOUND_MESSAGE
             : "You can only mulligan after drawing your starting hand."
 
         return {
@@ -385,7 +391,7 @@ function createServer() {
           content: [
             {
               type: "text",
-              text: "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour.",
+              text: GAME_NOT_FOUND_MESSAGE,
             },
           ],
           isError: true,
@@ -469,7 +475,7 @@ function createServer() {
           content: [
             {
               type: "text",
-              text: "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour.",
+              text: GAME_NOT_FOUND_MESSAGE,
             },
           ],
           isError: true,
@@ -572,17 +578,7 @@ async function main() {
     const { prompt } = parsedRequest.data
 
     try {
-      res.status(200)
-      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8")
-      res.setHeader("Cache-Control", "no-cache")
-      res.setHeader("Connection", "keep-alive")
-
-      const response = await promptProcessor.processPromptStream(
-        prompt,
-        (event) => {
-          res.write(`${JSON.stringify(event)}\n`)
-        }
-      )
+      const response = await streamPromptResponse(res, promptProcessor, prompt)
 
       logInfo(
         "prompt",
@@ -595,6 +591,64 @@ async function main() {
         error instanceof Error ? error.message : "Failed to process prompt."
 
       logWarn("prompt", message)
+
+      if (res.headersSent) {
+        res.write(
+          `${JSON.stringify({
+            type: "error",
+            error: message,
+          })}\n`
+        )
+        res.end()
+        return
+      }
+
+      res.status(502).json({
+        error: message,
+      })
+    }
+  })
+
+  app.post("/simulate-drawing-starting-hand", async (req: Request, res: Response) => {
+    const parsedRequest = simulateDrawingStartingHandSchema.safeParse(req.body)
+
+    if (!parsedRequest.success) {
+      res.status(400).json({
+        error: "Invalid request body.",
+        details: parsedRequest.error.issues,
+      })
+      return
+    }
+
+    const { gameId } = parsedRequest.data
+    const gamePromptContext = gameStore.getGamePromptContext(gameId)
+
+    if (!gamePromptContext.ok) {
+      res.status(404).json({
+        error: GAME_NOT_FOUND_MESSAGE,
+      })
+      return
+    }
+
+    const prompt = buildStartingHandSimulationPrompt(
+      gamePromptContext.gameId,
+      gamePromptContext.initialLibrary
+    )
+
+    try {
+      const response = await streamPromptResponse(res, promptProcessor, prompt)
+
+      logInfo(
+        "simulate_starting_hand",
+        `${shortId(gameId)} len=${prompt.length} model=${response.model.key} size=${response.model.sizeBytes}`
+      )
+
+      res.end()
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to process prompt."
+
+      logWarn("simulate_starting_hand", `${shortId(gameId)} ${message}`)
 
       if (res.headersSent) {
         res.write(
@@ -728,6 +782,59 @@ function applyCors(
 
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
   res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+}
+
+async function streamPromptResponse(
+  res: Response,
+  promptProcessor: ReturnType<typeof createPromptProcessor>,
+  prompt: string
+) {
+  res.status(200)
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8")
+  res.setHeader("Cache-Control", "no-cache")
+  res.setHeader("Connection", "keep-alive")
+
+  return promptProcessor.processPromptStream(prompt, (event) => {
+    res.write(`${JSON.stringify(event)}\n`)
+  })
+}
+
+function buildStartingHandSimulationPrompt(
+  gameId: string,
+  initialLibrary: readonly GameCard[]
+) {
+  const cardNames = initialLibrary.map((card) => card.name)
+  const uniqueCards = dedupeCardsByNameAndText(initialLibrary)
+
+  return [
+    DRAW_STARTING_HAND_PROMPT,
+    "",
+    `Game ID: ${gameId}`,
+    "",
+    "Cards in initialLibrary:",
+    ...cardNames.map((cardName, index) => `${index + 1}. ${cardName}`),
+    "",
+    "Unique cards with card text:",
+    ...uniqueCards.map(
+      (card, index) =>
+        `${index + 1}. ${card.name}\nCard text: ${card.cardText}`
+    ),
+  ].join("\n")
+}
+
+function dedupeCardsByNameAndText(cards: readonly GameCard[]) {
+  const seenCards = new Set<string>()
+
+  return cards.filter((card) => {
+    const key = `${card.name}\n${card.cardText}`
+
+    if (seenCards.has(key)) {
+      return false
+    }
+
+    seenCards.add(key)
+    return true
+  })
 }
 
 function formatMulliganReminder(

@@ -72,6 +72,17 @@ export type ReturnCardsToLibraryResult =
     reason: 'game_not_found'
   }
 
+export type GetGamePromptContextResult =
+  | {
+    ok: true
+    gameId: string
+    initialLibrary: GameCard[]
+  }
+  | {
+    ok: false
+    reason: 'game_not_found'
+  }
+
 export class GameStore {
   private readonly games = new Map<string, GameRecord>()
 
@@ -270,6 +281,22 @@ export class GameStore {
     }
   }
 
+  getGamePromptContext(gameId: string): GetGamePromptContextResult {
+    this.deleteExpiredGames()
+
+    const game = this.games.get(gameId)
+
+    if (!game) {
+      return { ok: false, reason: 'game_not_found' }
+    }
+
+    return {
+      ok: true,
+      gameId: game.id,
+      initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
+    }
+  }
+
   private deleteExpiredGames() {
     const expirationCutoff = Date.now() - ONE_HOUR_IN_MS
 
@@ -300,3 +327,4 @@ function sortCardsAlphabetically(cards: readonly GameCard[]) {
     leftCard.name.localeCompare(rightCard.name)
   )
 }
+
