@@ -76,6 +76,7 @@ export type GetGamePromptContextResult =
   | {
     ok: true
     gameId: string
+    commanders: GameCard[]
     initialLibrary: GameCard[]
   }
   | {
@@ -293,6 +294,7 @@ export class GameStore {
     return {
       ok: true,
       gameId: game.id,
+      commanders: game.commanders.map((card) => ({ ...card })),
       initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
     }
   }

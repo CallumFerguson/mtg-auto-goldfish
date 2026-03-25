@@ -632,6 +632,7 @@ async function main() {
 
     const prompt = buildStartingHandSimulationPrompt(
       gamePromptContext.gameId,
+      gamePromptContext.commanders,
       gamePromptContext.initialLibrary
     )
 
@@ -801,14 +802,20 @@ async function streamPromptResponse(
 
 function buildStartingHandSimulationPrompt(
   gameId: string,
+  commanders: readonly GameCard[],
   initialLibrary: readonly GameCard[]
 ) {
+  const commanderLabel = commanders.length === 1 ? "Commander" : "Commanders"
+  const commanderNames = commanders.map((card) => card.name)
   const cardNames = initialLibrary.map((card) => card.name)
   const uniqueCards = dedupeCardsByNameAndText(initialLibrary)
 
   return `${DRAW_STARTING_HAND_PROMPT}
 
 Game ID: ${gameId}
+
+${commanderLabel}:
+${commanderNames.join("\n")}
 
 Decklist:
 ${cardNames.join("\n")}
