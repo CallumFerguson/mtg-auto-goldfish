@@ -15,6 +15,7 @@ type SimulationActivity = {
   id: string
   kind: "thinking" | "tool"
   title: string
+  detail?: string
   status: "active" | "done" | "error"
 }
 
@@ -253,13 +254,18 @@ export function GoldfishSimulationPanel({
                           <ActivityIcon status={activity.status} />
                         </div>
 
-                        <div className="flex min-w-0 flex-1 items-center gap-3">
-                          <p className="shrink-0 text-sm font-medium text-stone-100">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-stone-100">
                             {activity.title}
                           </p>
+                          {activity.detail ? (
+                            <p className="mt-1 text-xs leading-5 text-stone-400">
+                              {activity.detail}
+                            </p>
+                          ) : null}
                           {activity.status === "active" && promptPreview ? (
                             <div
-                              className="min-w-0 flex-1 overflow-hidden"
+                              className="min-w-0 overflow-hidden"
                               style={{
                                 maskImage:
                                   "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%)",

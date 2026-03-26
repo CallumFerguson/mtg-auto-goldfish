@@ -89,6 +89,7 @@ type SimulationActivity = {
   id: string
   kind: "thinking" | "tool"
   title: string
+  detail?: string
   status: "active" | "done" | "error"
 }
 
@@ -260,6 +261,35 @@ function getToolActivityTitle(toolName: string | undefined) {
   return toolName ? `Calling ${toolName}` : "Calling tool"
 }
 
+function tryParseJsonObject(value: string | undefined) {
+  if (!value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(value)
+    return parsed !== null && typeof parsed === "object" ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function getMulliganReason(event: Extract<PromptStreamEvent, { type: "tool" }>) {
+  if (event.tool !== "mulligan") {
+    return undefined
+  }
+
+  const parsedArguments = tryParseJsonObject(event.argumentsText)
+  const reason =
+    parsedArguments !== null &&
+    "reason" in parsedArguments &&
+    typeof parsedArguments.reason === "string"
+      ? parsedArguments.reason.trim()
+      : ""
+
+  return reason || undefined
+}
+
 function handlePromptStreamEvent(
   event: PromptStreamEvent,
   setPromptRuns: Dispatch<SetStateAction<SimulationPromptRun[]>>,
@@ -357,16 +387,19 @@ function handlePromptStreamEvent(
           } else if (event.event === "tool_call.arguments") {
             nextActivities = updateLatestToolActivity(nextActivities, {
               title: getToolActivityTitle(event.tool),
+              detail: getMulliganReason(event),
             })
           } else if (event.event === "tool_call.success") {
             nextActivities = updateLatestToolActivity(nextActivities, {
               status: "done",
               title: getToolActivityTitle(event.tool),
+              detail: getMulliganReason(event),
             })
           } else if (event.event === "tool_call.failure") {
             nextActivities = updateLatestToolActivity(nextActivities, {
               status: "error",
               title: getToolActivityTitle(event.tool),
+              detail: getMulliganReason(event),
             })
           }
 

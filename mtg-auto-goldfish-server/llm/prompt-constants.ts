@@ -10,6 +10,7 @@ TOOL USAGE RULES
 - First evaluate the current hand.
 - If the current hand is keepable, keep it and do not call mulligan.
 - If the current hand is not keepable, then and only then call mulligan.
+- Every mulligan tool call must include a short 'reason' argument explaining why the current hand is not keepable.
 - Call draw_starting_hand exactly once to get the very first opening hand.
 - If you later decide to mulligan, call mulligan for the next hand. Do not call draw_starting_hand again.
 - mulligan already shuffles and draws the new seven-card hand for you.
@@ -18,6 +19,7 @@ TOOL USAGE RULES
 - Never call draw_starting_hand after mulligan, because that would incorrectly draw an extra hand.
 
 Before you use a tool, decide whether the hand is a keep or a mulligan and why. Tool calls cannot be undone.
+When you call 'mulligan', pass that explanation in the tool arguments as 'reason'.
 
 GENERAL ASSUMPTIONS
 - Format: Commander / EDH.
@@ -68,23 +70,43 @@ Example conversions:
 - Do not confuse a card's color with the colors of mana required to cast it.
 
 WHAT MATTERS IN THIS STEP
-Use a deliberately simple mulligan heuristic.
+Use a deliberately simple mulligan heuristic, but do NOT treat lands and nonland acceleration as interchangeable.
 
-For this step, the PRIMARY keep / mulligan decision should be based only on the number of mana pieces in the hand, adjusted by which mulligan phase you are in.
+For this step, the PRIMARY keep / mulligan decision should be based on:
+1. land count
+2. early acceleration count
+3. mulligan phase
 
-Define mana pieces as:
-- lands
-- mana rocks
+LANDS are the main baseline.
+EARLY ACCELERATION is support for the land count, not a direct replacement for lands.
+
+Count separately:
+- Lands
+- Early acceleration
+
+Count a nonland card as EARLY ACCELERATION only if it realistically improves mana development on turns 1 to 4 and provides lasting development.
+This can include:
+- cheap mana rocks
 - mana dorks
-- ramp spells that are meant to increase your mana development early
+- cheap land-ramp spells
 
-Count a nonland card as a mana piece only if it is realistically an early ramp card for this deck.
 Do NOT count:
 - expensive ramp that is not part of early development
 - one-shot rituals that do not provide lasting development
 - generic setup cards that do not actually ramp mana
+- cards that technically make mana later but are not realistic early development for this hand
 
-At this stage, do NOT override the simple heuristic just because:
+IMPORTANT INTERPRETATION
+- Do NOT treat 1 land and 1 mana rock as the same as 2 lands.
+- Do NOT treat 4 lands + 1 cheap rock as the same as 5 lands with no acceleration.
+- Lands are the primary measure of stability.
+- Early acceleration can upgrade a borderline land count.
+- Early acceleration usually does NOT rescue 0- or 1-land hands.
+- Early acceleration can make 2-land hands keepable.
+- Early acceleration can make 5-land hands less bad.
+- Even with acceleration, 6- or 7-land hands are usually too flooded early.
+
+At this stage, do NOT override the heuristic just because:
 - the spells look strong
 - the spells look weak
 - the hand has synergy
@@ -94,56 +116,93 @@ At this stage, do NOT override the simple heuristic just because:
 - the curve looks pretty
 - the curve looks clunky
 
-Use the mana-piece count as the main decision rule.
+Use land count first and early acceleration second.
 Only use card-specific detail later for:
-- confirming whether something should count as ramp
+- confirming whether something really counts as early acceleration
+- checking whether a land actually enters untapped or produces the needed color
 - deciding what to bottom after a keep on a non-free mulligan
 - breaking very close ties at the hard cap
 
 Use this exact evaluation procedure for every hand:
-1. Count mana pieces in hand.
-2. Identify the current mulligan phase:
+1. Count lands in hand.
+2. Count early acceleration in hand.
+3. Identify the current mulligan phase:
    - opening 7
    - after 1 mulligan
    - after 2 mulligans
    - after 3 mulligans
    - after 4 total mulligans
-3. Apply the phase-specific heuristic below.
-4. Decide KEEP or MULLIGAN.
-5. Give a short reason tied to mana-piece count and phase.
+4. Apply the phase-specific heuristic below.
+5. Decide KEEP or MULLIGAN.
+6. Give a short reason tied to lands, early acceleration, and phase.
+7. If the verdict is MULLIGAN, use that short reason as the 'reason' argument in the 'mulligan' tool call.
 
 PHASE-SPECIFIC KEEP / MULLIGAN HEURISTIC
 Use these rules in order.
 
 1. Opening 7
-- KEEP if mana pieces = 3, 4, or 5
-- MULLIGAN if mana pieces = 0, 1, 2, 6, or 7
+KEEP if:
+- lands = 3 or 4
+- lands = 2 and early acceleration >= 1
+
+Borderline:
+- lands = 5 and early acceleration >= 1 -> default to MULLIGAN
+
+MULLIGAN if:
+- lands = 0 or 1
+- lands = 2 and early acceleration = 0
+- lands = 5 and early acceleration = 0
+- lands = 6 or 7
 
 2. After 1 mulligan
-- KEEP if mana pieces = 3, 4, or 5
-- 2 or 6 mana pieces are borderline; default to KEEP
-- MULLIGAN if mana pieces = 0, 1, or 7
+KEEP if:
+- lands = 3, 4, or 5
+- lands = 2 and early acceleration >= 1
+
+Borderline:
+- lands = 5 and early acceleration = 0 -> default to KEEP
+
+MULLIGAN if:
+- lands = 0 or 1
+- lands = 2 and early acceleration = 0
+- lands = 6 or 7
 
 3. After 2 mulligans
-- KEEP if mana pieces = 2, 3, 4, 5, or 6
-- MULLIGAN if mana pieces = 0, 1, or 7
+KEEP if:
+- lands = 2, 3, 4, or 5
+- lands = 6 and early acceleration >= 1
+
+Borderline:
+- lands = 1 and early acceleration >= 2 -> default to KEEP
+- lands = 6 and early acceleration = 0 -> default to KEEP
+
+MULLIGAN if:
+- lands = 0
+- lands = 1 and early acceleration <= 1
+- lands = 7
 
 4. After 3 mulligans
-- KEEP if mana pieces = 2, 3, 4, 5, 6, or 7
-- MULLIGAN only if mana pieces = 0 or 1 and you are still below the hard cap
+KEEP if:
+- lands = 2, 3, 4, 5, or 6
+- lands = 1 and early acceleration >= 2
+
+MULLIGAN only if:
+- lands = 0
+- lands = 1 and early acceleration <= 1 and you are still below the hard cap
 
 5. After 4 total mulligans
 - You have reached the hard cap
 - KEEP the hand no matter what
-- If the hand has 2 or more mana pieces, keep it without hesitation
-- If the hand has 0 or 1 mana piece, keep it anyway because the mulligan limit was reached
+- If the hand has a reasonable land count, keep it without hesitation
+- If the hand is weak, keep it anyway because the mulligan limit was reached
 
 PRACTICAL INTERPRETATION
-- 0 to 1 mana pieces: almost always a mulligan until the hard cap forces a keep
-- 3 to 5 mana pieces: ideal range
-- 2 mana pieces: too risky on the first hand, but increasingly acceptable once you have mulliganed
-- 6 mana pieces: too flooded on the first hand, but increasingly acceptable once you have mulliganed
-- 7 mana pieces: usually mulligan unless you are deep enough that preserving hand size matters more
+- 0 to 1 lands: usually a mulligan until the hand is deep enough or the hard cap forces a keep
+- 2 lands: risky by itself, but often acceptable with early acceleration
+- 3 to 4 lands: ideal default range
+- 5 lands: often clunky, but more acceptable once you have mulliganed, especially with early acceleration
+- 6 lands: too flooded on the first hand, but increasingly acceptable once you are deep in mulligans
+- 7 lands: almost always a mulligan unless the hard cap forces a keep
 - Do not chase a perfect hand
 - Do not assume the next hand will be better
 - Once the phase says a hand is a keep, strongly prefer keeping it
@@ -181,7 +240,7 @@ PRACTICAL MULLIGAN LIMITS FOR THIS SIMULATION
 - If you reach the hard cap, you must keep the best available hand, even if it is weak.
 
 COMMANDER AWARENESS
-You may briefly identify what kind of deck this appears to be from the commander and decklist, but do not let that override the simple mana-piece heuristic.
+You may briefly identify what kind of deck this appears to be from the commander and decklist, but do not let that override the simple land-plus-acceleration heuristic.
 Commander and deck context matter more for later gameplay than for this step.
 
 BOTTOMING RULES AFTER A NON-FREE MULLIGAN
@@ -189,7 +248,9 @@ If you keep after taking extra mulligans and must bottom cards:
 - decide whether you are keeping before you call return_cards_to_library
 - decide the entire set of cards to bottom before making the tool call
 - use one return_cards_to_library call with all cards you are bottoming unless order would meaningfully matter
-- keep the cards that best preserve lands, early ramp, and basic functionality
+- keep enough lands first
+- keep early acceleration next
+- then keep the cheapest and easiest-to-cast functional spells
 - bottom the weakest, clunkiest, most redundant, or least castable cards
 - prefer keeping a coherent mana base over keeping individually powerful but awkward cards
 - if choosing between similar nonland cards, keep the cheaper and easier-to-cast ones first
@@ -197,7 +258,7 @@ If you keep after taking extra mulligans and must bottom cards:
 DECISION STYLE
 - Maximize consistency, not high-roll potential.
 - Prefer stable, reliable hands.
-- Follow the phase-specific mana-piece heuristic rather than chasing ideal card quality.
+- Follow the phase-specific land-plus-acceleration heuristic rather than chasing ideal card quality.
 - If two decisions are close, choose the safer keep once you are past the opening hand.
 - Evaluate the hand in front of you, not an imagined better hand.
 - Be concise and decisive. Do not narrate long speculative lines.
@@ -213,7 +274,8 @@ Return only:
 7. if you hit the hard cap, explicitly say that you kept because the mulligan limit was reached
 
 While reasoning about each hand before the final answer, keep your internal checklist compact:
-- Mana pieces:
+- Lands:
+- Early acceleration:
 - Phase:
 - Verdict:
 - Short reason:

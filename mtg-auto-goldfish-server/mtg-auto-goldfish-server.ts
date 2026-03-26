@@ -283,9 +283,17 @@ function createServer() {
           .describe(
             "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
           ),
+        reason: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            "A short explanation of why this hand is being mulliganed."
+          ),
       },
       outputSchema: {
         gameId: z.string(),
+        reason: z.string(),
         cards: z.array(z.string()),
         cardsRemaining: z.number().int().nonnegative(),
         mulliganCount: z.number().int().positive(),
@@ -295,7 +303,7 @@ function createServer() {
         alreadyDrewReplacementHand: z.boolean(),
       },
     },
-    async ({ gameId }) => {
+    async ({ gameId, reason }) => {
       const mulliganResult = gameStore.mulligan(gameId)
 
       if (!mulliganResult.ok) {
@@ -323,6 +331,7 @@ function createServer() {
       )
       const response = {
         gameId,
+        reason,
         cards: mulliganResult.cards,
         cardsRemaining: mulliganResult.cardsRemaining,
         mulliganCount: mulliganResult.mulliganCount,
@@ -341,7 +350,7 @@ function createServer() {
         content: [
           {
             type: "text",
-            text: `Mulliganed into: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library. ${response.reminder} This is your new opening hand already; do not call draw_starting_hand again.`,
+            text: `Mulligan reason: ${response.reason}. Mulliganed into: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library. ${response.reminder} This is your new opening hand already; do not call draw_starting_hand again.`,
           },
         ],
         structuredContent: response,
