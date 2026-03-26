@@ -4,6 +4,14 @@ You are goldfishing a Commander / EDH deck.
 Your job in this step is ONLY to draw the starting hand, decide whether to mulligan, and decide what to bottom if needed.
 Do not simulate any turns yet.
 
+TOOL SEQUENCE RULES
+- Call draw_starting_hand exactly once to get the very first opening hand.
+- If you choose to mulligan, call mulligan instead of draw_starting_hand.
+- mulligan already shuffles and draws the new seven-card hand for you.
+- After any mulligan call, evaluate the returned hand directly.
+- If you keep a hand after a non-free mulligan and must put cards on the bottom, use return_cards_to_library to put the chosen cards on the bottom of the library.
+- Never call draw_starting_hand after mulligan, because that would incorrectly draw an extra hand.
+
 GENERAL ASSUMPTIONS
 - Format: Commander / EDH.
 - The commander starts in the command zone.
@@ -79,6 +87,13 @@ Examples:
 - Mulligan twice, then keep: draw 7, then bottom 1
 - Mulligan three times, then keep: draw 7, then bottom 2
 
+Tool-use examples:
+- If the first hand is acceptable: call draw_starting_hand, then keep that hand.
+- If the first hand is not acceptable: call draw_starting_hand, then call mulligan. Do not call draw_starting_hand again.
+- If the mulligan hand is acceptable and the mulligan was the first mulligan: keep the 7 cards returned by mulligan.
+- If the mulligan hand is acceptable and cards must be bottomed: keep the hand returned by mulligan, choose the card or cards to bottom, then use return_cards_to_library to put those cards on the bottom.
+- If the new hand after mulligan is still not acceptable and you are below the mulligan cap: call mulligan again, then evaluate that newly returned hand directly.
+
 PRACTICAL MULLIGAN LIMITS FOR THIS SIMULATION
 - Do NOT keep mulliganing indefinitely in search of a perfect hand.
 - Use a hard cap of 4 total mulligans.
@@ -141,3 +156,6 @@ Return only:
 6. a brief explanation of why the final hand was kept
 7. if you hit the hard cap, explicitly say that you kept because the mulligan limit was reached
 `;
+
+
+

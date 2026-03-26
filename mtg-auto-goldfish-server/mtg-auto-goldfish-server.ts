@@ -208,7 +208,7 @@ function createServer() {
     {
       title: "Draw Starting Hand",
       description:
-        "Draw the opening seven-card hand from the stored library for an existing game ID that was created outside MCP. This can only be called once per game.",
+        "Draw the very first opening seven-card hand from the stored library for an existing game ID that was created outside MCP. Call this exactly once per game, before any mulligans. Never call this after mulligan, because mulligan already shuffles and draws the replacement seven-card hand.",
       inputSchema: {
         gameId: z
           .string()
@@ -233,7 +233,7 @@ function createServer() {
         const message =
           drawResult.reason === "game_not_found"
             ? GAME_NOT_FOUND_MESSAGE
-            : "The starting hand has already been drawn for that game."
+            : "An opening hand is already active for that game. Do not call draw_starting_hand again. If you took a mulligan, use the seven-card hand returned by mulligan."
 
         return {
           content: [
@@ -261,7 +261,7 @@ function createServer() {
         content: [
           {
             type: "text",
-            text: `Drew starting hand: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library.`,
+            text: `Drew starting hand: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library. This tool is only for the very first opening hand.`,
           },
         ],
         structuredContent: response,
@@ -274,7 +274,7 @@ function createServer() {
     {
       title: "Mulligan",
       description:
-        "Return the starting hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn.",
+        "Return the current opening hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn. Important: this tool already draws and returns the replacement hand, so do not call draw_starting_hand after using this tool.",
       inputSchema: {
         gameId: z
           .string()
@@ -291,6 +291,8 @@ function createServer() {
         mulliganCount: z.number().int().positive(),
         cardsToBottomIfKept: z.number().int().nonnegative(),
         reminder: z.string(),
+        replacesPreviousOpeningHand: z.boolean(),
+        alreadyDrewReplacementHand: z.boolean(),
       },
     },
     async ({ gameId }) => {
@@ -326,6 +328,8 @@ function createServer() {
         mulliganCount: mulliganResult.mulliganCount,
         cardsToBottomIfKept: mulliganResult.cardsToBottomIfKept,
         reminder,
+        replacesPreviousOpeningHand: true,
+        alreadyDrewReplacementHand: true,
       }
 
       logInfo(
@@ -337,7 +341,7 @@ function createServer() {
         content: [
           {
             type: "text",
-            text: `Mulliganed into: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library. ${response.reminder}`,
+            text: `Mulliganed into: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards remain in the library. ${response.reminder} This is your new opening hand already; do not call draw_starting_hand again.`,
           },
         ],
         structuredContent: response,
@@ -890,3 +894,4 @@ main().catch((error) => {
   console.error("Server error:", error)
   process.exit(1)
 })
+
