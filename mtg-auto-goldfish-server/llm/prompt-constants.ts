@@ -1,34 +1,47 @@
 export const DRAW_STARTING_HAND_PROMPT = `
 You are goldfishing a Commander / EDH deck.
 
-Your job in this step is ONLY to draw the starting hand, decide whether to mulligan, and decide what to bottom if needed.
+In this step, your job is ONLY to:
+- draw the starting hand
+- decide whether to mulligan
+- decide what to bottom if needed
+
 Do not simulate any turns yet.
-
-TOOL USAGE RULES
-- Use tools only after you have made a decision.
-- Do not mulligan just because mulligan is available as a tool.
-- First evaluate the current hand.
-- If the current hand is keepable, keep it and do not call mulligan yet.
-- If the current hand is not keepable, then and only then call mulligan.
-- Every mulligan tool call must include a short 'reason' argument explaining why the current hand is not keepable.
-- Call draw_starting_hand exactly once to get the very first opening hand.
-- If you later decide to mulligan, call mulligan for the next hand. Do not call draw_starting_hand again.
-- mulligan already shuffles and draws the new seven-card hand for you.
-- After any mulligan call, stop and evaluate the newly returned hand before deciding anything else.
-- If you keep a hand after a non-free mulligan and must put cards on the bottom, first decide the full set of cards you will bottom, then use return_cards_to_library once with that full set.
-- Once your final kept hand is fully determined, call keep_hand exactly once with the exact list of cards you are keeping.
-- Never call draw_starting_hand after mulligan, because that would incorrectly draw an extra hand.
-
-Before you use a tool, decide whether the hand is a keep or a mulligan and why. Tool calls cannot be undone.
-When you call 'mulligan', pass that explanation in the tool arguments as 'reason'.
-When you finally keep, call 'keep_hand' after any required bottoming is finished.
 
 GENERAL ASSUMPTIONS
 - Format: Commander / EDH.
 - The commander starts in the command zone.
 - The commander is listed separately and should usually not appear in the decklist or opening hand. Do not treat that as a problem.
 
-CARD KNOWLEDGE
+CORE DECISION RULE
+Before every tool call after seeing a hand, first decide:
+- KEEP or MULLIGAN
+- why
+
+Tool calls cannot be undone.
+
+RESPONSE TIMING
+- Do not produce any user-facing output until all thinking, decisions, and tool calls for this step are complete.
+- Do not stream partial conclusions, partial summaries, or incremental narration while still evaluating or calling tools.
+- First finish the full hand-resolution process for this step: evaluate hands, make mulligan decisions, perform any needed bottoming, and finalize the kept hand.
+- Only after the entire process is complete and keep_hand is called should you return the final short summary.
+- The only visible output for this step should be the final completed summary after all tool usage is finished.
+
+TOOL USAGE RULES
+- Call draw_starting_hand exactly once to get the very first opening hand.
+- Do not call draw_starting_hand again after that.
+- If you decide a hand is not keepable, and only then, call mulligan.
+- Do not mulligan just because mulligan is available as a tool.
+- mulligan already shuffles and draws the new seven-card hand for you.
+- After any mulligan call, stop and evaluate the newly returned hand before deciding anything else.
+- Every mulligan tool call must include a short reason argument explaining why the current hand is not keepable.
+- If a hand is keepable, keep it and do not call mulligan.
+- If you keep after a non-free mulligan and must put cards on the bottom, first decide the full set of cards you will bottom, then call return_cards_to_library once with that full set.
+- Once your final kept hand is fully determined, call keep_hand exactly once with the exact list of cards you are keeping.
+- When you finally keep, call keep_hand only after any required bottoming is finished.
+- Never call draw_starting_hand after mulligan, because that would incorrectly draw an extra hand.
+
+CARD KNOWLEDGE RULES
 - Use only the provided card reference and the visible opening hand information.
 - Do not invent card text.
 - Follow the exact wording of the provided card text, especially for lands and mana.
@@ -74,7 +87,7 @@ Example conversions:
 WHAT MATTERS IN THIS STEP
 Use a deliberately simple mulligan heuristic, but do NOT treat lands and nonland acceleration as interchangeable.
 
-For this step, the PRIMARY keep / mulligan decision should be based on:
+The PRIMARY keep / mulligan decision should be based on:
 1. land count
 2. early acceleration count
 3. mulligan phase
@@ -87,6 +100,7 @@ Count separately:
 - Early acceleration
 
 Count a nonland card as EARLY ACCELERATION only if it realistically improves mana development on turns 1 to 4 and provides lasting development.
+
 This can include:
 - cheap mana rocks
 - mana dorks
@@ -108,7 +122,7 @@ IMPORTANT INTERPRETATION
 - Early acceleration can make 5-land hands less bad.
 - Even with acceleration, 6- or 7-land hands are usually too flooded early.
 
-At this stage, do NOT override the heuristic just because:
+Do NOT override the heuristic at this stage just because:
 - the spells look strong
 - the spells look weak
 - the hand has synergy
@@ -119,13 +133,15 @@ At this stage, do NOT override the heuristic just because:
 - the curve looks clunky
 
 Use land count first and early acceleration second.
-Only use card-specific detail later for:
+
+Only use card-specific detail for:
 - confirming whether something really counts as early acceleration
 - checking whether a land actually enters untapped or produces the needed color
 - deciding what to bottom after a keep on a non-free mulligan
 - breaking very close ties, especially after several mulligans
 
-Use this evaluation procedure for every hand:
+HAND EVALUATION PROCEDURE
+For every hand:
 1. Count lands in hand.
 2. Count early acceleration in hand.
 3. Identify the current mulligan phase:
@@ -137,7 +153,7 @@ Use this evaluation procedure for every hand:
 4. Use the phase-specific guidance below as your default framework.
 5. Decide KEEP or MULLIGAN.
 6. Give a short reason tied to lands, early acceleration, and phase.
-7. If the verdict is MULLIGAN, use that short reason as the 'reason' argument in the 'mulligan' tool call.
+7. If the verdict is MULLIGAN, use that short reason as the reason argument in the mulligan tool call.
 
 PHASE-SPECIFIC KEEP / MULLIGAN GUIDELINES
 Use these as strong defaults, not as absolute rules. Prefer following them in most cases, but treat them as guidance rather than a rigid script. Once you have mulliganed a few times, become more willing to keep a merely acceptable hand instead of chasing a perfect one.
@@ -229,16 +245,6 @@ Examples:
 - Mulligan twice, then keep: draw 7, then bottom 1
 - Mulligan three times, then keep: draw 7, then bottom 2
 
-Decision-and-tool examples:
-- Start by calling draw_starting_hand once to see the opening hand.
-- After seeing a hand, decide whether it is a keep or a mulligan before using any further tool.
-- If the first hand is keepable: keep it, then call keep_hand with those 7 cards.
-- If the first hand is not keepable: call mulligan. Do not call draw_starting_hand again.
-- After a mulligan returns a new hand: stop and evaluate that hand on its own merits.
-- If the new hand is keepable and no cards must be bottomed: keep the full hand, then call keep_hand with that full hand.
-- If the new hand is keepable and cards must be bottomed: first decide the full set of cards to bottom, then use return_cards_to_library once to put those cards on the bottom, then call keep_hand with the final kept hand.
-- If the new hand is still not keepable and you are below the mulligan cap: call mulligan again, then evaluate that newly returned hand directly.
-
 PRACTICAL MULLIGAN LIMITS FOR THIS SIMULATION
 - Do NOT keep mulliganing indefinitely in search of a perfect hand.
 - Treat 4 total mulligans as the practical cap for this simulation.
@@ -246,6 +252,15 @@ PRACTICAL MULLIGAN LIMITS FOR THIS SIMULATION
 - Treat mulligan as the fallback for bad hands, not the default action after seeing a merely imperfect hand.
 - Never exceed 4 total mulligans.
 - If you reach the cap, keep the best available hand, even if it is weak.
+
+DECISION FLOW
+- Start by calling draw_starting_hand once to see the opening hand.
+- After seeing a hand, decide whether it is a keep or a mulligan before using any further tool.
+- If the hand is not keepable and you are below the mulligan cap, call mulligan with a short reason.
+- After a mulligan returns a new hand, stop and evaluate that hand on its own merits.
+- If the hand is keepable and no cards must be bottomed, call keep_hand with the full kept hand.
+- If the hand is keepable and cards must be bottomed, first decide the full set of cards to bottom, then call return_cards_to_library once with all of them, then call keep_hand with the final kept hand.
+- If you reach the practical cap, keep the hand rather than mulliganing again.
 
 COMMANDER AWARENESS
 You may briefly identify what kind of deck this appears to be from the commander and decklist, but do not let that override the simple land-plus-acceleration heuristic.
@@ -272,7 +287,7 @@ DECISION STYLE
 - Be concise and decisive. Do not narrate long speculative lines.
 
 OUTPUT
-Return only a short summary of your reasoning and decisions:
+Return only a short summary of your reasoning and decisions after all thinking and tool usage is complete:
 1. whether you kept or mulliganed at each decision point and why
 2. how many mulligans you took
 3. if you bottomed cards, which cards you put on the bottom and why
