@@ -84,10 +84,16 @@ export type GetGamePromptContextResult =
     reason: 'game_not_found'
   }
 
+export type GameStoreOptions = {
+  onDeleteGame?: (gameId: string) => void
+}
+
 export class GameStore {
   private readonly games = new Map<string, GameRecord>()
+  private readonly onDeleteGame?: (gameId: string) => void
 
-  constructor() {
+  constructor(options: GameStoreOptions = {}) {
+    this.onDeleteGame = options.onDeleteGame
     const cleanupTimer = setInterval(() => {
       this.deleteExpiredGames()
     }, ONE_HOUR_IN_MS)
@@ -120,6 +126,12 @@ export class GameStore {
       cardsRemaining: game.library.length,
       totalGames: this.games.size,
     }
+  }
+
+  hasGame(gameId: string) {
+    this.deleteExpiredGames()
+
+    return this.games.has(gameId)
   }
 
   drawCardsFromTop(gameId: string, count: number): DrawResult {
@@ -305,6 +317,7 @@ export class GameStore {
     for (const [gameId, game] of this.games.entries()) {
       if (game.createdAt < expirationCutoff) {
         this.games.delete(gameId)
+        this.onDeleteGame?.(gameId)
       }
     }
   }
@@ -329,4 +342,5 @@ function sortCardsAlphabetically(cards: readonly GameCard[]) {
     leftCard.name.localeCompare(rightCard.name)
   )
 }
+
 

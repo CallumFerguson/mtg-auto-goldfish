@@ -18,7 +18,15 @@ const DEFAULT_ALLOWED_ORIGINS = [
 const GAME_NOT_FOUND_MESSAGE =
   "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
 
-const gameStore = new GameStore()
+type ToolUiDataRecord = {
+  structuredContent?: Record<string, unknown>
+  uiMetadata?: Record<string, unknown>
+}
+
+const gameStore = new GameStore({
+  onDeleteGame: deleteToolUiDataForGame,
+})
+const toolUiDataStore = new Map<string, ToolUiDataRecord>()
 const gameCardSchema = z.object({
   name: z.string().trim().min(1).describe("The card name."),
   cardText: z
@@ -32,6 +40,10 @@ const processPromptSchema = z.object({
 })
 const simulateDrawingStartingHandSchema = z.object({
   gameId: z.string().trim().min(1).describe("The game ID to simulate."),
+})
+const toolUiDataLookupSchema = z.object({
+  toolName: z.string().trim().min(1).describe("The tool name."),
+  gameId: z.string().trim().min(1).describe("The game ID."),
 })
 const createGameSchema = z
   .object({
@@ -251,6 +263,14 @@ function createServer() {
         cards: drawResult.cards,
         cardsRemaining: drawResult.cardsRemaining,
       }
+      const uiMetadata = {
+        randomNumber: getRandomToolTestNumber(),
+      }
+
+      storeToolUiData("draw_starting_hand", gameId, {
+        structuredContent: response,
+        uiMetadata,
+      })
 
       logInfo(
         "draw_starting_hand",
@@ -265,6 +285,9 @@ function createServer() {
           },
         ],
         structuredContent: response,
+        _meta: {
+          uiMetadata,
+        },
       }
     }
   )
@@ -642,6 +665,40 @@ async function main() {
     res.status(201).json(game)
   })
 
+  app.post("/tool-ui-data", (req: Request, res: Response) => {
+    const parsedRequest = toolUiDataLookupSchema.safeParse(req.body)
+
+    if (!parsedRequest.success) {
+      res.status(400).json({
+        error: "Invalid request body.",
+        details: parsedRequest.error.issues,
+      })
+      return
+    }
+
+    if (!gameStore.hasGame(parsedRequest.data.gameId)) {
+      deleteToolUiDataForGame(parsedRequest.data.gameId)
+      res.status(404).json({
+        error: GAME_NOT_FOUND_MESSAGE,
+      })
+      return
+    }
+
+    const toolUiData = takeToolUiData(
+      parsedRequest.data.toolName,
+      parsedRequest.data.gameId
+    )
+
+    if (!toolUiData) {
+      res.status(404).json({
+        error: "No tool UI data was found for that tool call.",
+      })
+      return
+    }
+
+    res.status(200).json(toolUiData)
+  })
+
   app.post("/process-prompt", async (req: Request, res: Response) => {
     const parsedRequest = processPromptSchema.safeParse(req.body)
 
@@ -978,4 +1035,46 @@ main().catch((error) => {
   console.error("Server error:", error)
   process.exit(1)
 })
+
+
+function createToolUiDataKey(toolName: string, gameId: string) {
+  return `${toolName}:${gameId}`
+}
+
+function deleteToolUiDataForGame(gameId: string) {
+  const gameKeySuffix = `:${gameId}`
+
+  for (const key of toolUiDataStore.keys()) {
+    if (key.endsWith(gameKeySuffix)) {
+      toolUiDataStore.delete(key)
+    }
+  }
+}
+
+function storeToolUiData(
+  toolName: string,
+  gameId: string,
+  toolUiData: ToolUiDataRecord
+) {
+  toolUiDataStore.set(createToolUiDataKey(toolName, gameId), toolUiData)
+}
+
+function takeToolUiData(toolName: string, gameId: string) {
+  const key = createToolUiDataKey(toolName, gameId)
+  const toolUiData = toolUiDataStore.get(key)
+
+  if (!toolUiData) {
+    return undefined
+  }
+
+  toolUiDataStore.delete(key)
+
+  return toolUiData
+}
+
+function getRandomToolTestNumber() {
+  return Math.floor(Math.random() * 9000) + 1000
+}
+
+
 

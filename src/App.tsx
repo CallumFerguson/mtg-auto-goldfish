@@ -44,6 +44,11 @@ type GameCardPayload = {
   cardText: string
 }
 
+type ToolUiDataResponse = {
+  structuredContent?: Record<string, unknown>
+  uiMetadata?: Record<string, unknown>
+}
+
 type PromptStreamEvent =
   | {
     type: "start"
@@ -73,6 +78,8 @@ type PromptStreamEvent =
     provider?: string
     argumentsText?: string
     output?: string
+    structuredContent?: Record<string, unknown>
+    uiMetadata?: Record<string, unknown>
     error?: string
   }
   | {
@@ -276,6 +283,71 @@ function tryParseJsonObject(value: string | undefined) {
   }
 }
 
+function getToolGameId(event: Extract<PromptStreamEvent, { type: "tool" }>) {
+  const parsedArguments = tryParseJsonObject(event.argumentsText)
+  const gameId =
+    parsedArguments !== null &&
+    "gameId" in parsedArguments &&
+    typeof parsedArguments.gameId === "string"
+      ? parsedArguments.gameId.trim()
+      : ""
+
+  return gameId || undefined
+}
+
+async function hydrateToolEvent(
+  event: PromptStreamEvent,
+  signal?: AbortSignal
+): Promise<PromptStreamEvent> {
+  if (
+    event.type !== "tool" ||
+    event.event !== "tool_call.success" ||
+    event.tool !== "draw_starting_hand" ||
+    event.structuredContent ||
+    event.uiMetadata
+  ) {
+    return event
+  }
+
+  const gameId = getToolGameId(event)
+
+  if (!gameId) {
+    return event
+  }
+
+  try {
+    const response = await fetch(`${GOLDFISH_SERVER_URL}/tool-ui-data`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      signal,
+      body: JSON.stringify({
+        toolName: event.tool,
+        gameId,
+      }),
+    })
+
+    if (!response.ok) {
+      return event
+    }
+
+    const toolUiData = (await response.json()) as ToolUiDataResponse
+
+    return {
+      ...event,
+      structuredContent: toolUiData.structuredContent ?? event.structuredContent,
+      uiMetadata: toolUiData.uiMetadata ?? event.uiMetadata,
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+
+    return event
+  }
+}
+
 function getMulliganReason(event: Extract<PromptStreamEvent, { type: "tool" }>) {
   if (event.tool !== "mulligan") {
     return undefined
@@ -284,8 +356,8 @@ function getMulliganReason(event: Extract<PromptStreamEvent, { type: "tool" }>) 
   const parsedArguments = tryParseJsonObject(event.argumentsText)
   const reason =
     parsedArguments !== null &&
-    "reason" in parsedArguments &&
-    typeof parsedArguments.reason === "string"
+      "reason" in parsedArguments &&
+      typeof parsedArguments.reason === "string"
       ? parsedArguments.reason.trim()
       : ""
 
@@ -315,7 +387,52 @@ function getKeepHandCards(event: Extract<PromptStreamEvent, { type: "tool" }>) {
   return cards.length ? cards : undefined
 }
 
-function getToolActivityDetail(event: Extract<PromptStreamEvent, { type: "tool" }>) {
+function getToolOutputDetail(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
+  const output = event.output?.trim()
+
+  return output ? output : undefined
+}
+
+function getDrawStartingHandDetail(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
+  if (event.tool !== "draw_starting_hand") {
+    return undefined
+  }
+
+  const cards = Array.isArray(event.structuredContent?.cards)
+    ? event.structuredContent.cards
+      .filter((card): card is string => typeof card === "string")
+      .map((card) => card.trim())
+      .filter(Boolean)
+    : []
+  const randomNumber =
+    typeof event.uiMetadata?.randomNumber === "number"
+      ? event.uiMetadata.randomNumber
+      : undefined
+
+  if (!cards.length && typeof randomNumber !== "number") {
+    return undefined
+  }
+
+  const parts: string[] = []
+
+  if (cards.length) {
+    parts.push(`Cards: ${cards.join(", ")}`)
+  }
+
+  if (typeof randomNumber === "number") {
+    parts.push(`Test random number: ${randomNumber}`)
+  }
+
+  return parts.join(". ")
+}
+
+function getToolActivityDetail(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
   const mulliganReason = getMulliganReason(event)
 
   if (mulliganReason) {
@@ -328,7 +445,13 @@ function getToolActivityDetail(event: Extract<PromptStreamEvent, { type: "tool" 
     return keepHandCards.join(", ")
   }
 
-  return undefined
+  const drawStartingHandDetail = getDrawStartingHandDetail(event)
+
+  if (drawStartingHandDetail) {
+    return drawStartingHandDetail
+  }
+
+  return getToolOutputDetail(event)
 }
 
 function handlePromptStreamEvent(
@@ -342,13 +465,13 @@ function handlePromptStreamEvent(
         currentRuns.map((run) =>
           run.id === runId
             ? {
-                ...run,
-                rawPromptStream: appendRawPromptStream(
-                  run.rawPromptStream,
-                  `[model] ${event.model.displayName} (${event.model.key})\n\n`
-                ),
-                activities: [createThinkingActivity()],
-              }
+              ...run,
+              rawPromptStream: appendRawPromptStream(
+                run.rawPromptStream,
+                `[model] ${event.model.displayName} (${event.model.key})\n\n`
+              ),
+              activities: [createThinkingActivity()],
+            }
             : run
         )
       )
@@ -384,12 +507,12 @@ function handlePromptStreamEvent(
         currentRuns.map((run) =>
           run.id === runId
             ? {
-                ...run,
-                rawPromptStream: appendRawPromptStream(
-                  run.rawPromptStream,
-                  event.delta
-                ),
-              }
+              ...run,
+              rawPromptStream: appendRawPromptStream(
+                run.rawPromptStream,
+                event.delta
+              ),
+            }
             : run
         )
       )
@@ -399,14 +522,14 @@ function handlePromptStreamEvent(
         currentRuns.map((run) =>
           run.id === runId
             ? {
-                ...run,
-                rawPromptStream: appendRawPromptStream(
-                  run.rawPromptStream,
-                  event.delta
-                ),
-                finalAnswerStatus: "streaming",
-                result: `${run.result}${event.delta}`,
-              }
+              ...run,
+              rawPromptStream: appendRawPromptStream(
+                run.rawPromptStream,
+                event.delta
+              ),
+              finalAnswerStatus: "streaming",
+              result: `${run.result}${event.delta}`,
+            }
             : run
         )
       )
@@ -460,13 +583,13 @@ function handlePromptStreamEvent(
         currentRuns.map((run) =>
           run.id === runId
             ? {
-                ...run,
-                rawPromptStream: appendRawPromptStream(
-                  run.rawPromptStream,
-                  `[error] ${event.error}\n`
-                ),
-                activities: completeActiveActivity(run.activities, "error"),
-              }
+              ...run,
+              rawPromptStream: appendRawPromptStream(
+                run.rawPromptStream,
+                `[error] ${event.error}\n`
+              ),
+              activities: completeActiveActivity(run.activities, "error"),
+            }
             : run
         )
       )
@@ -476,15 +599,15 @@ function handlePromptStreamEvent(
         currentRuns.map((run) =>
           run.id === runId
             ? {
-                ...run,
-                rawPromptStream: appendRawPromptStream(
-                  run.rawPromptStream,
-                  "\n[chat.end]\n"
-                ),
-                activities: completeActiveActivity(run.activities),
-                finalAnswerStatus: "done",
-                result: event.result,
-              }
+              ...run,
+              rawPromptStream: appendRawPromptStream(
+                run.rawPromptStream,
+                "\n[chat.end]\n"
+              ),
+              activities: completeActiveActivity(run.activities),
+              finalAnswerStatus: "done",
+              result: event.result,
+            }
             : run
         )
       )
@@ -534,7 +657,8 @@ async function readPromptStream(
         continue
       }
 
-      const event = JSON.parse(trimmedLine) as PromptStreamEvent
+      const parsedEvent = JSON.parse(trimmedLine) as PromptStreamEvent
+      const event = await hydrateToolEvent(parsedEvent, signal)
       handlePromptStreamEvent(event, setPromptRuns, runId)
 
       if (event.type === "message") {
@@ -558,7 +682,8 @@ async function readPromptStream(
   const trailing = `${buffer}${decoder.decode()}`.trim()
 
   if (trailing) {
-    const event = JSON.parse(trailing) as PromptStreamEvent
+    const parsedEvent = JSON.parse(trailing) as PromptStreamEvent
+    const event = await hydrateToolEvent(parsedEvent, signal)
     handlePromptStreamEvent(event, setPromptRuns, runId)
 
     if (event.type === "message") {
@@ -996,8 +1121,8 @@ export function App() {
             : ""
         throw new Error(
           detailMessage ||
-            ("error" in promptPayload && promptPayload.error) ||
-            "Failed to decide the first card to play."
+          ("error" in promptPayload && promptPayload.error) ||
+          "Failed to decide the first card to play."
         )
       }
 
@@ -1483,4 +1608,7 @@ export function App() {
 }
 
 export default App
+
+
+
 

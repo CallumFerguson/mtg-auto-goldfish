@@ -390,10 +390,19 @@ export function createLmStudioPromptProcessor(
 
               break
 
-            case "tool_call.success":
+            case "tool_call.success": {
+              const payloadRecord = asObjectRecord(payload)
+              const metaRecord = asObjectRecord(payloadRecord._meta)
+              const uiMetadata =
+                asOptionalObjectRecord(payloadRecord.uiMetadata) ??
+                asOptionalObjectRecord(metaRecord.uiMetadata)
+              const structuredContent = asOptionalObjectRecord(
+                payloadRecord.structuredContent
+              )
+
               streamedText = appendStreamTextOrThrow(
                 streamedText,
-                `${safeJsonStringify(asObjectRecord(payload).arguments) ?? ""}${asStringRecord(payload).output ?? ""}`,
+                `${safeJsonStringify(payloadRecord.arguments) ?? ""}${asStringRecord(payload).output ?? ""}`,
                 abortPrompt
               )
               onEvent({
@@ -405,14 +414,17 @@ export function createLmStudioPromptProcessor(
 
                 provider: extractProviderLabel(payload),
 
-                argumentsText: safeJsonStringify(
-                  asObjectRecord(payload).arguments
-                ),
+                argumentsText: safeJsonStringify(payloadRecord.arguments),
 
                 output: asStringRecord(payload).output,
+
+                structuredContent,
+
+                uiMetadata,
               })
 
               break
+            }
 
             case "tool_call.failure":
               streamedText = appendStreamTextOrThrow(
@@ -840,6 +852,14 @@ function asObjectRecord(value: unknown) {
   return value as Record<string, unknown>
 }
 
+function asOptionalObjectRecord(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+
+  return value as Record<string, unknown>
+}
+
 function asStringRecord(value: unknown) {
   return asObjectRecord(value) as Record<string, string | undefined>
 }
@@ -945,4 +965,5 @@ async function buildErrorMessage(response: Response) {
 
   return `LM Studio request failed with ${response.status}.`
 }
+
 
