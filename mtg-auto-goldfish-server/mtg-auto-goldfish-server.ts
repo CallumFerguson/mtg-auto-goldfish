@@ -131,6 +131,11 @@ function createServer() {
         cardsRemaining: drawResult.cardsRemaining,
       }
 
+      storeToolUiData("draw_card_from_top", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
       logInfo(
         "draw_top",
         `${shortId(gameId)} n=${response.cards.length} left=${response.cardsRemaining}`
@@ -198,6 +203,11 @@ function createServer() {
         cardsRemaining: drawResult.cardsRemaining,
       }
 
+      storeToolUiData("draw_card_from_bottom", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
       logInfo(
         "draw_bottom",
         `${shortId(gameId)} n=${response.cards.length} left=${response.cardsRemaining}`
@@ -263,13 +273,9 @@ function createServer() {
         cards: drawResult.cards,
         cardsRemaining: drawResult.cardsRemaining,
       }
-      const uiMetadata = {
-        randomNumber: getRandomToolTestNumber(),
-      }
-
       storeToolUiData("draw_starting_hand", gameId, {
         structuredContent: response,
-        uiMetadata,
+        uiMetadata: {},
       })
 
       logInfo(
@@ -361,6 +367,11 @@ function createServer() {
         alreadyDrewReplacementHand: true,
       }
 
+      storeToolUiData("mulligan", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
       logInfo(
         "mulligan",
         `${shortId(gameId)} n=${response.cards.length} mulligans=${response.mulliganCount} left=${response.cardsRemaining}`
@@ -440,6 +451,11 @@ function createServer() {
         insertedFromBottom: returnResult.insertedFromBottom,
         cardsRemaining: returnResult.cardsRemaining,
       }
+
+      storeToolUiData("return_card_to_library", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
 
       logInfo(
         "return_to_library",
@@ -523,6 +539,11 @@ function createServer() {
         cardsRemaining: returnResult.cardsRemaining,
       }
 
+      storeToolUiData("return_cards_to_library", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
       logInfo(
         "return_cards_to_library",
         `${shortId(gameId)} n=${response.cards.length} side=${side} randomized=${randomizeOrder} left=${response.cardsRemaining}`
@@ -590,6 +611,11 @@ function createServer() {
         cards,
         kept: true as const,
       }
+
+      storeToolUiData("keep_hand", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
 
       logInfo("keep_hand", `${shortId(gameId)} n=${cards.length}`)
 
@@ -1069,9 +1095,7 @@ function takeToolUiData(toolName: string, gameId: string) {
   return toolUiData
 }
 
-function getRandomToolTestNumber() {
-  return Math.floor(Math.random() * 9000) + 1000
-}
+
 
 
 

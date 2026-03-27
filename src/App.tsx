@@ -302,7 +302,7 @@ async function hydrateToolEvent(
   if (
     event.type !== "tool" ||
     event.event !== "tool_call.success" ||
-    event.tool !== "draw_starting_hand" ||
+    !event.tool ||
     event.structuredContent ||
     event.uiMetadata
   ) {
@@ -348,6 +348,21 @@ async function hydrateToolEvent(
   }
 }
 
+function getStructuredToolCards(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
+  if (!Array.isArray(event.structuredContent?.cards)) {
+    return undefined
+  }
+
+  const cards = event.structuredContent.cards
+    .filter((card): card is string => typeof card === "string")
+    .map((card) => card.trim())
+    .filter(Boolean)
+
+  return cards.length ? cards : undefined
+}
+
 function getMulliganReason(event: Extract<PromptStreamEvent, { type: "tool" }>) {
   if (event.tool !== "mulligan") {
     return undefined
@@ -362,6 +377,31 @@ function getMulliganReason(event: Extract<PromptStreamEvent, { type: "tool" }>) 
       : ""
 
   return reason || undefined
+}
+
+function getMulliganDetail(event: Extract<PromptStreamEvent, { type: "tool" }>) {
+  if (event.tool !== "mulligan") {
+    return undefined
+  }
+
+  const reason = getMulliganReason(event)
+  const cards = getStructuredToolCards(event)
+
+  if (!reason && !cards?.length) {
+    return undefined
+  }
+
+  const parts: string[] = []
+
+  if (reason) {
+    parts.push(`Reason: ${reason}`)
+  }
+
+  if (cards?.length) {
+    parts.push(`New hand: ${cards.join(", ")}`)
+  }
+
+  return parts.join(". ")
 }
 
 function getKeepHandCards(event: Extract<PromptStreamEvent, { type: "tool" }>) {
@@ -394,41 +434,18 @@ function getDrawStartingHandDetail(
     return undefined
   }
 
-  const cards = Array.isArray(event.structuredContent?.cards)
-    ? event.structuredContent.cards
-      .filter((card): card is string => typeof card === "string")
-      .map((card) => card.trim())
-      .filter(Boolean)
-    : []
-  const randomNumber =
-    typeof event.uiMetadata?.randomNumber === "number"
-      ? event.uiMetadata.randomNumber
-      : undefined
+  const cards = getStructuredToolCards(event)
 
-  if (!cards.length && typeof randomNumber !== "number") {
-    return undefined
-  }
-
-  const parts: string[] = []
-
-  if (cards.length) {
-    parts.push(`Cards: ${cards.join(", ")}`)
-  }
-
-  if (typeof randomNumber === "number") {
-    parts.push(`Test random number: ${randomNumber}`)
-  }
-
-  return parts.join(". ")
+  return cards?.length ? `Cards: ${cards.join(", ")}` : undefined
 }
 
 function getToolActivityDetail(
   event: Extract<PromptStreamEvent, { type: "tool" }>
 ) {
-  const mulliganReason = getMulliganReason(event)
+  const mulliganDetail = getMulliganDetail(event)
 
-  if (mulliganReason) {
-    return mulliganReason
+  if (mulliganDetail) {
+    return mulliganDetail
   }
 
   const keepHandCards = getKeepHandCards(event)
@@ -1600,6 +1617,8 @@ export function App() {
 }
 
 export default App
+
+
 
 
 
