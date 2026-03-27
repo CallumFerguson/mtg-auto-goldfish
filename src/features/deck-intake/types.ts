@@ -34,6 +34,11 @@ export type ScryfallCardFace = {
   power?: string
   toughness?: string
   loyalty?: string
+  image_uris?: {
+    small?: string
+    normal?: string
+    large?: string
+  }
 }
 
 export type ScryfallCard = {
@@ -44,6 +49,15 @@ export type ScryfallCard = {
   power?: string
   toughness?: string
   loyalty?: string
+  image_uris?: {
+    small?: string
+    normal?: string
+    large?: string
+  }
+  set_name?: string
+  collector_number?: string
+  rarity?: string
+  scryfall_uri?: string
   card_faces?: ScryfallCardFace[]
 }
 

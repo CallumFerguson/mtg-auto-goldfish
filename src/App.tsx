@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { ComponentProps, Dispatch, SetStateAction } from "react"
+import type { ComponentProps, Dispatch, ReactNode, SetStateAction } from "react"
 
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
 import { GoldfishSimulationPanel } from "@/features/deck-intake/components/goldfish-simulation-panel"
+import { ToolCardList } from "@/features/deck-intake/components/tool-card-elements"
 import { HeroSection } from "@/features/deck-intake/components/hero-section"
 import { ProcessedCardsPanel } from "@/features/deck-intake/components/processed-cards-panel"
 import { PromptStreamModal } from "@/features/deck-intake/components/prompt-stream-modal"
@@ -96,7 +97,7 @@ type SimulationActivity = {
   id: string
   kind: "thinking" | "tool"
   title: string
-  detail?: string
+  detail?: ReactNode
   status: "active" | "done" | "error"
 }
 
@@ -391,17 +392,14 @@ function getMulliganDetail(event: Extract<PromptStreamEvent, { type: "tool" }>) 
     return undefined
   }
 
-  const parts: string[] = []
-
-  if (reason) {
-    parts.push(`Reason: ${reason}`)
-  }
-
-  if (cards?.length) {
-    parts.push(`New hand: ${cards.join(", ")}`)
-  }
-
-  return parts.join(". ")
+  return (
+    <div className="space-y-2">
+      {reason ? (
+        <p className="text-xs leading-5 text-stone-400">Reason: {reason}</p>
+      ) : null}
+      {cards?.length ? <ToolCardList cards={cards} label={"New Hand:"} /> : null}
+    </div>
+  )
 }
 
 function getKeepHandCards(event: Extract<PromptStreamEvent, { type: "tool" }>) {
@@ -436,7 +434,7 @@ function getDrawStartingHandDetail(
 
   const cards = getStructuredToolCards(event)
 
-  return cards?.length ? `Cards: ${cards.join(", ")}` : undefined
+  return cards?.length ? <ToolCardList cards={cards} /> : undefined
 }
 
 function getToolActivityDetail(
@@ -451,7 +449,7 @@ function getToolActivityDetail(
   const keepHandCards = getKeepHandCards(event)
 
   if (keepHandCards) {
-    return keepHandCards.join(", ")
+    return <ToolCardList cards={keepHandCards} />
   }
 
   const drawStartingHandDetail = getDrawStartingHandDetail(event)

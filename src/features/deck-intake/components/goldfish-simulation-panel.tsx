@@ -7,6 +7,7 @@ import {
   XCircle,
 } from "lucide-react"
 import { useEffect, useRef } from "react"
+import type { ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { GoldfishAnswerMarkdown } from "@/features/deck-intake/components/goldfish-answer-markdown"
@@ -15,7 +16,7 @@ type SimulationActivity = {
   id: string
   kind: "thinking" | "tool"
   title: string
-  detail?: string
+  detail?: ReactNode
   status: "active" | "done" | "error"
 }
 
@@ -282,9 +283,7 @@ export function GoldfishSimulationPanel({
                             {activity.title}
                           </p>
                           {activity.detail ? (
-                            <p className="mt-1 text-xs leading-5 text-stone-400">
-                              {activity.detail}
-                            </p>
+                            <div className="mt-1">{activity.detail}</div>
                           ) : null}
                           {activity.status === "active" && promptPreview ? (
                             <div

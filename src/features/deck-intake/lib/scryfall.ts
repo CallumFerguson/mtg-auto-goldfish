@@ -238,6 +238,63 @@ async function fetchNamedCardFuzzy(name: string) {
   return (await response.json()) as ScryfallCard
 }
 
+async function fetchNamedCardExact(name: string) {
+  const response = await fetch(
+    `${SCRYFALL_NAMED_URL}?exact=${encodeURIComponent(name)}`,
+    {
+      headers: {
+        Accept: "application/json;q=0.9,*/*;q=0.8",
+      },
+    }
+  )
+
+  if (!response.ok) {
+    return null
+  }
+
+  return (await response.json()) as ScryfallCard
+}
+
+export async function fetchCardByName(name: string) {
+  const trimmedName = name.trim()
+
+  if (!trimmedName) {
+    throw new Error("Card name is required.")
+  }
+
+  const lookupKey = trimmedName.toLowerCase()
+  const cache = loadCache()
+  const cachedEntry = getCachedCard(cache, lookupKey)
+
+  if (cachedEntry?.status === "found") {
+    return cachedEntry.card
+  }
+
+  if (cachedEntry?.status === "not_found") {
+    return null
+  }
+
+  const exactMatch = await fetchNamedCardExact(trimmedName)
+
+  if (exactMatch) {
+    setCachedFoundCard(cache, lookupKey, exactMatch)
+    saveCache(cache)
+    return exactMatch
+  }
+
+  const fuzzyMatch = await fetchNamedCardFuzzy(trimmedName)
+
+  if (fuzzyMatch) {
+    setCachedFoundCard(cache, lookupKey, fuzzyMatch)
+    saveCache(cache)
+    return fuzzyMatch
+  }
+
+  setCachedNotFound(cache, lookupKey)
+  saveCache(cache)
+  return null
+}
+
 export async function fetchCardsByName(names: string[]) {
   const uniqueNames = Array.from(new Set(names))
   const results = new Map<string, ScryfallCard>()
