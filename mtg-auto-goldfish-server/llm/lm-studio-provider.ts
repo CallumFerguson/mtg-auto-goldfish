@@ -6,7 +6,6 @@ import type {
 } from "./index.js"
 
 export const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234"
-export const LM_STUDIO_TEMPERATURE = 0.1
 export const LM_STUDIO_PROMPT_TIMEOUT_MS = 10 * 60 * 1000
 const STREAM_LOOP_SEQUENCE_LENGTH = 250
 const STREAM_LOOP_LOOKBACK_LENGTH = 2500
@@ -130,7 +129,6 @@ export function createLmStudioPromptProcessor(
                 mcpServerUrl,
               }),
 
-              temperature: LM_STUDIO_TEMPERATURE,
 
               stream: false,
 
@@ -221,7 +219,6 @@ export function createLmStudioPromptProcessor(
               mcpServerUrl,
             }),
 
-            temperature: LM_STUDIO_TEMPERATURE,
 
             stream: true,
 
