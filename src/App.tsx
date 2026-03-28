@@ -1450,7 +1450,6 @@ export function App() {
     simulationAbortControllerRef.current = null
     setIsStartingSimulation(false)
     setSimulationError(SIMULATION_CANCELED_MESSAGE)
-    setCurrentSimulationSeed(null)
     setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
   }
 
