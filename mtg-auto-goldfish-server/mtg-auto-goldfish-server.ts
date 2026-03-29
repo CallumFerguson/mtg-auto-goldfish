@@ -1091,19 +1091,35 @@ function getAllowedOrigins(rawOrigins: string | undefined) {
 function getPromptProcessorOptions(
   provider: PromptProcessorProvider
 ): PromptProcessorOptions {
+  const model = getProviderModel(provider)
+
   return {
     provider,
     baseUrl: getProviderBaseUrl(provider),
     apiToken: getProviderApiToken(provider),
     apiKey: getProviderApiKey(provider),
-    model: getProviderModel(provider),
+    model,
     maxOutputTokens:
       getOptionalPositiveInteger(process.env.LLM_MAX_OUTPUT_TOKENS) ??
       DEFAULT_LLM_MAX_OUTPUT_TOKENS,
-    reasoningEffort: process.env.OPENAI_REASONING_EFFORT?.trim() || undefined,
+    reasoningEffort: getProviderReasoningEffort(provider, model),
   }
 }
 
+function getProviderReasoningEffort(
+  provider: PromptProcessorProvider,
+  _model: string | undefined
+) {
+  switch (provider) {
+    case "openai":
+      return process.env.OPENAI_REASONING_EFFORT?.trim() || "medium"
+    case "claude":
+      return process.env.CLAUDE_REASONING_EFFORT?.trim() || "medium"
+    case "lm-studio":
+    default:
+      return undefined
+  }
+}
 function getProviderBaseUrl(provider: PromptProcessorProvider) {
   switch (provider) {
     case "openai":
@@ -1139,9 +1155,9 @@ function getProviderApiKey(provider: PromptProcessorProvider) {
 function getProviderModel(provider: PromptProcessorProvider) {
   switch (provider) {
     case "openai":
-      return process.env.OPENAI_MODEL?.trim() || "gpt-5"
+      return requireNonEmptyEnvValue("OPENAI_MODEL")
     case "claude":
-      return process.env.CLAUDE_MODEL?.trim() || "claude-sonnet-4-20250514"
+      return requireNonEmptyEnvValue("CLAUDE_MODEL")
     case "lm-studio":
     default:
       return process.env.LM_STUDIO_MODEL?.trim() || undefined
@@ -1532,6 +1548,11 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
+
+
 
 
 

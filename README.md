@@ -120,6 +120,7 @@ OPENAI_REASONING_EFFORT=medium
 # Claude
 CLAUDE_API_KEY=
 CLAUDE_MODEL=claude-sonnet-4-6
+CLAUDE_REASONING_EFFORT=medium
 
 # Public MCP URLs for cloud providers only.
 # Required when LLM_PROVIDER=openai or LLM_PROVIDER=claude.
@@ -172,3 +173,5 @@ npm run dev
 - Tailwind CSS v4
 - shadcn/ui
 - Scryfall API
+
+

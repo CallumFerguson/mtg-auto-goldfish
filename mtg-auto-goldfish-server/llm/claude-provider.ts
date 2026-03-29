@@ -7,16 +7,23 @@ import type {
 } from "./index.js"
 
 export const CLAUDE_DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
-const CLAUDE_DEFAULT_MODEL = "claude-sonnet-4-20250514"
 const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 8192
 const CLAUDE_PROMPT_TIMEOUT_MS = 10 * 60 * 1000
 const CLAUDE_API_VERSION = "2023-06-01"
 const CLAUDE_MCP_BETA_HEADER = "mcp-client-2025-04-04"
+const CLAUDE_ADAPTIVE_EFFORT_VALUES = ["low", "medium", "high", "max"] as const
+
+type ClaudeReasoningEffort = (typeof CLAUDE_ADAPTIVE_EFFORT_VALUES)[number]
 
 type ClaudeMcpServer = {
   type: "url"
   name: string
   url: string
+}
+
+type ClaudeAdaptiveThinkingConfig = {
+  type: "adaptive"
+  effort: ClaudeReasoningEffort
 }
 
 type ClaudeMessageResponse = {
@@ -40,12 +47,16 @@ export function createClaudePromptProcessor(
 ): PromptProcessor {
   const baseUrl = normalizeBaseUrl(options.baseUrl ?? CLAUDE_DEFAULT_BASE_URL)
   const apiKey = options.apiKey?.trim()
-  const modelName = options.model?.trim() || CLAUDE_DEFAULT_MODEL
+  const modelName = options.model?.trim()
   const fetchImpl = options.fetchImpl ?? fetch
   const mcpServerUrl = options.mcpServerUrl?.trim()
   const mcpServerLabel = options.mcpServerLabel?.trim() || "mtg-auto-goldfish"
   const maxOutputTokens =
     options.maxOutputTokens ?? CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS
+  const reasoningEffort = options.reasoningEffort?.trim()
+  const thinking = modelName
+    ? buildAdaptiveThinkingConfig(modelName, reasoningEffort)
+    : undefined
 
   async function runPrompt(
     prompt: string,
@@ -54,6 +65,10 @@ export function createClaudePromptProcessor(
   ): Promise<PromptProcessingResult> {
     if (!apiKey) {
       throw new Error("CLAUDE_API_KEY is required when LLM_PROVIDER=claude.")
+    }
+
+    if (!modelName) {
+      throw new Error("CLAUDE_MODEL is required when LLM_PROVIDER=claude.")
     }
 
     const selectedModel = createConfiguredModel("claude", modelName)
@@ -79,6 +94,7 @@ export function createClaudePromptProcessor(
           body: JSON.stringify({
             model: modelName,
             max_tokens: maxOutputTokens,
+            thinking,
             messages: [
               {
                 role: "user",
@@ -128,6 +144,32 @@ export function createClaudePromptProcessor(
       return runPrompt(prompt, onEvent, signal)
     },
   }
+}
+
+function buildAdaptiveThinkingConfig(
+  _modelName: string,
+  reasoningEffort: string | undefined
+): ClaudeAdaptiveThinkingConfig | undefined {
+  if (!reasoningEffort) {
+    return undefined
+  }
+
+  const normalizedEffort = reasoningEffort.trim().toLowerCase()
+
+  if (!isClaudeReasoningEffort(normalizedEffort)) {
+    throw new Error(
+      `Unsupported CLAUDE_REASONING_EFFORT value: ${reasoningEffort}. Expected low, medium, high, or max.`
+    )
+  }
+
+  return {
+    type: "adaptive",
+    effort: normalizedEffort,
+  }
+}
+
+function isClaudeReasoningEffort(value: string): value is ClaudeReasoningEffort {
+  return (CLAUDE_ADAPTIVE_EFFORT_VALUES as readonly string[]).includes(value)
 }
 
 function buildMcpServers(options: {
@@ -438,3 +480,6 @@ function safeJsonStringify(value: unknown) {
     return undefined
   }
 }
+
+
+

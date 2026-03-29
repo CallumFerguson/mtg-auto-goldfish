@@ -7,7 +7,6 @@ import type {
 } from "./index.js"
 
 export const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
-const OPENAI_DEFAULT_MODEL = "gpt-5"
 const OPENAI_PROMPT_TIMEOUT_MS = 10 * 60 * 1000
 
 type OpenAiToolDefinition = {
@@ -39,7 +38,7 @@ export function createOpenAiPromptProcessor(
 ): PromptProcessor {
   const baseUrl = normalizeBaseUrl(options.baseUrl ?? OPENAI_DEFAULT_BASE_URL)
   const apiKey = options.apiKey?.trim()
-  const modelName = options.model?.trim() || OPENAI_DEFAULT_MODEL
+  const modelName = options.model?.trim()
   const fetchImpl = options.fetchImpl ?? fetch
   const mcpServerUrl = options.mcpServerUrl?.trim()
   const mcpServerLabel = options.mcpServerLabel?.trim() || "mtg-auto-goldfish"
@@ -53,6 +52,10 @@ export function createOpenAiPromptProcessor(
   ): Promise<PromptProcessingResult> {
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is required when LLM_PROVIDER=openai.")
+    }
+
+    if (!modelName) {
+      throw new Error("OPENAI_MODEL is required when LLM_PROVIDER=openai.")
     }
 
     const selectedModel = createConfiguredModel("openai", modelName)
@@ -498,3 +501,5 @@ function stringifyUnknown(value: unknown) {
 
   return safeJsonStringify(value)
 }
+
+
