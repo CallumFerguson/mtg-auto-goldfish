@@ -1103,6 +1103,7 @@ function getPromptProcessorOptions(
       getOptionalPositiveInteger(process.env.LLM_MAX_OUTPUT_TOKENS) ??
       DEFAULT_LLM_MAX_OUTPUT_TOKENS,
     reasoningEffort: getProviderReasoningEffort(provider, model),
+    reasoningSummary: getProviderReasoningSummary(provider),
   }
 }
 
@@ -1115,6 +1116,28 @@ function getProviderReasoningEffort(
       return process.env.OPENAI_REASONING_EFFORT?.trim() || "medium"
     case "claude":
       return process.env.CLAUDE_REASONING_EFFORT?.trim() || "medium"
+    case "lm-studio":
+    default:
+      return undefined
+  }
+}
+
+function getProviderReasoningSummary(provider: PromptProcessorProvider) {
+  switch (provider) {
+    case "openai": {
+      const configuredSummary = process.env.OPENAI_REASONING_SUMMARY?.trim()
+
+      if (!configuredSummary) {
+        return undefined
+      }
+
+      if (configuredSummary.toLowerCase() === "off") {
+        return undefined
+      }
+
+      return configuredSummary
+    }
+    case "claude":
     case "lm-studio":
     default:
       return undefined
@@ -1548,6 +1571,9 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
 
 
 

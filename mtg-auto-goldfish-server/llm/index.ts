@@ -12,6 +12,7 @@ export type PromptProcessorOptions = {
   model?: string
   maxOutputTokens?: number
   reasoningEffort?: string
+  reasoningSummary?: string
   fetchImpl?: typeof fetch
   mcpServerUrl?: string
   mcpServerLabel?: string

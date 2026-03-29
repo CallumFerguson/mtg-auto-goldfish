@@ -15,6 +15,11 @@ type OpenAiToolDefinition = {
   require_approval: "never"
 }
 
+type OpenAiReasoningConfig = {
+  effort?: string
+  summary?: string
+}
+
 type OpenAiResponse = {
   output?: OpenAiOutputItem[]
   output_text?: string
@@ -63,6 +68,7 @@ export function createOpenAiPromptProcessor(
   const mcpServerLabel = options.mcpServerLabel?.trim() || "mtg-auto-goldfish"
   const maxOutputTokens = options.maxOutputTokens
   const reasoningEffort = options.reasoningEffort?.trim()
+  const reasoningSummary = options.reasoningSummary?.trim()
 
   async function processPrompt(prompt: string): Promise<PromptProcessingResult> {
     if (!apiKey) {
@@ -91,11 +97,7 @@ export function createOpenAiPromptProcessor(
             model: modelName,
             input: prompt,
             max_output_tokens: maxOutputTokens,
-            reasoning: reasoningEffort
-              ? {
-                  effort: reasoningEffort,
-                }
-              : undefined,
+            reasoning: buildReasoningConfig(reasoningEffort, reasoningSummary),
             store: false,
             tools: buildTools({
               mcpServerLabel,
@@ -153,6 +155,7 @@ export function createOpenAiPromptProcessor(
       let streamedMessage = ""
       let hasStartedMessage = false
       const toolCalls = new Map<string, ToolCallState>()
+      const activeReasoningItems = new Set<string>()
 
       try {
         const response = await fetchImpl(`${baseUrl}/responses`, {
@@ -163,11 +166,7 @@ export function createOpenAiPromptProcessor(
             model: modelName,
             input: prompt,
             max_output_tokens: maxOutputTokens,
-            reasoning: reasoningEffort
-              ? {
-                  effort: reasoningEffort,
-                }
-              : undefined,
+            reasoning: buildReasoningConfig(reasoningEffort, reasoningSummary),
             store: false,
             stream: true,
             tools: buildTools({
@@ -267,6 +266,29 @@ export function createOpenAiPromptProcessor(
                 break
               }
 
+              case "response.reasoning_summary_text.delta": {
+                const delta = event.delta ?? ""
+                const reasoningItemId = event.item_id ?? "openai-reasoning-summary"
+
+                if (!delta) {
+                  break
+                }
+
+                if (!activeReasoningItems.has(reasoningItemId)) {
+                  activeReasoningItems.add(reasoningItemId)
+                  onEvent({
+                    type: "status",
+                    event: "reasoning.start",
+                  })
+                }
+
+                onEvent({
+                  type: "reasoning",
+                  delta,
+                })
+                break
+              }
+
               case "response.output_text.delta": {
                 const delta = event.delta ?? ""
 
@@ -333,6 +355,14 @@ export function createOpenAiPromptProcessor(
                   })
                 }
 
+                if (item?.type === "reasoning" && itemId && activeReasoningItems.has(itemId)) {
+                  activeReasoningItems.delete(itemId)
+                  onEvent({
+                    type: "status",
+                    event: "reasoning.end",
+                  })
+                }
+
                 break
               }
 
@@ -341,6 +371,14 @@ export function createOpenAiPromptProcessor(
                 break
 
               case "response.completed":
+                for (const reasoningItemId of activeReasoningItems) {
+                  void reasoningItemId
+                  onEvent({
+                    type: "status",
+                    event: "reasoning.end",
+                  })
+                }
+                activeReasoningItems.clear()
                 finalResponse = isOpenAiResponse(event.response)
                   ? event.response
                   : undefined
@@ -421,6 +459,20 @@ function buildTools(options: {
       require_approval: "never",
     },
   ]
+}
+
+function buildReasoningConfig(
+  reasoningEffort: string | undefined,
+  reasoningSummary: string | undefined
+): OpenAiReasoningConfig | undefined {
+  if (!reasoningEffort && !reasoningSummary) {
+    return undefined
+  }
+
+  return {
+    effort: reasoningEffort,
+    summary: reasoningSummary,
+  }
 }
 
 function extractOpenAiMessageText(

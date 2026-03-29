@@ -116,6 +116,9 @@ LM_STUDIO_MODEL=
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.4-mini
 OPENAI_REASONING_EFFORT=medium
+# Optional. Valid values: off, auto, concise, detailed
+# Leave blank or set to off to disable reasoning summaries and save tokens.
+OPENAI_REASONING_SUMMARY=auto
 
 # Claude
 CLAUDE_API_KEY=
@@ -173,5 +176,7 @@ npm run dev
 - Tailwind CSS v4
 - shadcn/ui
 - Scryfall API
+
+
 
 
