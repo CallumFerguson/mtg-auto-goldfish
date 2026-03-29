@@ -172,8 +172,7 @@ export function PromptStreamModal({
                 Full prompt stream
               </h3>
               <p className="mt-2 text-sm leading-6 text-stone-300">
-                This is the raw live stream coming back through the local prompt
-                pipeline.
+                This is the raw live stream coming back through the configured prompt pipeline.
               </p>
             </div>
 
@@ -227,3 +226,5 @@ export function PromptStreamModal({
     </div>
   )
 }
+
+

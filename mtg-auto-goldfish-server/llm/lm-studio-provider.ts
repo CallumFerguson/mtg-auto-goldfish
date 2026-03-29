@@ -2,6 +2,7 @@ import type {
   LoadedTextModel,
   PromptProcessingResult,
   PromptProcessor,
+  PromptProcessorOptions,
   PromptStreamEvent,
 } from "./index.js"
 
@@ -11,18 +12,6 @@ const STREAM_LOOP_SEQUENCE_LENGTH = 250
 const STREAM_LOOP_LOOKBACK_LENGTH = 2500
 const STREAM_LOOP_REPEAT_THRESHOLD = 3
 const STREAM_LOOP_ERROR_MESSAGE = "The LLM got stuck in a loop."
-
-export type PromptProcessorOptions = {
-  baseUrl?: string
-
-  apiToken?: string
-
-  fetchImpl?: typeof fetch
-
-  mcpServerUrl?: string
-
-  mcpServerLabel?: string
-}
 
 type LmStudioModelsResponse = {
   models: Array<{
@@ -74,7 +63,8 @@ export function createLmStudioPromptProcessor(
     options.baseUrl ?? LM_STUDIO_DEFAULT_BASE_URL
   )
 
-  const apiToken = options.apiToken?.trim() || undefined
+  const apiToken = options.apiToken?.trim() || options.apiKey?.trim() || undefined
+  const requestedModel = options.model?.trim() || undefined
 
   const fetchImpl = options.fetchImpl ?? fetch
 
@@ -92,7 +82,7 @@ export function createLmStudioPromptProcessor(
         fetchImpl,
       })
 
-      const selectedModel = pickLargestLoadedModel(loadedModels)
+      const selectedModel = pickLoadedModel(loadedModels, requestedModel)
 
       if (!selectedModel) {
         throw new Error(
@@ -171,7 +161,7 @@ export function createLmStudioPromptProcessor(
         fetchImpl,
       })
 
-      const selectedModel = pickLargestLoadedModel(loadedModels)
+      const selectedModel = pickLoadedModel(loadedModels, requestedModel)
 
       if (!selectedModel) {
         throw new Error(
@@ -572,8 +562,30 @@ async function listLoadedTextModels(options: {
     }))
 }
 
-function pickLargestLoadedModel(models: LoadedTextModel[]) {
-  return [...models].sort((left, right) => right.sizeBytes - left.sizeBytes)[0]
+function pickLoadedModel(models: LoadedTextModel[], requestedModel?: string) {
+  if (!requestedModel) {
+    return [...models].sort((left, right) => right.sizeBytes - left.sizeBytes)[0]
+  }
+
+  const normalizedRequestedModel = requestedModel.toLowerCase()
+  const matchedModel = models.find(
+    (model) =>
+      model.key.toLowerCase() === normalizedRequestedModel ||
+      model.displayName.toLowerCase() === normalizedRequestedModel
+  )
+
+  if (!matchedModel) {
+    const availableModels = models
+      .map((model) => model.key)
+      .sort((left, right) => left.localeCompare(right))
+      .join(", ")
+
+    throw new Error(
+      `LM Studio model ${JSON.stringify(requestedModel)} is not currently loaded. Loaded models: ${availableModels || "none"}.`
+    )
+  }
+
+  return matchedModel
 }
 
 function extractMessageText(response: LmStudioChatResponse) {
@@ -944,6 +956,7 @@ async function buildErrorMessage(response: Response) {
 
   return `LM Studio request failed with ${response.status}.`
 }
+
 
 
 

@@ -1,11 +1,19 @@
-﻿import type { Request, Response } from "express"
+import "dotenv/config"
+
+import type { Request, Response } from "express"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { z } from "zod/v4"
 
 import { GameStore, type GameCard } from "./game-store.js"
-import { createPromptProcessor, type PromptStreamEvent } from "./llm/index.js"
+import {
+  createPromptProcessor,
+  normalizePromptProcessorProvider,
+  type PromptProcessorOptions,
+  type PromptProcessorProvider,
+  type PromptStreamEvent,
+} from "./llm/index.js"
 import {
   DRAW_STARTING_HAND_PROMPT,
   SIMULATE_TURN_PROMPT,
@@ -24,6 +32,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
 ]
 const GAME_NOT_FOUND_MESSAGE =
   "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
+const DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
+
 
 type ToolUiDataRecord = {
   structuredContent?: Record<string, unknown>
@@ -693,24 +703,27 @@ async function main() {
   const port = getPort(process.env.PORT)
   const app = createMcpExpressApp({ host })
   const allowedOrigins = getAllowedOrigins(process.env.ALLOWED_ORIGINS)
-  const processPromptProcessor = createPromptProcessor({
-    baseUrl: process.env.LM_STUDIO_BASE_URL,
-    apiToken: process.env.LM_STUDIO_API_TOKEN,
-  })
+  const llmProvider = normalizePromptProcessorProvider(process.env.LLM_PROVIDER)
+  const sharedPromptProcessorOptions = getPromptProcessorOptions(llmProvider)
+  const processPromptProcessor = createPromptProcessor(sharedPromptProcessorOptions)
   const openingHandPromptProcessor = createPromptProcessor({
-    baseUrl: process.env.LM_STUDIO_BASE_URL,
-    apiToken: process.env.LM_STUDIO_API_TOKEN,
-    mcpServerUrl:
-      process.env.GOLDFISH_OPENING_HAND_MCP_SERVER_URL ??
+    ...sharedPromptProcessorOptions,
+    mcpServerUrl: resolveMcpServerUrl(
+      llmProvider,
+      process.env.GOLDFISH_OPENING_HAND_MCP_SERVER_URL,
       getLocalMcpServerUrl(host, port, OPENING_HAND_MCP_PATH),
+      "GOLDFISH_OPENING_HAND_MCP_SERVER_URL"
+    ),
     mcpServerLabel: OPENING_HAND_SERVER_NAME,
   })
   const turnSimulationPromptProcessor = createPromptProcessor({
-    baseUrl: process.env.LM_STUDIO_BASE_URL,
-    apiToken: process.env.LM_STUDIO_API_TOKEN,
-    mcpServerUrl:
-      process.env.GOLDFISH_TURN_SIMULATION_MCP_SERVER_URL ??
+    ...sharedPromptProcessorOptions,
+    mcpServerUrl: resolveMcpServerUrl(
+      llmProvider,
+      process.env.GOLDFISH_TURN_SIMULATION_MCP_SERVER_URL,
       getLocalMcpServerUrl(host, port, TURN_SIMULATION_MCP_PATH),
+      "GOLDFISH_TURN_SIMULATION_MCP_SERVER_URL"
+    ),
     mcpServerLabel: TURN_SIMULATION_SERVER_NAME,
   })
 
@@ -1075,6 +1088,126 @@ function getAllowedOrigins(rawOrigins: string | undefined) {
     .filter(Boolean)
 }
 
+function getPromptProcessorOptions(
+  provider: PromptProcessorProvider
+): PromptProcessorOptions {
+  return {
+    provider,
+    baseUrl: getProviderBaseUrl(provider),
+    apiToken: getProviderApiToken(provider),
+    apiKey: getProviderApiKey(provider),
+    model: getProviderModel(provider),
+    maxOutputTokens:
+      getOptionalPositiveInteger(process.env.LLM_MAX_OUTPUT_TOKENS) ??
+      DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+    reasoningEffort: process.env.OPENAI_REASONING_EFFORT?.trim() || undefined,
+  }
+}
+
+function getProviderBaseUrl(provider: PromptProcessorProvider) {
+  switch (provider) {
+    case "openai":
+      return undefined
+    case "claude":
+      return undefined
+    case "lm-studio":
+    default:
+      return process.env.LM_STUDIO_BASE_URL?.trim() || undefined
+  }
+}
+
+function getProviderApiToken(provider: PromptProcessorProvider) {
+  if (provider !== "lm-studio") {
+    return undefined
+  }
+
+  return process.env.LM_STUDIO_API_TOKEN?.trim() || undefined
+}
+
+function getProviderApiKey(provider: PromptProcessorProvider) {
+  switch (provider) {
+    case "openai":
+      return requireNonEmptyEnvValue("OPENAI_API_KEY")
+    case "claude":
+      return requireNonEmptyEnvValue("CLAUDE_API_KEY")
+    case "lm-studio":
+    default:
+      return process.env.LM_STUDIO_API_TOKEN?.trim() || undefined
+  }
+}
+
+function getProviderModel(provider: PromptProcessorProvider) {
+  switch (provider) {
+    case "openai":
+      return process.env.OPENAI_MODEL?.trim() || "gpt-5"
+    case "claude":
+      return process.env.CLAUDE_MODEL?.trim() || "claude-sonnet-4-20250514"
+    case "lm-studio":
+    default:
+      return process.env.LM_STUDIO_MODEL?.trim() || undefined
+  }
+}
+
+function resolveMcpServerUrl(
+  provider: PromptProcessorProvider,
+  configuredUrl: string | undefined,
+  localUrl: string,
+  envName: string
+) {
+  if (provider === "lm-studio") {
+    return localUrl
+  }
+
+  const trimmedUrl = configuredUrl?.trim()
+
+  if (!trimmedUrl) {
+    throw new Error(
+      `${envName} must be set to a public HTTPS URL when LLM_PROVIDER=${provider}.`
+    )
+  }
+
+  if (!isHttpsUrl(trimmedUrl)) {
+    throw new Error(
+      `${envName} must use https:// when LLM_PROVIDER=${provider}. Received: ${trimmedUrl}`
+    )
+  }
+
+  return trimmedUrl
+}
+
+function requireNonEmptyEnvValue(envName: string) {
+  const value = process.env[envName]?.trim()
+
+  if (!value) {
+    throw new Error(`${envName} is required.`)
+  }
+
+  return value
+}
+
+function getOptionalPositiveInteger(value: string | undefined) {
+  if (!value?.trim()) {
+    return undefined
+  }
+
+  const parsedValue = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    throw new Error(
+      `Expected a positive integer but received ${JSON.stringify(value)}.`
+    )
+  }
+
+  return parsedValue
+}
+
+function isHttpsUrl(value: string) {
+  try {
+    return new URL(value).protocol === "https:"
+  } catch {
+    return false
+  }
+}
 function getLocalMcpServerUrl(host: string, port: number, path: string) {
   return `http://${normalizeLocalHost(host)}:${port}${path}`
 }
@@ -1399,6 +1532,15 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
+
+
+
+
+
+
 
 
 

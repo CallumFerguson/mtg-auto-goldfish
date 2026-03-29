@@ -98,11 +98,34 @@ npm run server:start
 
 By default the server listens on `http://127.0.0.1:3001`.
 
-Optional environment variables:
+Example `.env` file:
 
-```bash
-PORT=3001
-HOST=127.0.0.1
+```dotenv
+# Global LLM selection
+# Valid values: lm-studio, openai, claude
+LLM_PROVIDER=lm-studio
+
+# Used by OpenAI and Claude requests. Ignored by LM Studio.
+LLM_MAX_OUTPUT_TOKENS=50000
+
+# LM Studio
+# Optional. If blank, the server picks the largest currently loaded LM Studio model.
+LM_STUDIO_MODEL=
+
+# OpenAI
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_REASONING_EFFORT=medium
+
+# Claude
+CLAUDE_API_KEY=
+CLAUDE_MODEL=claude-sonnet-4-6
+
+# Public MCP URLs for cloud providers only.
+# Required when LLM_PROVIDER=openai or LLM_PROVIDER=claude.
+# Ignored when LLM_PROVIDER=lm-studio, because LM Studio always uses local http MCP URLs.
+GOLDFISH_OPENING_HAND_MCP_SERVER_URL=https://example.com//mcp/opening-hand
+GOLDFISH_TURN_SIMULATION_MCP_SERVER_URL=https://example.com/mcp/turn-simulation
 ```
 
 ### LM Studio configuration

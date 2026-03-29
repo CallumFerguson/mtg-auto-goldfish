@@ -164,9 +164,7 @@ export function GoldfishSimulationPanel({
               Start a simulation
             </h2>
             <p className="max-w-3xl text-sm leading-6 text-stone-400">
-              Once the full commander and deck package is resolved, create a
-              game on the local goldfish server, then let the local model work
-              through the prompt while you follow a higher-level activity trace.
+              Once the full commander and deck package is resolved, create a game on the goldfish server, then let the configured model work through the prompt while you follow a higher-level activity trace.
             </p>
             <div className="pt-2">
               <label className="block space-y-2">
@@ -408,6 +406,8 @@ function getPromptPreview(rawPromptStream: string) {
 
   return `...${preview.replace(/^\S*\s?/, "")}`
 }
+
+
 
 
 
