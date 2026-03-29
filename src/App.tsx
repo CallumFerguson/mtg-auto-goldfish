@@ -840,7 +840,9 @@ export function App() {
   const [isCreatingDevGame, setIsCreatingDevGame] = useState(false)
   const [simulationError, setSimulationError] = useState("")
   const [gameId, setGameId] = useState("")
-  const [simulationSeedInput, setSimulationSeedInput] = useState("")
+  const [simulationSeedInput, setSimulationSeedInput] = useState(
+    storedDeckInput.simulationSeedInput
+  )
   const [currentSimulationSeed, setCurrentSimulationSeed] = useState<number | null>(
     null
   )
@@ -1483,8 +1485,9 @@ export function App() {
       commanderOneName,
       commanderTwoName,
       decklistText,
+      simulationSeedInput,
     })
-  }, [commanderOneName, commanderTwoName, decklistText])
+  }, [commanderOneName, commanderTwoName, decklistText, simulationSeedInput])
 
   useEffect(() => {
     return () => {
@@ -1544,6 +1547,7 @@ export function App() {
     setIsProcessing(false)
     setIsResetModalOpen(false)
     setGameId("")
+    setSimulationSeedInput(DEFAULT_DECK_INPUT.simulationSeedInput)
     setCurrentSimulationSeed(null)
     setSimulationError("")
     setPromptRuns([])

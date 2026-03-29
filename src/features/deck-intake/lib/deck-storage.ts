@@ -9,12 +9,14 @@ export type StoredDeckInput = {
   commanderOneName: string
   commanderTwoName: string
   decklistText: string
+  simulationSeedInput: string
 }
 
 export const DEFAULT_DECK_INPUT: StoredDeckInput = {
   commanderOneName: DEFAULT_COMMANDER_ONE,
   commanderTwoName: "",
   decklistText: DEFAULT_DECKLIST,
+  simulationSeedInput: "",
 }
 
 export function loadStoredDeckInput(): StoredDeckInput {
@@ -44,6 +46,10 @@ export function loadStoredDeckInput(): StoredDeckInput {
         typeof parsedValue.decklistText === "string"
           ? parsedValue.decklistText
           : DEFAULT_DECK_INPUT.decklistText,
+      simulationSeedInput:
+        typeof parsedValue.simulationSeedInput === "string"
+          ? parsedValue.simulationSeedInput
+          : DEFAULT_DECK_INPUT.simulationSeedInput,
     }
   } catch {
     return DEFAULT_DECK_INPUT
