@@ -5,6 +5,7 @@ import {
   LoaderCircle,
   Play,
   Sparkles,
+  Square,
   XCircle,
 } from "lucide-react"
 import { useEffect, useRef } from "react"
@@ -27,6 +28,7 @@ type SimulationPromptRun = {
   activities: SimulationActivity[]
   result: string
   finalAnswerStatus: "idle" | "streaming" | "done"
+  status: "running" | "done" | "error" | "cancelled"
   rawPromptStream: string
 }
 
@@ -40,6 +42,7 @@ type GoldfishSimulationPanelProps = {
   promptRuns: SimulationPromptRun[]
   errorMessage: string
   onSimulationSeedInputChange: (value: string) => void
+  onCancelPromptRun: (runId: string) => void
   onOpenPromptStream: () => void
   onCreateDevGame: () => void
   onStart: () => void
@@ -80,6 +83,7 @@ export function GoldfishSimulationPanel({
   promptRuns,
   errorMessage,
   onSimulationSeedInputChange,
+  onCancelPromptRun,
   onOpenPromptStream,
   onCreateDevGame,
   onStart,
@@ -304,7 +308,25 @@ export function GoldfishSimulationPanel({
                   <p className="text-base font-semibold tracking-[0.01em] text-stone-50">
                     {run.title}
                   </p>
-                  <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/run:rotate-0" />
+                  <div className="flex items-center gap-2">
+                    {run.status === "running" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-full border-red-400/30 bg-red-500/10 px-3 text-xs text-red-100 hover:bg-red-500/20 hover:text-red-50"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          onCancelPromptRun(run.id)
+                        }}
+                      >
+                        <Square className="size-3.5 fill-current" />
+                        Stop
+                      </Button>
+                    ) : null}
+                    <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/run:rotate-0" />
+                  </div>
                 </summary>
 
                 <div className="space-y-3">

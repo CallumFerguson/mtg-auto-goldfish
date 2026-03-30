@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react"
-import { Eye, LoaderCircle, X, XCircle } from "lucide-react"
+import { Eye, LoaderCircle, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
@@ -7,7 +7,6 @@ type PromptStreamModalProps = {
   isOpen: boolean
   streamText: string
   isStarting: boolean
-  onCancel: () => void
   onClose: () => void
 }
 
@@ -15,7 +14,6 @@ export function PromptStreamModal({
   isOpen,
   streamText,
   isStarting,
-  onCancel,
   onClose,
 }: PromptStreamModalProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -177,18 +175,6 @@ export function PromptStreamModal({
             </div>
 
             <div className="flex items-center gap-3">
-              {isStarting ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 rounded-full border-red-400/30 bg-red-500/10 px-4 text-red-100 hover:bg-red-500/20 hover:text-red-50"
-                  onClick={onCancel}
-                >
-                  <XCircle />
-                  Cancel run
-                </Button>
-              ) : null}
-
               <Button
                 type="button"
                 variant="outline"

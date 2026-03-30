@@ -129,6 +129,7 @@ type SimulationActivity = {
 }
 
 type FinalAnswerStatus = "idle" | "streaming" | "done"
+type SimulationPromptRunStatus = "running" | "done" | "error" | "cancelled"
 
 type SimulationPromptRun = {
   id: string
@@ -136,6 +137,7 @@ type SimulationPromptRun = {
   activities: SimulationActivity[]
   result: string
   finalAnswerStatus: FinalAnswerStatus
+  status: SimulationPromptRunStatus
   rawPromptStream: string
   keptHandCards: string[]
 }
@@ -195,6 +197,7 @@ function createPromptRun(title: string): SimulationPromptRun {
     activities: [],
     result: "",
     finalAnswerStatus: "idle",
+    status: "running",
     rawPromptStream: "",
     keptHandCards: [],
   }
@@ -228,6 +231,7 @@ function createStartingHandValidationRun(
     ],
     result: "",
     finalAnswerStatus: "idle",
+    status: validation.isValid ? "done" : "error",
     rawPromptStream: `[starting-hand-validation] ${validation.message}\n`,
     keptHandCards,
   }
@@ -241,14 +245,38 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError"
 }
 
-function cancelPromptRuns(currentRuns: SimulationPromptRun[]) {
+function cancelPromptRuns(
+  currentRuns: SimulationPromptRun[]
+): SimulationPromptRun[] {
   return currentRuns.map((run) => ({
     ...run,
+    status: run.status === "done" || run.status === "error" ? run.status : "cancelled",
     rawPromptStream: run.rawPromptStream.includes("[cancelled]")
       ? run.rawPromptStream
       : appendRawPromptStream(run.rawPromptStream, "\n[cancelled]\n"),
     activities: completeActiveActivity(run.activities, "error"),
   }))
+}
+
+function markPromptRunFailed(
+  currentRuns: SimulationPromptRun[],
+  runId: string,
+  message: string
+): SimulationPromptRun[] {
+  return currentRuns.map((run) => {
+    if (run.id !== runId) {
+      return run
+    }
+
+    return {
+      ...run,
+      status: "error",
+      rawPromptStream: run.rawPromptStream.includes(`[error] ${message}`)
+        ? run.rawPromptStream
+        : appendRawPromptStream(run.rawPromptStream, `[error] ${message}\n`),
+      activities: completeActiveActivity(run.activities, "error"),
+    }
+  })
 }
 
 function createToolActivity(toolName: string | undefined): SimulationActivity {
@@ -847,6 +875,7 @@ function handlePromptStreamEvent(
           run.id === runId
             ? {
               ...run,
+              status: "error",
               rawPromptStream: appendRawPromptStream(
                 run.rawPromptStream,
                 `[error] ${event.error}\n`
@@ -863,6 +892,7 @@ function handlePromptStreamEvent(
           run.id === runId
             ? {
               ...run,
+              status: "done",
               rawPromptStream: appendRawPromptStream(
                 run.rawPromptStream,
                 "\n[chat.end]\n"
@@ -1482,36 +1512,48 @@ export function App() {
     const turnRun = createPromptRun(title)
     setPromptRuns((currentRuns) => [...currentRuns, turnRun])
 
-    const turnResponse = await fetch(`${GOLDFISH_SERVER_URL}/simulate-turn`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal,
-      body: JSON.stringify({
-        gameId: currentGameId,
-      }),
-    })
+    try {
+      const turnResponse = await fetch(`${GOLDFISH_SERVER_URL}/simulate-turn`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal,
+        body: JSON.stringify({
+          gameId: currentGameId,
+        }),
+      })
 
-    if (!turnResponse.ok) {
-      const promptPayload = (await turnResponse.json()) as
-        | { result?: string; error?: string }
-        | { details?: Array<{ message?: string }> }
-      const detailMessage =
-        "details" in promptPayload && Array.isArray(promptPayload.details)
-          ? promptPayload.details
-            .map((detail) => detail.message)
-            .filter(Boolean)
-            .join(" ")
-          : ""
-      throw new Error(
-        detailMessage ||
-          ("error" in promptPayload && promptPayload.error) ||
-          "Failed to simulate the turn."
-      )
+      if (!turnResponse.ok) {
+        const promptPayload = (await turnResponse.json()) as
+          | { result?: string; error?: string }
+          | { details?: Array<{ message?: string }> }
+        const detailMessage =
+          "details" in promptPayload && Array.isArray(promptPayload.details)
+            ? promptPayload.details
+              .map((detail) => detail.message)
+              .filter(Boolean)
+              .join(" ")
+            : ""
+        throw new Error(
+          detailMessage ||
+            ("error" in promptPayload && promptPayload.error) ||
+            "Failed to simulate the turn."
+        )
+      }
+
+      return await readPromptStream(turnResponse, setPromptRuns, turnRun.id, signal)
+    } catch (error) {
+      if (!isAbortError(error)) {
+        const message =
+          error instanceof Error ? error.message : "Failed to simulate the turn."
+        setPromptRuns((currentRuns) =>
+          markPromptRunFailed(currentRuns, turnRun.id, message)
+        )
+      }
+
+      throw error
     }
-
-    return readPromptStream(turnResponse, setPromptRuns, turnRun.id, signal)
   }
 
   async function runOpeningHandSimulation(
@@ -1522,44 +1564,58 @@ export function App() {
     const openingHandRun = createPromptRun(title)
     setPromptRuns((currentRuns) => [...currentRuns, openingHandRun])
 
-    const openingHandResponse = await fetch(
-      `${GOLDFISH_SERVER_URL}/simulate-drawing-starting-hand`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        signal,
-        body: JSON.stringify({
-          gameId: currentGameId,
-        }),
-      }
-    )
-
-    if (!openingHandResponse.ok) {
-      const promptPayload = (await openingHandResponse.json()) as
-        | { result?: string; error?: string }
-        | { details?: Array<{ message?: string }> }
-      const detailMessage =
-        "details" in promptPayload && Array.isArray(promptPayload.details)
-          ? promptPayload.details
-            .map((detail) => detail.message)
-            .filter(Boolean)
-            .join(" ")
-          : ""
-      throw new Error(
-        detailMessage ||
-        ("error" in promptPayload && promptPayload.error) ||
-        "Failed to simulate drawing the starting hand."
+    try {
+      const openingHandResponse = await fetch(
+        `${GOLDFISH_SERVER_URL}/simulate-drawing-starting-hand`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          signal,
+          body: JSON.stringify({
+            gameId: currentGameId,
+          }),
+        }
       )
-    }
 
-    return readPromptStream(
-      openingHandResponse,
-      setPromptRuns,
-      openingHandRun.id,
-      signal
-    )
+      if (!openingHandResponse.ok) {
+        const promptPayload = (await openingHandResponse.json()) as
+          | { result?: string; error?: string }
+          | { details?: Array<{ message?: string }> }
+        const detailMessage =
+          "details" in promptPayload && Array.isArray(promptPayload.details)
+            ? promptPayload.details
+              .map((detail) => detail.message)
+              .filter(Boolean)
+              .join(" ")
+            : ""
+        throw new Error(
+          detailMessage ||
+            ("error" in promptPayload && promptPayload.error) ||
+            "Failed to simulate drawing the starting hand."
+        )
+      }
+
+      return await readPromptStream(
+        openingHandResponse,
+        setPromptRuns,
+        openingHandRun.id,
+        signal
+      )
+    } catch (error) {
+      if (!isAbortError(error)) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to simulate drawing the starting hand."
+        setPromptRuns((currentRuns) =>
+          markPromptRunFailed(currentRuns, openingHandRun.id, message)
+        )
+      }
+
+      throw error
+    }
   }
 
   async function startOpeningHandBatchTest() {
@@ -1612,7 +1668,15 @@ export function App() {
     }
   }
 
-  function cancelSimulation() {
+  function cancelSimulation(runId?: string) {
+    if (runId) {
+      const matchingRun = promptRuns.find((run) => run.id === runId)
+
+      if (!matchingRun || matchingRun.status !== "running") {
+        return
+      }
+    }
+
     const controller = simulationAbortControllerRef.current
 
     if (!controller) {
@@ -1960,6 +2024,7 @@ export function App() {
           promptRuns={promptRuns}
           errorMessage={simulationError}
           onSimulationSeedInputChange={setSimulationSeedInput}
+          onCancelPromptRun={cancelSimulation}
           onOpenPromptStream={() => setIsPromptStreamModalOpen(true)}
           onCreateDevGame={createDevGame}
           onStart={startSimulation}
@@ -1977,7 +2042,6 @@ export function App() {
         isOpen={isPromptStreamModalOpen}
         streamText={combinedPromptStream}
         isStarting={isStartingSimulation}
-        onCancel={cancelSimulation}
         onClose={() => setIsPromptStreamModalOpen(false)}
       />
     </main>
