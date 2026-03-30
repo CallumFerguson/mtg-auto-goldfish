@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  ChevronDown,
   Eye,
   LoaderCircle,
   Play,
@@ -306,59 +307,73 @@ export function GoldfishSimulationPanel({
 
                 <div className="space-y-3">
                   {run.activities.map((activity) => (
-                    <div
+                    <details
                       key={activity.id}
-                      className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
+                      open
+                      className="group rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
                     >
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5">
+                      <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
+                        <div className="mt-0.5 shrink-0">
                           <ActivityIcon status={activity.status} />
                         </div>
 
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-stone-100">
-                            {activity.title}
-                          </p>
-                          {activity.detail ? (
-                            <div className="mt-4">{activity.detail}</div>
-                          ) : null}
-                          {activity.status === "active" && promptPreview ? (
-                            <div
-                              className={`min-w-0 overflow-hidden ${activity.detail ? "mt-4" : "mt-2"}`}
-                              style={{
-                                maskImage:
-                                  "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%)",
-                                WebkitMaskImage:
-                                  "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%)",
-                              }}
-                            >
-                              <p className="overflow-hidden text-xs leading-5 whitespace-nowrap text-stone-500/75">
-                                {promptPreview}
-                              </p>
-                            </div>
-                          ) : null}
+                        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-stone-100">
+                              {activity.title}
+                            </p>
+                          </div>
+                          <ChevronDown className="mt-0.5 size-4 shrink-0 text-stone-500 transition-transform group-open:rotate-180" />
                         </div>
+                      </summary>
+
+                      <div className="mt-4">
+                        {activity.detail ? <div>{activity.detail}</div> : null}
+                        {activity.status === "active" && promptPreview ? (
+                          <div
+                            className={`min-w-0 overflow-hidden ${activity.detail ? "mt-4" : ""}`}
+                            style={{
+                              maskImage:
+                                "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%)",
+                              WebkitMaskImage:
+                                "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%)",
+                            }}
+                          >
+                            <p className="overflow-hidden text-xs leading-5 whitespace-nowrap text-stone-500/75">
+                              {promptPreview}
+                            </p>
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
+                    </details>
                   ))}
 
                   {run.result ? (
-                    <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5">
+                    <details
+                      open
+                      className="group rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
+                    >
+                      <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
+                        <div className="mt-0.5 shrink-0">
                           <FinalAnswerIcon
                             finalAnswerStatus={run.finalAnswerStatus}
                           />
                         </div>
 
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-stone-100">
-                            Final answer
-                          </p>
-                          <GoldfishAnswerMarkdown content={run.result} />
+                        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-stone-100">
+                              Final answer
+                            </p>
+                          </div>
+                          <ChevronDown className="mt-0.5 size-4 shrink-0 text-stone-500 transition-transform group-open:rotate-180" />
                         </div>
+                      </summary>
+
+                      <div className="mt-4">
+                        <GoldfishAnswerMarkdown content={run.result} />
                       </div>
-                    </div>
+                    </details>
                   ) : null}
                 </div>
               </div>
