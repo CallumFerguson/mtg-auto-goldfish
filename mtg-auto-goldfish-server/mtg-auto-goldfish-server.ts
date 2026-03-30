@@ -133,6 +133,7 @@ function createTurnSimulationServer() {
     registerDrawCardFromBottomTool(server)
     registerReturnCardToLibraryTool(server)
     registerReturnCardsToLibraryTool(server)
+    registerShuffleLibraryTool(server)
   })
 }
 
@@ -620,6 +621,69 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
           {
             type: "text",
             text: `Returned ${response.cards.length} card(s) to the ${side} of the library${randomizeOrder ? " in randomized order" : " in the provided order"}: ${formatCardList(response.cards)}. ${response.cardsRemaining} cards are now in the library.`,
+          },
+        ],
+        structuredContent: response,
+      }
+    }
+  )
+}
+
+function registerShuffleLibraryTool(server: McpServer) {
+  server.registerTool(
+    "shuffle_library",
+    {
+      title: "Shuffle Library",
+      description:
+        "Shuffle the stored library for an existing game ID that was created outside MCP.",
+      inputSchema: {
+        gameId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
+          ),
+      },
+      outputSchema: {
+        gameId: z.string(),
+        cardsRemaining: z.number().int().nonnegative(),
+      },
+    },
+    async ({ gameId }) => {
+      const shuffleResult = gameStore.shuffleLibrary(gameId)
+
+      if (!shuffleResult.ok) {
+        logWarn("shuffle_library", `${shortId(gameId)} ${shuffleResult.reason}`)
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: GAME_NOT_FOUND_MESSAGE,
+            },
+          ],
+          isError: true,
+        }
+      }
+
+      const response = {
+        gameId,
+        cardsRemaining: shuffleResult.cardsRemaining,
+      }
+
+      storeToolUiData("shuffle_library", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
+      logInfo("shuffle_library", `${shortId(gameId)} left=${response.cardsRemaining}`)
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Shuffled the library. ${response.cardsRemaining} cards remain in the library.`,
           },
         ],
         structuredContent: response,

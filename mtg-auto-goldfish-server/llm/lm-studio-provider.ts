@@ -885,7 +885,7 @@ function appendStreamTextOrThrow(
     streamedText: nextStreamedText,
     nextLoopCheckLength:
       Math.floor(nextStreamedText.length / STREAM_LOOP_CHECK_INTERVAL_CHARS) *
-        STREAM_LOOP_CHECK_INTERVAL_CHARS +
+      STREAM_LOOP_CHECK_INTERVAL_CHARS +
       STREAM_LOOP_CHECK_INTERVAL_CHARS,
   }
 }

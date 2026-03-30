@@ -94,6 +94,16 @@ export type ReturnCardsToLibraryResult =
     reason: 'game_not_found'
   }
 
+export type ShuffleLibraryResult =
+  | {
+    ok: true
+    cardsRemaining: number
+  }
+  | {
+    ok: false
+    reason: 'game_not_found'
+  }
+
 export type GetGamePromptContextResult =
   | {
     ok: true
@@ -356,6 +366,23 @@ export class GameStore {
     return {
       ok: true,
       cards: cardsToInsert,
+      cardsRemaining: game.library.length,
+    }
+  }
+
+  shuffleLibrary(gameId: string): ShuffleLibraryResult {
+    this.deleteExpiredGames()
+
+    const game = this.games.get(gameId)
+
+    if (!game) {
+      return { ok: false, reason: 'game_not_found' }
+    }
+
+    game.library = shuffle(game.library, game.random)
+
+    return {
+      ok: true,
       cardsRemaining: game.library.length,
     }
   }
