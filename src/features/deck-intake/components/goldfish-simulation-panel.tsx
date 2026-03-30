@@ -295,22 +295,24 @@ export function GoldfishSimulationPanel({
               : ""
 
             return (
-              <div
+              <details
                 key={run.id}
-                className="rounded-[24px] border border-white/10 bg-black/20 p-4"
+                open
+                className="group/run rounded-[24px] border border-white/10 bg-black/20 p-4"
               >
-                <div className="mb-4 border-b border-white/10 pb-3">
+                <summary className="flex cursor-pointer list-none items-start justify-between gap-3 border-b border-transparent pb-0 group-open/run:mb-4 group-open/run:border-white/10 group-open/run:pb-3 [&::-webkit-details-marker]:hidden">
                   <p className="text-base font-semibold tracking-[0.01em] text-stone-50">
                     {run.title}
                   </p>
-                </div>
+                  <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/run:rotate-0" />
+                </summary>
 
                 <div className="space-y-3">
                   {run.activities.map((activity) => (
                     <details
                       key={activity.id}
                       open
-                      className="group rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
+                      className="group/activity rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
                     >
                       <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
                         <div className="mt-0.5 shrink-0">
@@ -323,7 +325,7 @@ export function GoldfishSimulationPanel({
                               {activity.title}
                             </p>
                           </div>
-                          <ChevronDown className="mt-0.5 size-4 shrink-0 text-stone-500 transition-transform group-open:rotate-180" />
+                          <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/activity:rotate-0" />
                         </div>
                       </summary>
 
@@ -351,7 +353,7 @@ export function GoldfishSimulationPanel({
                   {run.result ? (
                     <details
                       open
-                      className="group rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
+                      className="group/final rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
                     >
                       <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
                         <div className="mt-0.5 shrink-0">
@@ -366,7 +368,7 @@ export function GoldfishSimulationPanel({
                               Final answer
                             </p>
                           </div>
-                          <ChevronDown className="mt-0.5 size-4 shrink-0 text-stone-500 transition-transform group-open:rotate-180" />
+                          <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/final:rotate-0" />
                         </div>
                       </summary>
 
@@ -376,7 +378,7 @@ export function GoldfishSimulationPanel({
                     </details>
                   ) : null}
                 </div>
-              </div>
+              </details>
             )
           })}
         </div>
