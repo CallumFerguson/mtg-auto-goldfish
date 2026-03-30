@@ -33,7 +33,7 @@ export function ToolCardChip({
     <button
       type="button"
       className={cn(
-        "inline-flex cursor-pointer items-center rounded-full border border-amber-300/15 bg-amber-400/10 px-3 py-1 text-xs font-medium leading-5 text-amber-50 transition hover:border-amber-200/35 hover:bg-amber-400/18 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-950",
+        "inline-flex cursor-pointer items-center rounded-md border border-amber-300/15 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-medium leading-5 text-amber-50 transition hover:border-amber-200/35 hover:bg-amber-400/18 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-950",
         className
       )}
       onClick={onClick}
@@ -177,7 +177,22 @@ export function ToolCardList({
         ) : null}
         {allCardsStatus !== "loaded" ? (
           <>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center rounded-md border border-sky-300/20 bg-sky-400/10 px-2.5 py-0.5 text-[11px] font-medium leading-5 text-sky-100 transition hover:border-sky-200/35 hover:bg-sky-400/20 hover:text-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-950 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-stone-500"
+                onClick={handleLoadAll}
+                disabled={allCardsStatus === "loading"}
+              >
+                {allCardsStatus === "loading" ? (
+                  <>
+                    <LoaderCircle className="mr-1.5 size-3 animate-spin" />
+                    Loading all images
+                  </>
+                ) : (
+                  "Load all card images"
+                )}
+              </button>
               {cardEntries.map(({ cardName, key }) => (
                 <ToolCardChip
                   key={key}
@@ -185,23 +200,6 @@ export function ToolCardList({
                   onClick={() => handleCardClick(cardName)}
                 />
               ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="button"
-                className="inline-flex items-center rounded-full border border-sky-300/20 bg-sky-400/10 px-3 py-1 text-xs font-medium text-sky-100 transition hover:border-sky-200/35 hover:bg-sky-400/20 hover:text-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-950 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-stone-500"
-                onClick={handleLoadAll}
-                disabled={allCardsStatus === "loading"}
-              >
-                {allCardsStatus === "loading" ? (
-                  <>
-                    <LoaderCircle className="mr-2 size-3.5 animate-spin" />
-                    Loading all images
-                  </>
-                ) : (
-                  "Load all card images"
-                )}
-              </button>
             </div>
           </>
         ) : null}
