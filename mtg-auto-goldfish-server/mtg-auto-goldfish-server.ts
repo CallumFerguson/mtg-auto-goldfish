@@ -1,6 +1,7 @@
 import "dotenv/config"
 
 import type { Request, Response } from "express"
+import { resolve } from "node:path"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
@@ -33,7 +34,12 @@ const DEFAULT_ALLOWED_ORIGINS = [
 const GAME_NOT_FOUND_MESSAGE =
   "Game not found. It may be invalid, may not have been created yet, or may have expired after one hour."
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
-
+const DEFAULT_GAME_STORE_PERSISTENCE_PATH = resolve(
+  process.cwd(),
+  "mtg-auto-goldfish-server",
+  "data",
+  "game-store.json"
+)
 
 type ToolUiDataRecord = {
   structuredContent?: Record<string, unknown>
@@ -42,6 +48,9 @@ type ToolUiDataRecord = {
 
 const gameStore = new GameStore({
   onDeleteGame: deleteToolUiDataForGame,
+  persistencePath:
+    process.env.GAME_STORE_PERSISTENCE_PATH?.trim() ||
+    DEFAULT_GAME_STORE_PERSISTENCE_PATH,
 })
 const toolUiDataStore = new Map<string, ToolUiDataRecord>()
 const gameCardSchema = z.object({
@@ -1768,6 +1777,9 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
 
 
 

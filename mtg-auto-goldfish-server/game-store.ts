@@ -1,8 +1,17 @@
 import { randomInt, randomUUID } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname } from 'node:path'
 
 const ONE_HOUR_IN_MS = 60 * 60 * 1000
 const STARTING_HAND_SIZE = 7
 const EXPECTED_GAME_CARDS = 100
+const GAME_STORE_FILE_VERSION = 1
 
 export type GameCard = {
   name: string
@@ -37,62 +46,67 @@ type GameRecord = {
   openingHandSnapshot?: OpeningHandSnapshot
   hasDrawnStartingHand: boolean
   mulliganCount: number
-  random: () => number
+  randomState: number
+}
+
+type PersistedGameStore = {
+  version: 1
+  games: GameRecord[]
 }
 
 export type DrawResult =
   | {
-    ok: true
-    cards: string[]
-    cardsRemaining: number
-  }
+      ok: true
+      cards: string[]
+      cardsRemaining: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found' | 'empty_library'
-  }
+      ok: false
+      reason: 'game_not_found' | 'empty_library'
+    }
 
 export type DrawStartingHandResult =
   | DrawResult
   | {
-    ok: false
-    reason: 'starting_hand_already_drawn'
-  }
+      ok: false
+      reason: 'starting_hand_already_drawn'
+    }
 
 export type MulliganResult =
   | {
-    ok: true
-    cards: string[]
-    cardsRemaining: number
-    mulliganCount: number
-    cardsToBottomIfKept: number
-  }
+      ok: true
+      cards: string[]
+      cardsRemaining: number
+      mulliganCount: number
+      cardsToBottomIfKept: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found' | 'starting_hand_not_drawn'
-  }
+      ok: false
+      reason: 'game_not_found' | 'starting_hand_not_drawn'
+    }
 
 export type ReturnCardToLibraryResult =
   | {
-    ok: true
-    cardsRemaining: number
-    insertedFromTop: number
-    insertedFromBottom: number
-  }
+      ok: true
+      cardsRemaining: number
+      insertedFromTop: number
+      insertedFromBottom: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found'
-  }
+      ok: false
+      reason: 'game_not_found'
+    }
 
 export type ReturnCardsToLibraryResult =
   | {
-    ok: true
-    cards: string[]
-    cardsRemaining: number
-  }
+      ok: true
+      cards: string[]
+      cardsRemaining: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found'
-  }
+      ok: false
+      reason: 'game_not_found'
+    }
 
 export type TakeCardsFromLibraryMatch = {
   requestedCard: string
@@ -101,38 +115,38 @@ export type TakeCardsFromLibraryMatch = {
 
 export type TakeCardsFromLibraryResult =
   | {
-    ok: true
-    matches: TakeCardsFromLibraryMatch[]
-    cardsRemaining: number
-  }
+      ok: true
+      matches: TakeCardsFromLibraryMatch[]
+      cardsRemaining: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found'
-  }
+      ok: false
+      reason: 'game_not_found'
+    }
 
 export type ShuffleLibraryResult =
   | {
-    ok: true
-    cardsRemaining: number
-  }
+      ok: true
+      cardsRemaining: number
+    }
   | {
-    ok: false
-    reason: 'game_not_found'
-  }
+      ok: false
+      reason: 'game_not_found'
+    }
 
 export type GetGamePromptContextResult =
   | {
-    ok: true
-    gameId: string
-    commanders: GameCard[]
-    initialLibrary: GameCard[]
-    currentLibrary: string[]
-    openingHandSnapshot?: OpeningHandSnapshot
-  }
+      ok: true
+      gameId: string
+      commanders: GameCard[]
+      initialLibrary: GameCard[]
+      currentLibrary: string[]
+      openingHandSnapshot?: OpeningHandSnapshot
+    }
   | {
-    ok: false
-    reason: 'game_not_found'
-  }
+      ok: false
+      reason: 'game_not_found'
+    }
 
 export type SaveOpeningHandSnapshotResult =
   | ({
@@ -163,6 +177,7 @@ export type ResetGameToInitialStateResult =
       ok: false
       reason: 'game_not_found'
     }
+
 export type RestoreOpeningHandSnapshotResult =
   | {
       ok: true
@@ -174,8 +189,10 @@ export type RestoreOpeningHandSnapshotResult =
       ok: false
       reason: 'game_not_found' | 'opening_hand_snapshot_not_found'
     }
+
 export type GameStoreOptions = {
   onDeleteGame?: (gameId: string) => void
+  persistencePath?: string
 }
 
 type CreateGameResult = {
@@ -190,9 +207,13 @@ type CreateGameResult = {
 export class GameStore {
   private readonly games = new Map<string, GameRecord>()
   private readonly onDeleteGame?: (gameId: string) => void
+  private readonly persistencePath?: string
 
   constructor(options: GameStoreOptions = {}) {
     this.onDeleteGame = options.onDeleteGame
+    this.persistencePath = options.persistencePath
+    this.loadPersistedGames()
+
     const cleanupTimer = setInterval(() => {
       this.deleteExpiredGames()
     }, ONE_HOUR_IN_MS)
@@ -209,23 +230,24 @@ export class GameStore {
 
     const id = randomUUID()
     const resolvedSeed = normalizeSeed(seed)
-    const random = createSeededRandom(resolvedSeed)
     const sortedInitialLibrary = sortCardsAlphabetically(deck)
-    const shuffledLibrary = shuffle(deck.map((card) => card.name), random)
     const game: GameRecord = {
       id,
       createdAt: Date.now(),
       seed: resolvedSeed,
       commanders: [...commanders],
       initialLibrary: sortedInitialLibrary,
-      library: [...shuffledLibrary],
+      library: [],
       openingHandSnapshot: undefined,
       hasDrawnStartingHand: false,
       mulliganCount: 0,
-      random,
+      randomState: resolvedSeed >>> 0,
     }
 
+    game.library = shuffle(deck.map((card) => card.name), () => nextRandom(game))
+
     this.games.set(id, game)
+    this.persistGames()
 
     return {
       gameId: game.id,
@@ -257,6 +279,7 @@ export class GameStore {
     }
 
     const cards = game.library.splice(0, count)
+    this.persistGames()
 
     return {
       ok: true,
@@ -279,6 +302,7 @@ export class GameStore {
     }
 
     const cards = game.library.splice(-count).reverse()
+    this.persistGames()
 
     return {
       ok: true,
@@ -307,6 +331,7 @@ export class GameStore {
     game.hasDrawnStartingHand = true
 
     const cards = game.library.splice(0, STARTING_HAND_SIZE)
+    this.persistGames()
 
     return {
       ok: true,
@@ -328,13 +353,13 @@ export class GameStore {
       return { ok: false, reason: 'starting_hand_not_drawn' }
     }
 
-    game.library = shuffle(
-      game.initialLibrary.map((card) => card.name),
-      game.random
+    game.library = shuffle(game.initialLibrary.map((card) => card.name), () =>
+      nextRandom(game)
     )
     game.mulliganCount += 1
 
     const cards = game.library.splice(0, STARTING_HAND_SIZE)
+    this.persistGames()
 
     return {
       ok: true,
@@ -366,6 +391,7 @@ export class GameStore {
         : Math.max(0, game.library.length - normalizedPosition)
 
     game.library.splice(insertIndex, 0, card)
+    this.persistGames()
 
     return {
       ok: true,
@@ -389,7 +415,9 @@ export class GameStore {
       return { ok: false, reason: 'game_not_found' }
     }
 
-    const cardsToInsert = randomizeOrder ? shuffle(cards, game.random) : [...cards]
+    const cardsToInsert = randomizeOrder
+      ? shuffle(cards, () => nextRandom(game))
+      : [...cards]
 
     for (const card of cardsToInsert) {
       if (side === 'top') {
@@ -398,6 +426,8 @@ export class GameStore {
         game.library.push(card)
       }
     }
+
+    this.persistGames()
 
     return {
       ok: true,
@@ -436,6 +466,8 @@ export class GameStore {
       }
     })
 
+    this.persistGames()
+
     return {
       ok: true,
       matches,
@@ -452,7 +484,8 @@ export class GameStore {
       return { ok: false, reason: 'game_not_found' }
     }
 
-    game.library = shuffle(game.library, game.random)
+    game.library = shuffle(game.library, () => nextRandom(game))
+    this.persistGames()
 
     return {
       ok: true,
@@ -478,6 +511,7 @@ export class GameStore {
       game.commanders.length,
       game.mulliganCount
     )
+    this.persistGames()
 
     return {
       ok: true,
@@ -511,32 +545,46 @@ export class GameStore {
 
   resetGameToInitialState(gameId: string): ResetGameToInitialStateResult {
     this.deleteExpiredGames()
+
     const game = this.games.get(gameId)
+
     if (!game) {
       return { ok: false, reason: 'game_not_found' }
     }
-    game.random = createSeededRandom(game.seed)
-    game.library = shuffle(game.initialLibrary.map((card) => card.name), game.random)
+
+    game.randomState = game.seed >>> 0
+    game.library = shuffle(game.initialLibrary.map((card) => card.name), () =>
+      nextRandom(game)
+    )
     game.openingHandSnapshot = undefined
     game.hasDrawnStartingHand = false
     game.mulliganCount = 0
+    this.persistGames()
+
     return {
       ok: true,
       cardsRemaining: game.library.length,
     }
   }
+
   restoreOpeningHandSnapshot(gameId: string): RestoreOpeningHandSnapshotResult {
     this.deleteExpiredGames()
+
     const game = this.games.get(gameId)
+
     if (!game) {
       return { ok: false, reason: 'game_not_found' }
     }
+
     if (!game.openingHandSnapshot) {
       return { ok: false, reason: 'opening_hand_snapshot_not_found' }
     }
+
     game.library = [...game.openingHandSnapshot.library]
     game.hasDrawnStartingHand = true
     game.mulliganCount = game.openingHandSnapshot.validation.mulliganCount
+    this.persistGames()
+
     return {
       ok: true,
       cardsRemaining: game.library.length,
@@ -544,6 +592,7 @@ export class GameStore {
       mulliganCount: game.mulliganCount,
     }
   }
+
   getGamePromptContext(gameId: string): GetGamePromptContextResult {
     this.deleteExpiredGames()
 
@@ -558,7 +607,9 @@ export class GameStore {
       gameId: game.id,
       commanders: game.commanders.map((card) => ({ ...card })),
       initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
-      currentLibrary: [...game.library].sort((leftCard, rightCard) => leftCard.localeCompare(rightCard)),
+      currentLibrary: [...game.library].sort((leftCard, rightCard) =>
+        leftCard.localeCompare(rightCard)
+      ),
       openingHandSnapshot: game.openingHandSnapshot
         ? {
             startingHand: [...game.openingHandSnapshot.startingHand],
@@ -571,13 +622,100 @@ export class GameStore {
 
   private deleteExpiredGames() {
     const expirationCutoff = Date.now() - ONE_HOUR_IN_MS
+    let deletedAnyGames = false
 
     for (const [gameId, game] of this.games.entries()) {
       if (game.createdAt < expirationCutoff) {
         this.games.delete(gameId)
         this.onDeleteGame?.(gameId)
+        deletedAnyGames = true
       }
     }
+
+    if (deletedAnyGames) {
+      this.persistGames()
+    }
+  }
+
+  private loadPersistedGames() {
+    if (!this.persistencePath || !existsSync(this.persistencePath)) {
+      return
+    }
+
+    try {
+      const rawValue = readFileSync(this.persistencePath, 'utf8')
+
+      if (!rawValue.trim()) {
+        return
+      }
+
+      const parsedValue = JSON.parse(rawValue) as Partial<PersistedGameStore>
+
+      if (
+        parsedValue.version !== GAME_STORE_FILE_VERSION ||
+        !Array.isArray(parsedValue.games)
+      ) {
+        return
+      }
+
+      for (const game of parsedValue.games) {
+        if (!isValidPersistedGameRecord(game)) {
+          continue
+        }
+
+        this.games.set(game.id, {
+          ...game,
+          commanders: game.commanders.map((card) => ({ ...card })),
+          initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
+          library: [...game.library],
+          openingHandSnapshot: game.openingHandSnapshot
+            ? {
+                startingHand: [...game.openingHandSnapshot.startingHand],
+                library: [...game.openingHandSnapshot.library],
+                validation: { ...game.openingHandSnapshot.validation },
+              }
+            : undefined,
+        })
+      }
+
+      this.deleteExpiredGames()
+    } catch (error) {
+      console.warn(
+        '[game_store_persist]',
+        error instanceof Error
+          ? `Failed to load persisted game store: ${error.message}`
+          : 'Failed to load persisted game store.'
+      )
+    }
+  }
+
+  private persistGames() {
+    if (!this.persistencePath) {
+      return
+    }
+
+    const persistedValue: PersistedGameStore = {
+      version: GAME_STORE_FILE_VERSION,
+      games: Array.from(this.games.values()).map((game) => ({
+        ...game,
+        commanders: game.commanders.map((card) => ({ ...card })),
+        initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
+        library: [...game.library],
+        openingHandSnapshot: game.openingHandSnapshot
+          ? {
+              startingHand: [...game.openingHandSnapshot.startingHand],
+              library: [...game.openingHandSnapshot.library],
+              validation: { ...game.openingHandSnapshot.validation },
+            }
+          : undefined,
+      })),
+    }
+
+    mkdirSync(dirname(this.persistencePath), { recursive: true })
+
+    const temporaryPath = `${this.persistencePath}.tmp`
+    writeFileSync(temporaryPath, JSON.stringify(persistedValue, null, 2))
+    renameSync(temporaryPath, this.persistencePath)
   }
 }
 
@@ -603,16 +741,15 @@ function normalizeSeed(seed: number | undefined) {
   return randomInt(0, 2 ** 32)
 }
 
-function createSeededRandom(seed: number) {
-  let state = seed >>> 0
+function nextRandom(game: Pick<GameRecord, 'randomState'>) {
+  game.randomState = (game.randomState + 0x6d2b79f5) >>> 0
+  let next = Math.imul(
+    game.randomState ^ (game.randomState >>> 15),
+    game.randomState | 1
+  )
+  next ^= next + Math.imul(next ^ (next >>> 7), next | 61)
 
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0
-    let next = Math.imul(state ^ (state >>> 15), state | 1)
-    next ^= next + Math.imul(next ^ (next >>> 7), next | 61)
-
-    return ((next ^ (next >>> 14)) >>> 0) / 4294967296
-  }
+  return ((next ^ (next >>> 14)) >>> 0) / 4294967296
 }
 
 function sortCardsAlphabetically(cards: readonly GameCard[]) {
@@ -671,7 +808,85 @@ function getExpectedStartingHandSize(mulliganCount: number) {
   return STARTING_HAND_SIZE - Math.max(0, mulliganCount - 1)
 }
 
-function findBestLibraryMatchIndex(library: readonly string[], requestedCard: string) {
+function isValidPersistedGameRecord(value: unknown): value is GameRecord {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  const record = value as Partial<GameRecord>
+
+  return (
+    typeof record.id === 'string' &&
+    typeof record.createdAt === 'number' &&
+    typeof record.seed === 'number' &&
+    Array.isArray(record.commanders) &&
+    record.commanders.every(isGameCard) &&
+    Array.isArray(record.initialLibrary) &&
+    record.initialLibrary.every(isGameCard) &&
+    Array.isArray(record.library) &&
+    record.library.every((card) => typeof card === 'string') &&
+    typeof record.hasDrawnStartingHand === 'boolean' &&
+    typeof record.mulliganCount === 'number' &&
+    typeof record.randomState === 'number' &&
+    (record.openingHandSnapshot === undefined ||
+      isOpeningHandSnapshot(record.openingHandSnapshot))
+  )
+}
+
+function isGameCard(value: unknown): value is GameCard {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'name' in value &&
+    typeof value.name === 'string' &&
+    'cardText' in value &&
+    typeof value.cardText === 'string'
+  )
+}
+
+function isOpeningHandSnapshot(value: unknown): value is OpeningHandSnapshot {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  const snapshot = value as Partial<OpeningHandSnapshot>
+
+  return (
+    Array.isArray(snapshot.startingHand) &&
+    snapshot.startingHand.every((card) => typeof card === 'string') &&
+    Array.isArray(snapshot.library) &&
+    snapshot.library.every((card) => typeof card === 'string') &&
+    snapshot.validation !== undefined &&
+    isOpeningHandSnapshotValidation(snapshot.validation)
+  )
+}
+
+function isOpeningHandSnapshotValidation(
+  value: unknown
+): value is OpeningHandSnapshotValidation {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  const validation = value as Partial<OpeningHandSnapshotValidation>
+
+  return (
+    typeof validation.isValid === 'boolean' &&
+    typeof validation.message === 'string' &&
+    typeof validation.totalGameCards === 'number' &&
+    typeof validation.expectedGameCards === 'number' &&
+    typeof validation.startingHandSize === 'number' &&
+    typeof validation.expectedStartingHandSize === 'number' &&
+    typeof validation.librarySize === 'number' &&
+    typeof validation.commanderCount === 'number' &&
+    typeof validation.mulliganCount === 'number'
+  )
+}
+
+function findBestLibraryMatchIndex(
+  library: readonly string[],
+  requestedCard: string
+) {
   const normalizedRequestedCard = normalizeCardNameForFuzzyMatch(requestedCard)
 
   if (!normalizedRequestedCard) {
@@ -767,7 +982,10 @@ function levenshteinDistance(left: string, right: string) {
     return left.length
   }
 
-  const previousRow = Array.from({ length: right.length + 1 }, (_value, index) => index)
+  const previousRow = Array.from(
+    { length: right.length + 1 },
+    (_value, index) => index
+  )
 
   for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
     let previousDiagonal = previousRow[0]
@@ -789,4 +1007,3 @@ function levenshteinDistance(left: string, right: string) {
 
   return previousRow[right.length]
 }
-
