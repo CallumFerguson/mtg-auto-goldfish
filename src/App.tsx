@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { ComponentProps, Dispatch, SetStateAction } from "react"
 
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
+import { CustomPromptTestModal } from "@/features/deck-intake/components/custom-prompt-test-modal"
 import { GoldfishSimulationPanel } from "@/features/deck-intake/components/goldfish-simulation-panel"
 import { HeroSection } from "@/features/deck-intake/components/hero-section"
 import { ProcessedCardsPanel } from "@/features/deck-intake/components/processed-cards-panel"
@@ -353,6 +354,8 @@ export function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isResetModalOpen, setIsResetModalOpen] = useState(false)
   const [isPromptStreamModalOpen, setIsPromptStreamModalOpen] = useState(false)
+  const [isCustomPromptTestModalOpen, setIsCustomPromptTestModalOpen] =
+    useState(false)
   const [isStartingSimulation, setIsStartingSimulation] = useState(false)
   const [isCreatingDevGame, setIsCreatingDevGame] = useState(false)
   const [simulationError, setSimulationError] = useState(
@@ -1574,6 +1577,7 @@ export function App() {
           onCancelPromptRun={cancelSimulation}
           onRerunPromptRun={rerunPromptRun}
           onOpenPromptStream={() => setIsPromptStreamModalOpen(true)}
+          onOpenCustomPromptTest={() => setIsCustomPromptTestModalOpen(true)}
           onCreateDevGame={createDevGame}
           onStart={startSimulation}
         />
@@ -1590,6 +1594,12 @@ export function App() {
         promptRuns={promptRuns}
         isStarting={isStartingSimulation}
         onClose={() => setIsPromptStreamModalOpen(false)}
+      />
+
+      <CustomPromptTestModal
+        isOpen={isCustomPromptTestModalOpen}
+        serverUrl={GOLDFISH_SERVER_URL}
+        onClose={() => setIsCustomPromptTestModalOpen(false)}
       />
     </main>
   )

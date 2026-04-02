@@ -32,6 +32,7 @@ type GoldfishSimulationPanelProps = {
   onCancelPromptRun: (runId: string) => void
   onRerunPromptRun: (runId: string) => void
   onOpenPromptStream: () => void
+  onOpenCustomPromptTest: () => void
   onCreateDevGame: () => void
   onStart: () => void
 }
@@ -73,6 +74,7 @@ export function GoldfishSimulationPanel({
   onCancelPromptRun,
   onRerunPromptRun,
   onOpenPromptStream,
+  onOpenCustomPromptTest,
   onCreateDevGame,
   onStart,
 }: GoldfishSimulationPanelProps) {
@@ -194,6 +196,17 @@ export function GoldfishSimulationPanel({
           >
             <Eye />
             View full prompt stream
+          </Button>
+
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            className="h-11 rounded-full border-fuchsia-400/25 bg-fuchsia-500/10 px-5 text-fuchsia-100 hover:bg-fuchsia-500/20 hover:text-fuchsia-50"
+            onClick={onOpenCustomPromptTest}
+          >
+            <Sparkles />
+            Temp: custom prompt
           </Button>
 
           <Button
