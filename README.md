@@ -117,6 +117,7 @@ LM_STUDIO_MODEL=
 # OpenAI
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.4-mini
+# none, minimal, low, medium, high, and xhigh
 OPENAI_REASONING_EFFORT=medium
 # Optional. Valid values: off, auto, concise, detailed
 # Leave blank or set to off to disable reasoning summaries and save tokens.

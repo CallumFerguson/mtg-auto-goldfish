@@ -64,6 +64,10 @@ export type SimulationActivityDetail =
       text: string
     }
   | {
+      kind: "preformatted_text"
+      text: string
+    }
+  | {
       kind: "card_list"
       cards: string[]
       label?: string
@@ -243,6 +247,12 @@ export function renderSimulationActivityDetail(
   switch (detail.kind) {
     case "text":
       return <p className="text-xs leading-5 text-stone-400">{detail.text}</p>
+    case "preformatted_text":
+      return (
+        <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-black/20 p-3 text-xs leading-5 whitespace-pre-wrap text-stone-300">
+          {detail.text}
+        </pre>
+      )
     case "card_list":
       return <ToolCardList cards={detail.cards} label={detail.label} />
     case "stack":
@@ -864,9 +874,40 @@ function getTakeCardsFromLibraryDetail(
   }
 }
 
+function getUpdateGameStateDetail(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
+  if (event.tool !== "update_game_state") {
+    return undefined
+  }
+
+  const gameState = event.structuredContent?.gameState
+
+  if (typeof gameState !== "string") {
+    return undefined
+  }
+
+  const trimmedGameState = gameState.trim()
+
+  if (!trimmedGameState) {
+    return undefined
+  }
+
+  return {
+    kind: "preformatted_text" as const,
+    text: trimmedGameState,
+  }
+}
+
 function getToolActivityDetail(
   event: Extract<PromptStreamEvent, { type: "tool" }>
 ) {
+  const updateGameStateDetail = getUpdateGameStateDetail(event)
+
+  if (updateGameStateDetail) {
+    return updateGameStateDetail
+  }
+
   const mulliganDetail = getMulliganDetail(event)
 
   if (mulliganDetail) {
