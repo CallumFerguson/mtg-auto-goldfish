@@ -92,7 +92,7 @@ export type SimulationPromptRunKind =
   | "opening_hand"
   | "starting_hand_validation"
   | "turn"
-export type SimulationPromptRunFlow = "main" | "opening_hand_batch"
+export type SimulationPromptRunFlow = "main"
 
 export type PromptRunEventRecord =
   | {
@@ -119,7 +119,6 @@ export type SimulationPromptRun = {
   flow: SimulationPromptRunFlow
   gameId: string
   seed: number | null
-  batchRunNumber?: number
   rerunnable: boolean
   eventLog: PromptRunEventRecord[]
   activities: SimulationActivity[]
@@ -141,7 +140,6 @@ export function createPromptRun(
     flow: SimulationPromptRunFlow
     gameId: string
     seed: number | null
-    batchRunNumber?: number
     rerunnable?: boolean
   }
 ): SimulationPromptRun {
@@ -152,7 +150,6 @@ export function createPromptRun(
     flow: options.flow,
     gameId: options.gameId,
     seed: options.seed,
-    batchRunNumber: options.batchRunNumber,
     rerunnable: options.rerunnable ?? true,
     eventLog: [],
     activities: [],

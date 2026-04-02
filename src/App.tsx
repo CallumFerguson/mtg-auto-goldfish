@@ -96,7 +96,7 @@ type OpeningHandSnapshotStatusResponse =
       error?: string
     }
 
-type SimulationPromptRunFlow = "main" | "opening_hand_batch"
+type SimulationPromptRunFlow = "main"
 
 type StoredSimulationSessionState = {
   simulationPayload: SimulationPayload | null
@@ -903,7 +903,6 @@ export function App() {
     options?: {
       flow?: SimulationPromptRunFlow
       seed?: number | null
-      batchRunNumber?: number
     }
   ) {
     const turnRun = createPromptRun(title, {
@@ -911,7 +910,6 @@ export function App() {
       flow: options?.flow ?? "main",
       gameId: currentGameId,
       seed: options?.seed ?? null,
-      batchRunNumber: options?.batchRunNumber,
     })
     setPromptRuns((currentRuns) => [...currentRuns, turnRun])
 
@@ -966,7 +964,6 @@ export function App() {
     options?: {
       flow?: SimulationPromptRunFlow
       seed?: number | null
-      batchRunNumber?: number
     }
   ) {
     const openingHandRun = createPromptRun(title, {
@@ -974,7 +971,6 @@ export function App() {
       flow: options?.flow ?? "main",
       gameId: currentGameId,
       seed: options?.seed ?? null,
-      batchRunNumber: options?.batchRunNumber,
     })
     setPromptRuns((currentRuns) => [...currentRuns, openingHandRun])
 
@@ -1032,66 +1028,6 @@ export function App() {
     }
   }
 
-  async function startOpeningHandBatchTest() {
-    if (!simulationPayload) {
-      return
-    }
-
-    setSavedSimulationPayload(simulationPayload)
-    const abortController = new AbortController()
-    simulationAbortControllerRef.current = abortController
-
-    setIsStartingSimulation(true)
-    setSimulationError("")
-    setGameId("")
-    setCurrentSimulationSeed(null)
-    setPromptRuns([])
-
-    try {
-      for (let runNumber = 1; runNumber <= 10; runNumber += 1) {
-        if (abortController.signal.aborted) {
-          throw createCancellationError()
-        }
-
-        const { gameId: nextGameId, seed } = await createGame(
-          abortController.signal,
-          undefined,
-          simulationPayload
-        )
-        setGameId(nextGameId)
-        setCurrentSimulationSeed(seed)
-
-        await runOpeningHandSimulation(
-          nextGameId,
-          `Opening hand simulation ${runNumber}/10`,
-          abortController.signal,
-          {
-            flow: "opening_hand_batch",
-            seed,
-            batchRunNumber: runNumber,
-          }
-        )
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        if (!pendingRerunRunIdRef.current) {
-          setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
-          setSimulationError(SIMULATION_CANCELED_MESSAGE)
-        }
-      } else {
-        setSimulationError(
-          error instanceof Error ? error.message : "Failed to create a game."
-        )
-      }
-    } finally {
-      if (simulationAbortControllerRef.current === abortController) {
-        simulationAbortControllerRef.current = null
-      }
-
-      setIsStartingSimulation(false)
-    }
-  }
-
   function cancelSimulation(runId?: string) {
     if (runId) {
       const matchingRun = promptRuns.find((run) => run.id === runId)
@@ -1145,9 +1081,7 @@ export function App() {
     setSimulationError("")
 
     try {
-      if (run.flow === "opening_hand_batch") {
-        await rerunOpeningHandBatchFrom(runIndex, abortController.signal)
-      } else if (run.kind === "opening_hand") {
+      if (run.kind === "opening_hand") {
         await rerunMainSimulationFromOpeningHand(
           runIndex,
           run,
@@ -1242,44 +1176,6 @@ export function App() {
       flow: "main",
       seed: run.seed,
     })
-  }
-
-  async function rerunOpeningHandBatchFrom(
-    runIndex: number,
-    signal?: AbortSignal
-  ) {
-    const replayPayload = savedSimulationPayload ?? simulationPayload
-    const runsToReplay = promptRuns
-      .slice(runIndex)
-      .filter(
-        (run): run is SimulationPromptRun & { batchRunNumber: number } =>
-          run.flow === "opening_hand_batch" &&
-          run.kind === "opening_hand" &&
-          typeof run.batchRunNumber === "number"
-      )
-
-    setPromptRuns((currentRuns) => currentRuns.slice(0, runIndex))
-
-    for (const run of runsToReplay) {
-      if (signal?.aborted) {
-        throw createCancellationError()
-      }
-
-      const { gameId: nextGameId, seed } = await createGame(
-        signal,
-        run.seed ?? undefined,
-        replayPayload
-      )
-
-      setGameId(nextGameId)
-      setCurrentSimulationSeed(seed)
-
-      await runOpeningHandSimulation(nextGameId, run.title, signal, {
-        flow: "opening_hand_batch",
-        seed,
-        batchRunNumber: run.batchRunNumber,
-      })
-    }
   }
 
   async function createDevGame() {
@@ -1680,7 +1576,6 @@ export function App() {
           onOpenPromptStream={() => setIsPromptStreamModalOpen(true)}
           onCreateDevGame={createDevGame}
           onStart={startSimulation}
-          onStartOpeningHandBatchTest={startOpeningHandBatchTest}
         />
       </div>
 

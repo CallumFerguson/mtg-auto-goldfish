@@ -34,7 +34,6 @@ type GoldfishSimulationPanelProps = {
   onOpenPromptStream: () => void
   onCreateDevGame: () => void
   onStart: () => void
-  onStartOpeningHandBatchTest: () => void
 }
 
 function ActivityIcon({ status }: Pick<SimulationActivity, "status">) {
@@ -76,7 +75,6 @@ export function GoldfishSimulationPanel({
   onOpenPromptStream,
   onCreateDevGame,
   onStart,
-  onStartOpeningHandBatchTest,
 }: GoldfishSimulationPanelProps) {
   const isNearBottomRef = useRef(false)
   const hasStream = promptRuns.some((run) => run.rawPromptStream.trim())
@@ -214,27 +212,6 @@ export function GoldfishSimulationPanel({
               <>
                 <Sparkles />
                 Dev: create + copy ID
-              </>
-            )}
-          </Button>
-
-          <Button
-            type="button"
-            size="lg"
-            variant="outline"
-            className="h-11 rounded-full border-fuchsia-400/25 bg-fuchsia-500/10 px-5 text-fuchsia-100 hover:bg-fuchsia-500/20 hover:text-fuchsia-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
-            disabled={!canStart || isStarting || isCreatingDevGame}
-            onClick={onStartOpeningHandBatchTest}
-          >
-            {isStarting ? (
-              <>
-                <LoaderCircle className="animate-spin" />
-                Running batch
-              </>
-            ) : (
-              <>
-                <Sparkles />
-                Temp: 10 opening hands
               </>
             )}
           </Button>
