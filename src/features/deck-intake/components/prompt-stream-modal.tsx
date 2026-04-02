@@ -21,9 +21,9 @@ export function PromptStreamModal({
   const streamContentRef = useRef<HTMLPreElement | null>(null)
   const isNearBottomRef = useRef(true)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
-    "idle"
-  )
+  const [copyState, setCopyState] = useState<
+    "idle" | "stream-copied" | "all-copied" | "stream-error" | "all-error"
+  >("idle")
 
   const selectedRun = useMemo(() => {
     if (!promptRuns.length) {
@@ -37,6 +37,16 @@ export function PromptStreamModal({
   }, [promptRuns, selectedRunId])
 
   const streamText = selectedRun?.rawPromptStream.trim() || "No prompt stream yet."
+  const allStreamsText = useMemo(
+    () =>
+      promptRuns
+        .map(
+          (run) =>
+            `=== ${run.title} ===\n${run.rawPromptStream.trim() || "No prompt stream yet."}`
+        )
+        .join("\n\n"),
+    [promptRuns]
+  )
 
   useEffect(() => {
     if (copyState === "idle") {
@@ -55,9 +65,18 @@ export function PromptStreamModal({
   async function handleCopyPromptStream() {
     try {
       await navigator.clipboard.writeText(streamText)
-      setCopyState("copied")
+      setCopyState("stream-copied")
     } catch {
-      setCopyState("error")
+      setCopyState("stream-error")
+    }
+  }
+
+  async function handleCopyAllPromptStreams() {
+    try {
+      await navigator.clipboard.writeText(allStreamsText || "No prompt stream yet.")
+      setCopyState("all-copied")
+    } catch {
+      setCopyState("all-error")
     }
   }
 
@@ -240,12 +259,27 @@ export function PromptStreamModal({
                   void handleCopyPromptStream()
                 }}
               >
-                {copyState === "copied" ? <Check /> : <Copy />}
-                {copyState === "copied"
+                {copyState === "stream-copied" ? <Check /> : <Copy />}
+                {copyState === "stream-copied"
                   ? "Copied"
-                  : copyState === "error"
+                  : copyState === "stream-error"
                     ? "Copy failed"
                     : "Copy stream"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-full border-cyan-300/20 bg-cyan-400/10 px-4 text-cyan-100 hover:bg-cyan-400/15 hover:text-cyan-50"
+                onClick={() => {
+                  void handleCopyAllPromptStreams()
+                }}
+              >
+                {copyState === "all-copied" ? <Check /> : <Copy />}
+                {copyState === "all-copied"
+                  ? "Copied all"
+                  : copyState === "all-error"
+                    ? "Copy failed"
+                    : "Copy all"}
               </Button>
               <Button
                 type="button"
