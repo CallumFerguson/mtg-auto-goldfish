@@ -1615,17 +1615,6 @@ export function App() {
     )
   }
 
-  const combinedPromptStream = useMemo(
-    () =>
-      promptRuns
-        .map(
-          (run) =>
-            `=== ${run.title} ===\n${run.rawPromptStream.trim() || "No prompt stream yet."}`
-        )
-        .join("\n\n"),
-    [promptRuns]
-  )
-
   return (
     <main className="min-h-svh bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.2),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(120,53,15,0.3),transparent_30%),linear-gradient(180deg,#09090b_0%,#111217_50%,#18181b_100%)] text-stone-100">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
@@ -1703,7 +1692,7 @@ export function App() {
 
       <PromptStreamModal
         isOpen={isPromptStreamModalOpen}
-        streamText={combinedPromptStream}
+        promptRuns={promptRuns}
         isStarting={isStartingSimulation}
         onClose={() => setIsPromptStreamModalOpen(false)}
       />

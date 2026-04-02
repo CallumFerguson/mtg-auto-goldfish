@@ -1,24 +1,65 @@
-import { useEffect, useLayoutEffect, useRef } from "react"
-import { Eye, LoaderCircle, X } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { Check, Copy, Eye, LoaderCircle, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import type { SimulationPromptRun } from "@/features/deck-intake/lib/simulation-session"
 
 type PromptStreamModalProps = {
   isOpen: boolean
-  streamText: string
+  promptRuns: SimulationPromptRun[]
   isStarting: boolean
   onClose: () => void
 }
 
 export function PromptStreamModal({
   isOpen,
-  streamText,
+  promptRuns,
   isStarting,
   onClose,
 }: PromptStreamModalProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const streamContentRef = useRef<HTMLPreElement | null>(null)
   const isNearBottomRef = useRef(true)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
+    "idle"
+  )
+
+  const selectedRun = useMemo(() => {
+    if (!promptRuns.length) {
+      return null
+    }
+
+    return (
+      promptRuns.find((run) => run.id === selectedRunId) ??
+      promptRuns[promptRuns.length - 1]
+    )
+  }, [promptRuns, selectedRunId])
+
+  const streamText = selectedRun?.rawPromptStream.trim() || "No prompt stream yet."
+
+  useEffect(() => {
+    if (copyState === "idle") {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCopyState("idle")
+    }, 1800)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [copyState])
+
+  async function handleCopyPromptStream() {
+    try {
+      await navigator.clipboard.writeText(streamText)
+      setCopyState("copied")
+    } catch {
+      setCopyState("error")
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) {
@@ -41,6 +82,22 @@ export function PromptStreamModal({
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isOpen, onClose])
+
+  useEffect(() => {
+    if (!promptRuns.length) {
+      setSelectedRunId(null)
+      return
+    }
+
+    if (
+      selectedRunId &&
+      promptRuns.some((run) => run.id === selectedRunId)
+    ) {
+      return
+    }
+
+    setSelectedRunId(promptRuns[promptRuns.length - 1].id)
+  }, [promptRuns, selectedRunId])
 
   useEffect(() => {
     if (!isOpen) {
@@ -101,7 +158,7 @@ export function PromptStreamModal({
     }
 
     scrollContainer.scrollTop = scrollContainer.scrollHeight
-  }, [isOpen, streamText])
+  }, [isOpen, selectedRunId])
 
   useEffect(() => {
     if (!isOpen) {
@@ -157,7 +214,7 @@ export function PromptStreamModal({
         aria-modal="true"
         aria-labelledby="prompt-stream-modal-title"
       >
-        <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.15),transparent_55%)] p-6">
+        <div className="shrink-0 border-b border-white/10 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.15),transparent_55%)] p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="mb-4 flex size-12 items-center justify-center rounded-2xl border border-sky-300/20 bg-sky-400/10 text-sky-200">
@@ -170,11 +227,26 @@ export function PromptStreamModal({
                 Full prompt stream
               </h3>
               <p className="mt-2 text-sm leading-6 text-stone-300">
-                This is the raw live stream coming back through the configured prompt pipeline.
+                This is the raw live stream coming back through the configured prompt pipeline, separated by prompt run.
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-full border-sky-300/20 bg-sky-400/10 px-4 text-sky-100 hover:bg-sky-400/15 hover:text-sky-50"
+                onClick={() => {
+                  void handleCopyPromptStream()
+                }}
+              >
+                {copyState === "copied" ? <Check /> : <Copy />}
+                {copyState === "copied"
+                  ? "Copied"
+                  : copyState === "error"
+                    ? "Copy failed"
+                    : "Copy stream"}
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -188,20 +260,47 @@ export function PromptStreamModal({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden p-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
+          {promptRuns.length ? (
+            <div className="mb-4 flex shrink-0 gap-2 overflow-x-auto pb-1">
+              {promptRuns.map((run, index) => {
+                const isSelected = run.id === selectedRun?.id
+
+                return (
+                  <button
+                    key={run.id}
+                    type="button"
+                    className={`shrink-0 rounded-full border px-4 py-2 text-left text-xs transition ${
+                      isSelected
+                        ? "border-sky-300/40 bg-sky-400/15 text-sky-100"
+                        : "border-white/10 bg-white/5 text-stone-300 hover:border-white/20 hover:bg-white/10 hover:text-stone-100"
+                    }`}
+                    onClick={() => setSelectedRunId(run.id)}
+                    aria-pressed={isSelected}
+                  >
+                    <span className="block font-medium">{run.title}</span>
+                    <span className="mt-1 block text-[11px] uppercase tracking-[0.16em] text-inherit/70">
+                      Run {index + 1}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
           <div
             ref={scrollContainerRef}
-            className="app-scrollbar max-h-[min(70vh,48rem)] overflow-y-scroll rounded-[24px] border border-white/10 bg-black/35 p-4 pr-3"
+            className="app-scrollbar min-h-0 flex-1 overflow-y-auto rounded-[24px] border border-white/10 bg-black/35 p-4 pr-3"
           >
             <pre
               ref={streamContentRef}
               className="font-mono text-xs leading-6 break-words whitespace-pre-wrap text-stone-200"
             >
-              {streamText.trim() || "No prompt stream yet."}
+              {streamText}
             </pre>
           </div>
 
-          {isStarting ? (
+          {isStarting && selectedRun?.status === "running" ? (
             <div className="mt-4 flex items-center gap-2 text-sm text-stone-400">
               <LoaderCircle className="size-4 animate-spin text-amber-200" />
               Prompt stream is still running.
