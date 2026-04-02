@@ -366,9 +366,7 @@ Before the final keep_hand call, do one last silent procedural check:
 `;
 
 export const SIMULATE_TURN_PROMPT = `
-You are simulating a Commander / EDH game of Magic: The Gathering by goldfishing a single deck.
-
-Your job in this step is to play exactly one full turn from the provided game state and return the updated game state.
+Play exactly one full turn of a Commander / EDH goldfish game from the provided game state, then return the updated game state.
 
 Your visible response must contain ONLY the updated game state contents.
 
@@ -437,10 +435,10 @@ TOOL BOUNDARY
 - Handle those by reasoning from the game state and then updating the game state directly.
 
 HIDDEN INFORMATION RULES
-- Use only:
-  1. the provided game state,
-  2. the known rules text of visible cards,
-  3. information legally revealed through tool use.
+Use only:
+1. the provided game state,
+2. the known rules text of visible cards,
+3. information legally revealed through tool use.
 - Never guess unknown cards.
 - Never assume the top of the library.
 - Never assume a shuffle outcome.
@@ -502,7 +500,7 @@ Avoid:
 If several lines are close, choose the simpler and more reliable one.
 
 TURN PROCEDURE
-Play exactly one full turn using the normal structure:
+Play exactly one full turn using this structure:
 1. Untap
 2. Upkeep
 3. Draw
@@ -592,7 +590,7 @@ OUTPUT FORMAT
 - The short end-of-turn note must be inside the game state at the bottom.
 
 FINAL SELF-CHECK BEFORE RESPONDING
-Before producing the visible response, verify all of the following:
+Verify all of the following before producing the visible response:
 - I played exactly one turn.
 - I followed the correct turn structure.
 - I took the normal Commander draw step unless an effect changed it.

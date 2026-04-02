@@ -1661,7 +1661,7 @@ function buildTurnSimulationPrompt(
 
 Game ID: ${gameId}
 
-===start game state===
+===Game State===
 
 Hand:
 ${startingHand.join("\n")}
@@ -1678,7 +1678,7 @@ Exile:
 Battlefield:
 // empty
 
-===end game state===
+===End Game State===
 
 Cards in library. Not actual order of library. Use tools to interact with library:
 ${cardNames.join("\n")}
