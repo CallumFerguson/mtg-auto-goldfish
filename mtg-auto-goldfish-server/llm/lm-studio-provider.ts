@@ -48,12 +48,16 @@ type LmStudioOutputItem =
 
 type LmStudioChatResponse = {
   output?: LmStudioOutputItem[]
+  error?: unknown
+  message?: string
 }
 
 type LmStudioChatStreamEndEvent = {
   type: "chat.end"
 
   result?: LmStudioChatResponse
+  error?: unknown
+  message?: string
 }
 
 export function createLmStudioPromptProcessor(
@@ -133,7 +137,9 @@ export function createLmStudioPromptProcessor(
 
         if (!result) {
           throw new Error(
-            "LM Studio returned no message content for this prompt."
+            buildMissingMessageContentError(
+              extractLmStudioErrorMessage(chatResponse)
+            )
           )
         }
 
@@ -196,6 +202,7 @@ export function createLmStudioPromptProcessor(
         string | undefined
       > | null = null
       let hasFlushedMessageBlock = false
+      let latestStreamErrorMessage: string | undefined
 
       try {
         const response = await fetchImpl(`${baseUrl}/api/v1/chat`, {
@@ -429,13 +436,16 @@ export function createLmStudioPromptProcessor(
               break
 
             case "tool_call.failure":
+              latestStreamErrorMessage =
+                asStringRecord(payload).reason ??
+                asStringRecord(asObjectRecord(payload).error).message ??
+                latestStreamErrorMessage;
               ({
                 streamedText,
                 nextLoopCheckLength,
               } = appendStreamTextOrThrow(
                 streamedText,
-                asStringRecord(payload).reason ??
-                asStringRecord(asObjectRecord(payload).error).message,
+                latestStreamErrorMessage,
                 nextLoopCheckLength,
                 abortPrompt
               ))
@@ -444,20 +454,20 @@ export function createLmStudioPromptProcessor(
 
                 event: eventName,
 
-                error:
-                  asStringRecord(payload).reason ??
-                  asStringRecord(asObjectRecord(payload).error).message,
+                error: latestStreamErrorMessage,
               })
 
               break
 
             case "error":
+              latestStreamErrorMessage =
+                extractLmStudioErrorMessage(payload) ?? latestStreamErrorMessage;
               ({
                 streamedText,
                 nextLoopCheckLength,
               } = appendStreamTextOrThrow(
                 streamedText,
-                asStringRecord(asObjectRecord(payload).error).message,
+                latestStreamErrorMessage,
                 nextLoopCheckLength,
                 abortPrompt
               ))
@@ -465,7 +475,7 @@ export function createLmStudioPromptProcessor(
                 type: "error",
 
                 error:
-                  asStringRecord(asObjectRecord(payload).error).message ??
+                  latestStreamErrorMessage ??
                   "LM Studio reported a streaming error.",
               })
 
@@ -473,6 +483,11 @@ export function createLmStudioPromptProcessor(
 
             case "chat.end": {
               const endPayload = payload as LmStudioChatStreamEndEvent
+
+              latestStreamErrorMessage =
+                extractLmStudioErrorMessage(endPayload) ??
+                extractLmStudioErrorMessage(endPayload.result) ??
+                latestStreamErrorMessage
 
               finalResult = extractMessageText(endPayload.result ?? {})
 
@@ -498,9 +513,7 @@ export function createLmStudioPromptProcessor(
       }
 
       if (!finalResult) {
-        throw new Error(
-          "LM Studio returned no message content for this prompt."
-        )
+        throw new Error(buildMissingMessageContentError(latestStreamErrorMessage))
       }
 
       const result = {
@@ -1029,6 +1042,32 @@ function safeJsonStringify(value: unknown) {
   }
 }
 
+function extractLmStudioErrorMessage(value: unknown): string | undefined {
+  const payload = asObjectRecord(value)
+  const nestedError = asObjectRecord(payload.error)
+  const nestedDetails = asObjectRecord(payload.details)
+  const candidates = [
+    payload.error,
+    payload.message,
+    payload.reason,
+    payload.details,
+    nestedError.message,
+    nestedError.error,
+    nestedError.reason,
+    nestedDetails.message,
+    nestedDetails.error,
+    nestedDetails.reason,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+
+  return undefined
+}
+
 async function requestJson<T>(
   fetchImpl: typeof fetch,
 
@@ -1049,18 +1088,11 @@ async function buildErrorMessage(response: Response) {
   const contentType = response.headers.get("content-type") ?? ""
 
   if (contentType.includes("application/json")) {
-    const payload = (await response.json()) as {
-      error?: string
+    const payload = (await response.json()) as unknown
+    const extractedMessage = extractLmStudioErrorMessage(payload)
 
-      message?: string
-    }
-
-    if (payload.error || payload.message) {
-      return (
-        payload.error ??
-        payload.message ??
-        `LM Studio request failed with ${response.status}.`
-      )
+    if (extractedMessage) {
+      return extractedMessage
     }
   }
 
@@ -1071,6 +1103,30 @@ async function buildErrorMessage(response: Response) {
   }
 
   return `LM Studio request failed with ${response.status}.`
+}
+
+function buildMissingMessageContentError(upstreamError?: string) {
+  const trimmedUpstreamError = upstreamError?.trim()
+
+  if (trimmedUpstreamError) {
+    return `${trimmedUpstreamError}${buildContextWindowHint(trimmedUpstreamError)}`
+  }
+
+  return "LM Studio returned no message content for this prompt. The loaded model may not have enough context window for this prompt."
+}
+
+function buildContextWindowHint(message: string) {
+  if (!looksLikeContextWindowError(message)) {
+    return ""
+  }
+
+  return " The loaded model may not have enough context window for this prompt. Try a model with a larger context window or shorten the prompt."
+}
+
+function looksLikeContextWindowError(message: string) {
+  return /(context window|maximum context|max context|context length|prompt too long|too many tokens|token limit|input too long|exceeds?(?: the)? (?:context|token)|longer than (?:the )?context|more than.*tokens|context overflow)/i.test(
+    message
+  )
 }
 
 
