@@ -27,6 +27,9 @@ type OpenAiResponse = {
   usage?: {
     input_tokens?: number
     output_tokens?: number
+    output_tokens_details?: {
+      reasoning_tokens?: number
+    }
     total_tokens?: number
   }
 }
@@ -563,6 +566,7 @@ function extractOpenAiUsage(usage: OpenAiResponse["usage"]): PromptTokenUsage | 
   const normalizedUsage = {
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
+    reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
     totalTokens: usage.total_tokens,
   }
 
@@ -850,3 +854,4 @@ function stringifyUnknown(value: unknown) {
 
   return safeJsonStringify(value)
 }
+

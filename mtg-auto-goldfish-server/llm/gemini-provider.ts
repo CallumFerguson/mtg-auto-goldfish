@@ -621,6 +621,7 @@ function extractGeminiUsage(
   const normalizedUsage = {
     inputTokens: usage.promptTokenCount,
     outputTokens: usage.candidatesTokenCount,
+    reasoningTokens: usage.thoughtsTokenCount,
     totalTokens: usage.totalTokenCount,
   }
 
@@ -866,6 +867,7 @@ function safeJsonStringify(value: unknown) {
     return undefined
   }
 }
+
 
 
 

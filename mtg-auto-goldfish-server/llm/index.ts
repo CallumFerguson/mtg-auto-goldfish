@@ -29,6 +29,7 @@ export type LoadedTextModel = {
 export type PromptTokenUsage = {
   inputTokens?: number
   outputTokens?: number
+  reasoningTokens?: number
   totalTokens?: number
 }
 
@@ -131,3 +132,5 @@ export function normalizePromptProcessorProvider(
       )
   }
 }
+
+

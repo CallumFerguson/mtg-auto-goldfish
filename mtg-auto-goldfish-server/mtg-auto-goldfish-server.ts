@@ -1846,11 +1846,17 @@ type TokenPricing = {
 function formatPromptMetrics(response: PromptProcessingResult) {
   const inputTokens = response.usage?.inputTokens ?? "unknown"
   const outputTokens = response.usage?.outputTokens ?? "unknown"
+  const reasoningTokens = response.usage?.reasoningTokens
   const estimatedCostUsd = estimatePromptCostUsd(response)
   const formattedCost =
     estimatedCostUsd === undefined ? "unknown" : formatCostInCents(estimatedCostUsd)
 
-  return `input_tokens=${inputTokens} output_tokens=${outputTokens} duration_seconds=${formatDurationSeconds(response.durationMs)} estimated_cost_cents=${formattedCost}`
+  const reasoningMetrics =
+    typeof reasoningTokens === "number"
+      ? ` reasoning_tokens=${reasoningTokens} billed_output_tokens=${getBilledOutputTokens(response) ?? "unknown"}`
+      : ""
+
+  return `input_tokens=${inputTokens} output_tokens=${outputTokens}${reasoningMetrics} duration_seconds=${formatDurationSeconds(response.durationMs)} estimated_cost_cents=${formattedCost}`
 }
 
 function estimatePromptCostUsd(response: PromptProcessingResult) {
@@ -1859,13 +1865,13 @@ function estimatePromptCostUsd(response: PromptProcessingResult) {
   }
 
   const inputTokens = response.usage?.inputTokens
-  const outputTokens = response.usage?.outputTokens
+  const billedOutputTokens = getBilledOutputTokens(response)
 
-  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") {
+  if (typeof inputTokens !== "number" || typeof billedOutputTokens !== "number") {
     return undefined
   }
 
-  const pricing = getTokenPricing(response.provider, response.model.key)
+  const pricing = getTokenPricing(response.provider, response.model.key, inputTokens)
 
   if (!pricing) {
     return undefined
@@ -1873,21 +1879,37 @@ function estimatePromptCostUsd(response: PromptProcessingResult) {
 
   return (
     (inputTokens / 1_000_000) * pricing.inputUsdPerMillionTokens +
-    (outputTokens / 1_000_000) * pricing.outputUsdPerMillionTokens
+    (billedOutputTokens / 1_000_000) * pricing.outputUsdPerMillionTokens
   )
+}
+
+function getBilledOutputTokens(response: PromptProcessingResult) {
+  const outputTokens = response.usage?.outputTokens
+  const reasoningTokens = response.usage?.reasoningTokens
+
+  if (typeof outputTokens !== "number") {
+    return undefined
+  }
+
+  if (response.provider === "gemini") {
+    return outputTokens + (typeof reasoningTokens === "number" ? reasoningTokens : 0)
+  }
+
+  return outputTokens
 }
 
 function getTokenPricing(
   provider: PromptProcessorProvider,
-  modelKey: string
+  modelKey: string,
+  inputTokens?: number
 ): TokenPricing | undefined {
   const normalizedModelKey = modelKey.trim().toLowerCase()
 
   switch (provider) {
     case "openai":
-      return getOpenAiTokenPricing(normalizedModelKey)
+      return getOpenAiTokenPricing(normalizedModelKey, inputTokens)
     case "claude":
-      return getClaudeTokenPricing(normalizedModelKey)
+      return getClaudeTokenPricing(normalizedModelKey, inputTokens)
     case "gemini":
       return getGeminiTokenPricing(normalizedModelKey)
     case "lm-studio":
@@ -1896,25 +1918,95 @@ function getTokenPricing(
   }
 }
 
-function getOpenAiTokenPricing(modelKey: string): TokenPricing | undefined {
+function getOpenAiTokenPricing(
+  modelKey: string,
+  inputTokens?: number
+): TokenPricing | undefined {
   const pricingTable: Array<[string, TokenPricing]> = [
+    ["gpt-5.4-pro", { inputUsdPerMillionTokens: 30, outputUsdPerMillionTokens: 180 }],
     ["gpt-5.4-mini", { inputUsdPerMillionTokens: 0.75, outputUsdPerMillionTokens: 4.5 }],
     ["gpt-5.4-nano", { inputUsdPerMillionTokens: 0.2, outputUsdPerMillionTokens: 1.25 }],
     ["gpt-5.4", { inputUsdPerMillionTokens: 2.5, outputUsdPerMillionTokens: 15 }],
+    ["gpt-5-pro", { inputUsdPerMillionTokens: 15, outputUsdPerMillionTokens: 120 }],
+    ["gpt-5.2-pro", { inputUsdPerMillionTokens: 21, outputUsdPerMillionTokens: 168 }],
+    ["gpt-5.2-codex", { inputUsdPerMillionTokens: 1.75, outputUsdPerMillionTokens: 14 }],
+    ["gpt-5.2-chat-latest", { inputUsdPerMillionTokens: 1.75, outputUsdPerMillionTokens: 14 }],
+    ["gpt-5.2", { inputUsdPerMillionTokens: 1.75, outputUsdPerMillionTokens: 14 }],
+    ["gpt-5.1-codex-max", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
+    ["gpt-5.1-codex-mini", { inputUsdPerMillionTokens: 0.25, outputUsdPerMillionTokens: 2 }],
+    ["gpt-5.1-codex", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
+    ["gpt-5.1-chat-latest", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
+    ["gpt-5.1", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
+    ["gpt-5-codex", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
+    ["gpt-5-mini", { inputUsdPerMillionTokens: 0.25, outputUsdPerMillionTokens: 2 }],
+    ["gpt-5-nano", { inputUsdPerMillionTokens: 0.05, outputUsdPerMillionTokens: 0.4 }],
+    ["gpt-5", { inputUsdPerMillionTokens: 1.25, outputUsdPerMillionTokens: 10 }],
   ]
 
-  return pricingTable.find(([prefix]) => modelKey.startsWith(prefix))?.[1]
+  const basePricing = pricingTable.find(([prefix]) => modelKey.startsWith(prefix))?.[1]
+
+  if (!basePricing) {
+    return undefined
+  }
+
+  if (
+    typeof inputTokens === "number" &&
+    inputTokens > 272_000 &&
+    (modelKey.startsWith("gpt-5.4") || modelKey.startsWith("gpt-5.4-pro"))
+  ) {
+    return {
+      inputUsdPerMillionTokens: basePricing.inputUsdPerMillionTokens * 2,
+      outputUsdPerMillionTokens: basePricing.outputUsdPerMillionTokens * 1.5,
+    }
+  }
+
+  return basePricing
 }
 
-function getClaudeTokenPricing(modelKey: string): TokenPricing | undefined {
+function getClaudeTokenPricing(
+  modelKey: string,
+  inputTokens?: number
+): TokenPricing | undefined {
   const pricingTable: Array<[string, TokenPricing]> = [
     ["claude-opus-4-6", { inputUsdPerMillionTokens: 5, outputUsdPerMillionTokens: 25 }],
     ["claude-opus-4.6", { inputUsdPerMillionTokens: 5, outputUsdPerMillionTokens: 25 }],
+    ["claude-opus-4-5", { inputUsdPerMillionTokens: 5, outputUsdPerMillionTokens: 25 }],
+    ["claude-opus-4.5", { inputUsdPerMillionTokens: 5, outputUsdPerMillionTokens: 25 }],
+    ["claude-opus-4-1", { inputUsdPerMillionTokens: 15, outputUsdPerMillionTokens: 75 }],
+    ["claude-opus-4.1", { inputUsdPerMillionTokens: 15, outputUsdPerMillionTokens: 75 }],
+    ["claude-opus-4", { inputUsdPerMillionTokens: 15, outputUsdPerMillionTokens: 75 }],
     ["claude-sonnet-4-6", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
     ["claude-sonnet-4.6", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
+    ["claude-sonnet-4-5", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
+    ["claude-sonnet-4.5", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
+    ["claude-sonnet-4", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
+    ["claude-3-7-sonnet", { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 }],
+    ["claude-3-5-haiku", { inputUsdPerMillionTokens: 0.8, outputUsdPerMillionTokens: 4 }],
+    ["claude-3-haiku", { inputUsdPerMillionTokens: 0.25, outputUsdPerMillionTokens: 1.25 }],
   ]
 
-  return pricingTable.find(([prefix]) => modelKey.startsWith(prefix))?.[1]
+  const basePricing = pricingTable.find(([prefix]) => modelKey.startsWith(prefix))?.[1]
+
+  if (!basePricing) {
+    return undefined
+  }
+
+  if (
+    typeof inputTokens === "number" &&
+    inputTokens > 200_000 &&
+    (modelKey.startsWith("claude-sonnet-4") ||
+      modelKey.startsWith("claude-sonnet-4-5") ||
+      modelKey.startsWith("claude-sonnet-4.5") ||
+      modelKey.startsWith("claude-sonnet-4-6") ||
+      modelKey.startsWith("claude-sonnet-4.6"))
+  ) {
+    return {
+      inputUsdPerMillionTokens: 6,
+      outputUsdPerMillionTokens: 22.5,
+    }
+  }
+
+  return basePricing
 }
 
 function getGeminiTokenPricing(modelKey: string): TokenPricing | undefined {
@@ -2015,6 +2107,13 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
+
+
+
+
 
 
 
