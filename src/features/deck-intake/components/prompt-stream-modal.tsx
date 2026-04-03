@@ -21,6 +21,7 @@ export function PromptStreamModal({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const streamContentRef = useRef<HTMLPreElement | null>(null)
   const isNearBottomRef = useRef(true)
+  const wasOpenRef = useRef(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [copyState, setCopyState] = useState<
     "idle" | "stream-copied" | "all-copied" | "stream-error" | "all-error"
@@ -107,6 +108,14 @@ export function PromptStreamModal({
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isOpen, onClose])
+
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setSelectedRunId(promptRuns[promptRuns.length - 1]?.id ?? null)
+    }
+
+    wasOpenRef.current = isOpen
+  }, [isOpen, promptRuns])
 
   useEffect(() => {
     if (!promptRuns.length) {
