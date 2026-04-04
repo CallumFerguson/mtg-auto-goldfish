@@ -342,6 +342,9 @@ export function GoldfishSimulationPanel({
                       activity.status === "active" && Boolean(promptPreview)
                     const hasExpandableContent =
                       Boolean(activity.detail) || hasPromptPreview
+                    const showCollapsedDetailPreview =
+                      activity.toolName === "update_game_state" &&
+                      Boolean(activity.detail)
                     const defaultExpanded =
                       activity.kind !== "tool" ||
                       activity.toolName !== "update_game_state"
@@ -373,19 +376,30 @@ export function GoldfishSimulationPanel({
                         open={defaultExpanded}
                         className="group/activity rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
                       >
-                        <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
-                          <div className="mt-0.5 shrink-0">
-                            <ActivityIcon status={activity.status} />
+                        <summary className="list-none cursor-pointer [&::-webkit-details-marker]:hidden">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 shrink-0">
+                              <ActivityIcon status={activity.status} />
+                            </div>
+
+                            <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-stone-100">
+                                  {activity.title}
+                                </p>
+                              </div>
+                              <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/activity:rotate-0" />
+                            </div>
                           </div>
 
-                          <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-stone-100">
-                                {activity.title}
-                              </p>
+                          {showCollapsedDetailPreview ? (
+                            <div className="relative mt-3 overflow-hidden rounded-2xl border border-white/8 bg-black/10 p-3 group-open/activity:hidden">
+                              <div className="max-h-[5.75rem] overflow-hidden">
+                                {renderSimulationActivityDetail(activity.detail)}
+                              </div>
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-b from-transparent via-[#171717]/80 to-[#171717]" />
                             </div>
-                            <ChevronDown className="mt-0.5 size-4 shrink-0 -rotate-90 text-stone-500 transition-transform group-open/activity:rotate-0" />
-                          </div>
+                          ) : null}
                         </summary>
 
                         <div className="mt-4">
