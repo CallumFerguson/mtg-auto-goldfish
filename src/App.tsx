@@ -57,7 +57,6 @@ import type {
 
 const MIN_PROCESSING_DURATION_MS = 250
 const SIMULATION_CANCELED_MESSAGE = "Simulation cancelled."
-const MAX_SIMULATED_TURNS = 3
 const GOLDFISH_SERVER_URL =
   import.meta.env.VITE_GOLDFISH_SERVER_URL ?? "http://127.0.0.1:3001"
 
@@ -179,6 +178,38 @@ function getPromptRunTurnNumber(run: SimulationPromptRun) {
   const parsedTurnNumber = Number(match[1])
   return Number.isSafeInteger(parsedTurnNumber) ? parsedTurnNumber : null
 }
+
+function getLatestSimulatedTurnNumber(promptRuns: SimulationPromptRun[]) {
+  return promptRuns.reduce((latestTurnNumber, run) => {
+    if (run.kind !== "turn") {
+      return latestTurnNumber
+    }
+
+    const turnNumber = getPromptRunTurnNumber(run)
+
+    if (turnNumber === null) {
+      return latestTurnNumber
+    }
+
+    return Math.max(latestTurnNumber, turnNumber)
+  }, 0)
+}
+
+function getNextTurnPromptNumber(promptRuns: SimulationPromptRun[]) {
+  const lastRun = promptRuns.at(-1)
+
+  if (
+    !lastRun ||
+    lastRun.kind !== "turn" ||
+    lastRun.status !== "done" ||
+    typeof lastRun.turnNumber !== "number"
+  ) {
+    return null
+  }
+
+  return lastRun.turnNumber + 1
+}
+
 async function hydrateToolEvent(
   event: PromptStreamEvent,
   signal?: AbortSignal
@@ -531,6 +562,7 @@ export function App() {
       deck: deckCards.flatMap(expandResolvedCard),
     }
   }, [commanderCards, deckCards, isDeckReady])
+  const nextTurnPromptNumber = getNextTurnPromptNumber(promptRuns)
 
   function getRequestedSimulationSeed() {
     const trimmedValue = simulationSeedInput.trim()
@@ -835,7 +867,7 @@ export function App() {
         throw new Error(startingHandValidation.message)
       }
 
-      await runTurnSequence(nextGameId, 1, abortController.signal, {
+      await runTurnSimulation(nextGameId, 1, abortController.signal, {
         flow: "main",
         seed,
       })
@@ -990,24 +1022,6 @@ export function App() {
       }
 
       throw error
-    }
-  }
-
-  async function runTurnSequence(
-    currentGameId: string,
-    startingTurnNumber: number,
-    signal?: AbortSignal,
-    options?: {
-      flow?: SimulationPromptRunFlow
-      seed?: number | null
-    }
-  ) {
-    for (
-      let turnNumber = startingTurnNumber;
-      turnNumber <= MAX_SIMULATED_TURNS;
-      turnNumber += 1
-    ) {
-      await runTurnSimulation(currentGameId, turnNumber, signal, options)
     }
   }
 
@@ -1216,7 +1230,7 @@ export function App() {
       throw new Error(startingHandValidation.message)
     }
 
-    await runTurnSequence(nextGameId, 1, signal, {
+    await runTurnSimulation(nextGameId, 1, signal, {
       flow: "main",
       seed,
     })
@@ -1235,15 +1249,64 @@ export function App() {
       )
     }
 
+    const lastSimulatedTurnNumber = Math.max(
+      getLatestSimulatedTurnNumber(promptRuns),
+      turnNumber
+    )
+
     setPromptRuns((currentRuns) => currentRuns.slice(0, runIndex))
     await resetGameState(run.gameId, "turn_snapshot", signal, turnNumber)
     setGameId(run.gameId)
     setCurrentSimulationSeed(run.seed)
 
-    await runTurnSequence(run.gameId, turnNumber, signal, {
-      flow: "main",
-      seed: run.seed,
-    })
+    for (
+      let replayTurnNumber = turnNumber;
+      replayTurnNumber <= lastSimulatedTurnNumber;
+      replayTurnNumber += 1
+    ) {
+      await runTurnSimulation(run.gameId, replayTurnNumber, signal, {
+        flow: "main",
+        seed: run.seed,
+      })
+    }
+  }
+
+  async function simulateNextTurn() {
+    const nextTurnNumber = getNextTurnPromptNumber(promptRuns)
+
+    if (!gameId || nextTurnNumber === null || isStartingSimulation) {
+      return
+    }
+
+    const abortController = new AbortController()
+    simulationAbortControllerRef.current = abortController
+
+    setIsStartingSimulation(true)
+    setSimulationError("")
+
+    try {
+      await runTurnSimulation(gameId, nextTurnNumber, abortController.signal, {
+        flow: "main",
+        seed: currentSimulationSeed,
+      })
+    } catch (error) {
+      if (isAbortError(error)) {
+        setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
+        setSimulationError(SIMULATION_CANCELED_MESSAGE)
+      } else {
+        setSimulationError(
+          error instanceof Error
+            ? error.message
+            : `Failed to simulate turn ${nextTurnNumber}.`
+        )
+      }
+    } finally {
+      if (simulationAbortControllerRef.current === abortController) {
+        simulationAbortControllerRef.current = null
+      }
+
+      setIsStartingSimulation(false)
+    }
   }
 
   async function createDevGame() {
@@ -1636,11 +1699,13 @@ export function App() {
           gameId={gameId}
           simulationSeedInput={simulationSeedInput}
           currentSimulationSeed={currentSimulationSeed}
+          nextTurnPromptNumber={nextTurnPromptNumber}
           promptRuns={promptRuns}
           errorMessage={simulationError}
           onSimulationSeedInputChange={setSimulationSeedInput}
           onCancelPromptRun={cancelSimulation}
           onRerunPromptRun={rerunPromptRun}
+          onSimulateNextTurn={simulateNextTurn}
           onOpenPromptStream={() => setIsPromptStreamModalOpen(true)}
           onOpenCustomPromptTest={() => setIsCustomPromptTestModalOpen(true)}
           onCreateDevGame={createDevGame}

@@ -26,11 +26,13 @@ type GoldfishSimulationPanelProps = {
   gameId: string
   simulationSeedInput: string
   currentSimulationSeed: number | null
+  nextTurnPromptNumber: number | null
   promptRuns: SimulationPromptRun[]
   errorMessage: string
   onSimulationSeedInputChange: (value: string) => void
   onCancelPromptRun: (runId: string) => void
   onRerunPromptRun: (runId: string) => void
+  onSimulateNextTurn: () => void
   onOpenPromptStream: () => void
   onOpenCustomPromptTest: () => void
   onCreateDevGame: () => void
@@ -68,11 +70,13 @@ export function GoldfishSimulationPanel({
   gameId,
   simulationSeedInput,
   currentSimulationSeed,
+  nextTurnPromptNumber,
   promptRuns,
   errorMessage,
   onSimulationSeedInputChange,
   onCancelPromptRun,
   onRerunPromptRun,
+  onSimulateNextTurn,
   onOpenPromptStream,
   onOpenCustomPromptTest,
   onCreateDevGame,
@@ -160,8 +164,9 @@ export function GoldfishSimulationPanel({
             <p className="max-w-3xl text-sm leading-6 text-stone-400">
               Once the full commander and deck package is resolved, create a
               game on the goldfish server, then let the configured model play
-              through turns 1, 2, and 3 one turn at a time while you follow a
-              higher-level activity trace.
+              through the opening hand and turn 1 while you follow a
+              higher-level activity trace. After that, you can continue with
+              the simulate-next-turn button below the latest run.
             </p>
             <div className="pt-2">
               <label className="block space-y-2">
@@ -251,6 +256,7 @@ export function GoldfishSimulationPanel({
               </>
             )}
           </Button>
+
         </div>
       </div>
 
@@ -437,6 +443,31 @@ export function GoldfishSimulationPanel({
               </details>
             )
           })}
+
+          {nextTurnPromptNumber !== null ? (
+            <div className="flex justify-center pt-2">
+              <Button
+                type="button"
+                size="lg"
+                variant="outline"
+                className="h-11 rounded-full border-emerald-400/25 bg-emerald-500/10 px-5 text-emerald-100 hover:bg-emerald-500/20 hover:text-emerald-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
+                disabled={isStarting || isCreatingDevGame}
+                onClick={onSimulateNextTurn}
+              >
+                {isStarting ? (
+                  <>
+                    <LoaderCircle className="animate-spin" />
+                    Running
+                  </>
+                ) : (
+                  <>
+                    <Play />
+                    Simulate turn {nextTurnPromptNumber}
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
