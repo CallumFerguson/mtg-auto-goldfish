@@ -155,146 +155,149 @@ export function GoldfishSimulationPanel({
 
   return (
     <section className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30 backdrop-blur sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-amber-100 uppercase">
-            <Sparkles className="size-3.5" />
-            Auto goldfish simulation
-          </div>
-          <div className="space-y-1">
-            <h2 className="text-2xl font-semibold tracking-tight text-stone-100">
-              Start a simulation
-            </h2>
-            <p className="max-w-3xl text-sm leading-6 text-stone-400">
-              Once the full commander and deck package is resolved, create a
-              game on the goldfish server, then let the configured model play
-              through the opening hand and your selected number of turns while
-              you follow a higher-level activity trace. After that, you can
-              continue with the simulate-next-turn button below the latest run.
-            </p>
-            <div className="grid gap-4 pt-2 sm:grid-cols-[minmax(0,16rem)_minmax(0,12rem)]">
-              <div>
-                <label className="block space-y-2">
-                  <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
-                    Simulation seed
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    step="1"
-                    value={simulationSeedInput}
-                    onChange={(event) =>
-                      onSimulationSeedInputChange(event.target.value)
-                    }
-                    placeholder="Blank = random"
-                    className="h-11 w-full [appearance:textfield] appearance-none rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-stone-100 transition outline-none placeholder:text-stone-500 focus:border-amber-300/40 focus:bg-black/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  />
-                </label>
-                <p className="mt-2 text-xs leading-5 text-stone-500">
-                  Leave blank to generate a random seed and display it here for
-                  reruns.
-                </p>
-              </div>
-
-              <div>
-                <label className="block space-y-2">
-                  <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
-                    Auto goldfish turns
-                  </span>
-                  <select
-                    value={autoSimulationTurnCount}
-                    onChange={(event) =>
-                      onAutoSimulationTurnCountChange(Number(event.target.value))
-                    }
-                    className="h-11 w-full cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-stone-100 transition outline-none focus:border-amber-300/40 focus:bg-black/40"
-                  >
-                    {Array.from({ length: 10 }, (_, index) => {
-                      const turnCount = index + 1
-
-                      return (
-                        <option
-                          key={turnCount}
-                          value={turnCount}
-                          className="bg-stone-950 text-stone-100"
-                        >
-                          {turnCount} turn{turnCount === 1 ? "" : "s"}
-                        </option>
-                      )
-                    })}
-                  </select>
-                </label>
-                <p className="mt-2 text-xs leading-5 text-stone-500">
-                  Only used when starting auto goldfish.
-                </p>
-              </div>
+      <div className="space-y-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-amber-100 uppercase">
+              <Sparkles className="size-3.5" />
+              Auto goldfish simulation
             </div>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap xl:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-full border-white/15 bg-white/5 px-5 text-stone-200 hover:bg-white/10 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
+              disabled={!hasStream}
+              onClick={onOpenPromptStream}
+            >
+              <Eye />
+              View full prompt stream
+            </Button>
+
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              className="h-11 rounded-full border-fuchsia-400/25 bg-fuchsia-500/10 px-5 text-fuchsia-100 hover:bg-fuchsia-500/20 hover:text-fuchsia-50"
+              onClick={onOpenCustomPromptTest}
+            >
+              <Sparkles />
+              Temp: custom prompt
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-full border-sky-400/25 bg-sky-500/10 px-5 text-sky-100 hover:bg-sky-500/20 hover:text-sky-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
+              disabled={!canStart || isStarting || isCreatingDevGame}
+              onClick={onCreateDevGame}
+            >
+              {isCreatingDevGame ? (
+                <>
+                  <LoaderCircle className="animate-spin" />
+                  Creating test game
+                </>
+              ) : (
+                <>
+                  <Sparkles />
+                  Dev: create + copy ID
+                </>
+              )}
+            </Button>
+
+            <Button
+              type="button"
+              size="lg"
+              className="h-11 rounded-full bg-amber-500 px-5 text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-400"
+              disabled={!canStart || isStarting || isCreatingDevGame}
+              onClick={onStart}
+            >
+              {isStarting ? (
+                <>
+                  <LoaderCircle className="animate-spin" />
+                  Running
+                </>
+              ) : (
+                <>
+                  <Play />
+                  Start auto goldfish
+                </>
+              )}
+            </Button>
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 rounded-full border-white/15 bg-white/5 px-5 text-stone-200 hover:bg-white/10 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
-            disabled={!hasStream}
-            onClick={onOpenPromptStream}
-          >
-            <Eye />
-            View full prompt stream
-          </Button>
+        <div className="w-full space-y-1">
+          <h2 className="text-2xl font-semibold tracking-tight text-stone-100">
+            Start a simulation
+          </h2>
+          <p className="text-sm leading-6 text-stone-400">
+            Once the full commander and deck package is resolved, create a game
+            on the goldfish server, then let the configured model play through
+            the opening hand and your selected number of turns while you follow
+            a higher-level activity trace. After that, you can continue with
+            the simulate-next-turn button below the latest run.
+          </p>
+        </div>
 
-          <Button
-            type="button"
-            size="lg"
-            variant="outline"
-            className="h-11 rounded-full border-fuchsia-400/25 bg-fuchsia-500/10 px-5 text-fuchsia-100 hover:bg-fuchsia-500/20 hover:text-fuchsia-50"
-            onClick={onOpenCustomPromptTest}
-          >
-            <Sparkles />
-            Temp: custom prompt
-          </Button>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,16rem)_minmax(0,16rem)]">
+          <div>
+            <label className="block space-y-2">
+              <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
+                Simulation seed
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="1"
+                value={simulationSeedInput}
+                onChange={(event) =>
+                  onSimulationSeedInputChange(event.target.value)
+                }
+                placeholder="Blank = random"
+                className="h-11 w-full [appearance:textfield] appearance-none rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-stone-100 transition outline-none placeholder:text-stone-500 focus:border-amber-300/40 focus:bg-black/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+            </label>
+            <p className="mt-2 text-xs leading-5 text-stone-500">
+              Leave blank to generate a random seed and display it here for
+              reruns.
+            </p>
+          </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 rounded-full border-sky-400/25 bg-sky-500/10 px-5 text-sky-100 hover:bg-sky-500/20 hover:text-sky-50 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-stone-900 disabled:text-stone-500"
-            disabled={!canStart || isStarting || isCreatingDevGame}
-            onClick={onCreateDevGame}
-          >
-            {isCreatingDevGame ? (
-              <>
-                <LoaderCircle className="animate-spin" />
-                Creating test game
-              </>
-            ) : (
-              <>
-                <Sparkles />
-                Dev: create + copy ID
-              </>
-            )}
-          </Button>
+          <div>
+            <label className="block space-y-2">
+              <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
+                Auto goldfish turns
+              </span>
+              <select
+                value={autoSimulationTurnCount}
+                onChange={(event) =>
+                  onAutoSimulationTurnCountChange(Number(event.target.value))
+                }
+                className="h-11 w-full cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-stone-100 transition outline-none focus:border-amber-300/40 focus:bg-black/40"
+              >
+                {Array.from({ length: 10 }, (_, index) => {
+                  const turnCount = index + 1
 
-          <Button
-            type="button"
-            size="lg"
-            className="h-11 rounded-full bg-amber-500 px-5 text-stone-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-stone-800 disabled:text-stone-400"
-            disabled={!canStart || isStarting || isCreatingDevGame}
-            onClick={onStart}
-          >
-            {isStarting ? (
-              <>
-                <LoaderCircle className="animate-spin" />
-                Running
-              </>
-            ) : (
-              <>
-                <Play />
-                Start auto goldfish
-              </>
-            )}
-          </Button>
-
+                  return (
+                    <option
+                      key={turnCount}
+                      value={turnCount}
+                      className="bg-stone-950 text-stone-100"
+                    >
+                      {turnCount} turn{turnCount === 1 ? "" : "s"}
+                    </option>
+                  )
+                })}
+              </select>
+            </label>
+            <p className="mt-2 text-xs leading-5 text-stone-500">
+              Only used when starting auto goldfish.
+            </p>
+          </div>
         </div>
       </div>
 
