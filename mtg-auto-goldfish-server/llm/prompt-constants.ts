@@ -456,6 +456,14 @@ LIBRARY AND TOOL RULES
 - If you played a land this turn, that exact card must appear on the battlefield in the final state and must no longer appear in hand.
 - If you cast a nonpermanent spell this turn, that card must no longer appear in hand or on the battlefield after it resolves unless an effect specifically moved it elsewhere.
 
+COMMANDER TAX RULE
+- Each time you cast your commander from the command zone, it costs an additional {2} generic mana for each previous time that same commander has been cast from the command zone this game.
+- Track commander tax separately for each commander.
+- A commander moving to or from the command zone does not by itself increase commander tax.
+- Commander tax increases only after a successful cast from the command zone.
+- When checking whether your commander is castable, include the current commander tax in the total mana required.
+- When saving the game state, preserve commander tax in Notes so later turns use the correct extra cost.
+
 TURN SIMULATION METHOD
 Follow this exact process in order.
 
@@ -640,8 +648,6 @@ The saved game state should be complete enough to resume the game from that exac
   Opponent B Life: N
   Opponent C Life: N
 
-  Commander Tax:
-  - one line per commander if relevant, otherwise // empty
 
   Notes:
   - durable, legally known information only, or // empty
@@ -654,7 +660,7 @@ The saved game state should include, as applicable:
 - exile
 - command zone
 - life totals
-- commander tax
+- commander tax in Notes when relevant
 - counters
 - attachments
 - tapped / untapped state
@@ -701,7 +707,7 @@ OUTPUT RULES
 - After update_game_state is called, reply with a short summary of the turn.
 - The summary should briefly say what you played, what changed on the battlefield, and any important resulting game-state facts.
 - Do not restate the saved game state section-by-section after update_game_state.
-- Do not print Hand, Battlefield, Graveyard, Exile, Command Zone, Commander Tax, Notes, or full life-total blocks in the final message.
+- Do not print Hand, Battlefield, Graveyard, Exile, Command Zone, Notes, or full life-total blocks in the final message.
 - Do not echo the exact text you sent to update_game_state.
 - The final message is a brief recap, not a serialized state dump.
 - If you already called update_game_state, treat the authoritative state as saved and do not repeat it in full.
