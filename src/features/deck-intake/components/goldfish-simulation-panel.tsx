@@ -214,6 +214,7 @@ const SimulationActivityCard = memo(function SimulationActivityCard({
 
   return (
     <InitiallyOpenDetails
+      key={`${activity.id}-${defaultExpanded ? "open" : "closed"}`}
       initiallyOpen={defaultExpanded}
       className="group/activity rounded-[20px] border border-white/10 bg-white/[0.03] p-4"
     >
