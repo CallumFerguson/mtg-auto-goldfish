@@ -12,7 +12,7 @@ import type {
 
 export const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const GEMINI_PROMPT_TIMEOUT_MS = 10 * 60 * 1000
-const GEMINI_MAX_TOOL_ROUNDS = 12
+const GEMINI_MAX_TOOL_ROUNDS = 100
 const GEMINI_THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const
 const UNSUPPORTED_GEMINI_SCHEMA_KEYS = new Set([
   "$schema",

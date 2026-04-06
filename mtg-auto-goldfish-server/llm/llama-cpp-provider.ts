@@ -12,7 +12,7 @@ import type {
 
 export const LLAMA_CPP_DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 const LLAMA_CPP_PROMPT_TIMEOUT_MS = 10 * 60 * 1000
-const LLAMA_CPP_MAX_TOOL_ROUNDS = 12
+const LLAMA_CPP_MAX_TOOL_ROUNDS = 100
 const UNSUPPORTED_TOOL_SCHEMA_KEYS = new Set([
   "$schema",
   "$defs",
