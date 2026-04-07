@@ -453,6 +453,7 @@ export function App() {
     useState<SimulationPayload | null>(
       storedSimulationSession.simulationPayload
     )
+  const promptRunsRef = useRef(promptRuns)
   const simulationAbortControllerRef = useRef<AbortController | null>(null)
   const pendingRerunRunIdRef = useRef<string | null>(null)
   const previousDeckInputRef = useRef({
@@ -460,6 +461,8 @@ export function App() {
     commanderTwoName: storedDeckInput.commanderTwoName,
     decklistText: storedDeckInput.decklistText,
   })
+
+  promptRunsRef.current = promptRuns
 
   const parsedDeck = useMemo(() => parseDecklist(decklistText), [decklistText])
   const totalCards = parsedDeck.reduce(
@@ -1147,13 +1150,14 @@ export function App() {
   }
 
   async function rerunPromptRun(runId: string) {
-    const runIndex = promptRuns.findIndex((run) => run.id === runId)
+    const currentPromptRuns = promptRunsRef.current
+    const runIndex = currentPromptRuns.findIndex((run) => run.id === runId)
 
     if (runIndex === -1) {
       return
     }
 
-    const run = promptRuns[runIndex]
+    const run = currentPromptRuns[runIndex]
 
     if (
       !run.rerunnable ||
@@ -1434,7 +1438,7 @@ export function App() {
     pendingRerunRunIdRef.current = null
     setSimulationError("")
     void rerunPromptRun(pendingRunId)
-  }, [isStartingSimulation, promptRuns])
+  }, [isStartingSimulation])
 
   useEffect(() => {
     const previousDeckInput = previousDeckInputRef.current
