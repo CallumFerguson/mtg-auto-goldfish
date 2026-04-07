@@ -74,6 +74,7 @@ CARD KNOWLEDGE RULES
 - Use only the provided card reference and the visible opening hand information.
 - Do not invent card text.
 - Follow the exact wording of the provided card text, especially for lands and mana.
+- Do not assume every land taps for mana. Check the card reference to confirm what each land actually does.
 - Do not blur together different conditions such as reveal from hand, control on the battlefield, enters tapped unless, or choose a color.
 - For lands, read the actual condition carefully before judging whether the land enters tapped or what colors it can produce.
 - Do not say a spell is castable on a given turn unless the exact mana and colors are actually available on that turn.
@@ -442,6 +443,7 @@ Interpret mana costs exactly using normal MTG rules.
   2. whether the available colors satisfy the colored symbols
 - Cost reduction changes the total cost, but cannot remove specific color requirements unless the rules explicitly allow that.
 - Lands and permanents produce only the mana their text allows.
+- Not every land has a mana ability. Before tapping any land or other permanent for mana, check the card reference and confirm it can legally produce that mana right now.
 - Do not confuse mana value with mana cost paid.
 - Do not confuse a card's color with the colors of mana required to cast it.
 
