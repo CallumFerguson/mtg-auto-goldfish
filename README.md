@@ -98,9 +98,16 @@ npm run server:start
 
 By default the server listens on `http://127.0.0.1:3001`.
 
+The server requires Postgres and reads its connection string from `DATABASE_URL`.
+Add this line to your local `.env` file yourself:
+`DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/mtg_auto_goldfish`
+
 Example `.env` file:
 
 ```dotenv
+# Postgres
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/mtg_auto_goldfish
+
 # Global LLM selection
 # Valid values: lm-studio, llama.cpp, openai, claude, gemini
 LLM_PROVIDER=lm-studio
@@ -146,6 +153,8 @@ GEMINI_THINKING_LEVEL=medium
 GOLDFISH_OPENING_HAND_MCP_SERVER_URL=https://example.com//mcp/opening-hand
 GOLDFISH_TURN_SIMULATION_MCP_SERVER_URL=https://example.com/mcp/turn-simulation
 ```
+
+The server auto-creates the `games` table on boot and clears any stale in-progress turn simulation markers after a restart.
 
 ### LM Studio configuration
 
@@ -201,6 +210,8 @@ npm run dev
 - Tailwind CSS v4
 - shadcn/ui
 - Scryfall API
+
+
 
 
 

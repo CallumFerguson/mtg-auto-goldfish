@@ -10,6 +10,11 @@ import { z } from "zod/v4"
 
 import { GameStore, type GameCard } from "./game-store.js"
 import {
+  createPostgresPool,
+  getRequiredDatabaseUrl,
+  initializePostgres,
+} from "./postgres.js"
+import {
   createPromptProcessor,
   normalizePromptProcessorProvider,
   type PromptProcessingResult,
@@ -43,14 +48,8 @@ const DEFAULT_ALLOWED_HEADERS = [
   "Mcp-Protocol-Version",
 ]
 const GAME_NOT_FOUND_MESSAGE =
-  "Game not found. It may be invalid, may not have been created yet, or may have expired after 24 hours."
+  "Game not found. It may be invalid or may not have been created yet."
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
-const DEFAULT_GAME_STORE_PERSISTENCE_PATH = resolve(
-  process.cwd(),
-  "mtg-auto-goldfish-server",
-  "data",
-  "game-store.json"
-)
 const DEFAULT_PROMPT_LOG_DIRECTORY = resolve(
   process.cwd(),
   "mtg-auto-goldfish-server",
@@ -64,12 +63,7 @@ type ToolUiDataRecord = {
   uiMetadata?: Record<string, unknown>
 }
 
-const gameStore = new GameStore({
-  onDeleteGame: deleteToolUiDataForGame,
-  persistencePath:
-    process.env.GAME_STORE_PERSISTENCE_PATH?.trim() ||
-    DEFAULT_GAME_STORE_PERSISTENCE_PATH,
-})
+let gameStore!: GameStore
 const toolUiDataStore = new Map<string, ToolUiDataRecord>()
 const gameCardSchema = z.object({
   name: z.string().trim().min(1).describe("The card name."),
@@ -212,7 +206,7 @@ function registerDrawCardFromTopTool(server: McpServer) {
       },
     },
     async ({ gameId, count }) => {
-      const drawResult = gameStore.drawCardsFromTop(gameId, count)
+      const drawResult = await gameStore.drawCardsFromTop(gameId, count)
 
       if (!drawResult.ok) {
         logWarn("draw_top", `${shortId(gameId)} ${drawResult.reason}`)
@@ -286,7 +280,7 @@ function registerDrawCardFromBottomTool(server: McpServer) {
       },
     },
     async ({ gameId, count }) => {
-      const drawResult = gameStore.drawCardsFromBottom(gameId, count)
+      const drawResult = await gameStore.drawCardsFromBottom(gameId, count)
 
       if (!drawResult.ok) {
         logWarn("draw_bottom", `${shortId(gameId)} ${drawResult.reason}`)
@@ -359,7 +353,7 @@ function registerDrawStartingHandTool(server: McpServer) {
       },
     },
     async ({ gameId }) => {
-      const drawResult = gameStore.drawStartingHand(gameId)
+      const drawResult = await gameStore.drawStartingHand(gameId)
 
       if (!drawResult.ok) {
         logWarn("draw_starting_hand", `${shortId(gameId)} ${drawResult.reason}`)
@@ -444,7 +438,7 @@ function registerMulliganTool(server: McpServer) {
       },
     },
     async ({ gameId, reason }) => {
-      const mulliganResult = gameStore.mulligan(gameId)
+      const mulliganResult = await gameStore.mulligan(gameId)
 
       if (!mulliganResult.ok) {
         logWarn("mulligan", `${shortId(gameId)} ${mulliganResult.reason}`)
@@ -548,7 +542,7 @@ function registerReturnCardToLibraryTool(server: McpServer) {
       },
     },
     async ({ gameId, card, side, position }) => {
-      const returnResult = gameStore.returnCardToLibrary(
+      const returnResult = await gameStore.returnCardToLibrary(
         gameId,
         card,
         side,
@@ -644,7 +638,7 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
       },
     },
     async ({ gameId, cards, side, randomizeOrder }) => {
-      const returnResult = gameStore.returnCardsToLibrary(
+      const returnResult = await gameStore.returnCardsToLibrary(
         gameId,
         cards,
         side,
@@ -734,7 +728,7 @@ function registerTakeCardsFromLibraryTool(server: McpServer) {
       },
     },
     async ({ gameId, cards }) => {
-      const takeResult = gameStore.takeCardsFromLibrary(gameId, cards)
+      const takeResult = await gameStore.takeCardsFromLibrary(gameId, cards)
 
       if (!takeResult.ok) {
         logWarn(
@@ -814,7 +808,7 @@ function registerShuffleLibraryTool(server: McpServer) {
       },
     },
     async ({ gameId }) => {
-      const shuffleResult = gameStore.shuffleLibrary(gameId)
+      const shuffleResult = await gameStore.shuffleLibrary(gameId)
 
       if (!shuffleResult.ok) {
         logWarn("shuffle_library", `${shortId(gameId)} ${shuffleResult.reason}`)
@@ -888,7 +882,7 @@ function registerUpdateGameStateTool(server: McpServer) {
       },
     },
     async ({ gameId, gameState }) => {
-      const updateResult = gameStore.updateGameState(gameId, gameState)
+      const updateResult = await gameStore.updateGameState(gameId, gameState)
 
       if (!updateResult.ok) {
         logWarn(
@@ -973,7 +967,7 @@ function registerKeepHandTool(server: McpServer) {
       },
     },
     async ({ gameId, cards }) => {
-      const gamePromptContext = gameStore.getGamePromptContext(gameId)
+      const gamePromptContext = await gameStore.getGamePromptContext(gameId)
 
       if (!gamePromptContext.ok) {
         logWarn("keep_hand", `${shortId(gameId)} ${gamePromptContext.reason}`)
@@ -1017,6 +1011,11 @@ function registerKeepHandTool(server: McpServer) {
 async function main() {
   const host = process.env.HOST ?? DEFAULT_HOST
   const port = getPort(process.env.PORT)
+  const postgresPool = createPostgresPool(getRequiredDatabaseUrl())
+
+  await initializePostgres(postgresPool)
+  gameStore = new GameStore(postgresPool)
+
   const app = createMcpExpressApp({ host })
   const allowedOrigins = getAllowedOrigins(process.env.ALLOWED_ORIGINS)
   const llmProvider = normalizePromptProcessorProvider(process.env.LLM_PROVIDER)
@@ -1063,7 +1062,7 @@ async function main() {
     })
   })
 
-  app.post("/games", (req: Request, res: Response) => {
+  app.post("/games", async (req: Request, res: Response) => {
     const parsedRequest = createGameSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
@@ -1074,21 +1073,31 @@ async function main() {
       return
     }
 
-    const game = gameStore.createGame(
-      parsedRequest.data.commanders,
-      parsedRequest.data.deck,
-      parsedRequest.data.seed
-    )
+    try {
+      const game = await gameStore.createGame(
+        parsedRequest.data.commanders,
+        parsedRequest.data.deck,
+        parsedRequest.data.seed
+      )
 
-    logInfo(
-      "new",
-      `${shortId(game.gameId)} seed=${game.seed} commanders=${game.commanderCount} cards=${game.cardsRemaining} games=${game.totalGames}`
-    )
+      logInfo(
+        "new",
+        `${shortId(game.gameId)} seed=${game.seed} commanders=${game.commanderCount} cards=${game.cardsRemaining} games=${game.totalGames}`
+      )
 
-    res.status(201).json(game)
+      res.status(201).json(game)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to create a game."
+
+      logWarn("new", message)
+      res.status(500).json({
+        error: message,
+      })
+    }
   })
 
-  app.post("/tool-ui-data", (req: Request, res: Response) => {
+  app.post("/tool-ui-data", async (req: Request, res: Response) => {
     const parsedRequest = toolUiDataLookupSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
@@ -1099,7 +1108,7 @@ async function main() {
       return
     }
 
-    if (!gameStore.hasGame(parsedRequest.data.gameId)) {
+    if (!(await gameStore.hasGame(parsedRequest.data.gameId))) {
       deleteToolUiDataForGame(parsedRequest.data.gameId)
       res.status(404).json({
         error: GAME_NOT_FOUND_MESSAGE,
@@ -1122,7 +1131,7 @@ async function main() {
     res.status(200).json(toolUiData)
   })
 
-  app.post("/opening-hand-snapshot-status", (req: Request, res: Response) => {
+  app.post("/opening-hand-snapshot-status", async (req: Request, res: Response) => {
     const parsedRequest = openingHandSnapshotStatusSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
@@ -1133,7 +1142,7 @@ async function main() {
       return
     }
 
-    const snapshotStatus = gameStore.getOpeningHandSnapshotStatus(
+    const snapshotStatus = await gameStore.getOpeningHandSnapshotStatus(
       parsedRequest.data.gameId
     )
 
@@ -1147,7 +1156,7 @@ async function main() {
     res.status(200).json(snapshotStatus)
   })
 
-  app.post("/reset-game-state", (req: Request, res: Response) => {
+  app.post("/reset-game-state", async (req: Request, res: Response) => {
     const parsedRequest = resetGameStateSchema.safeParse(req.body)
 
     if (!parsedRequest.success) {
@@ -1161,10 +1170,10 @@ async function main() {
     const { gameId, target, turnNumber } = parsedRequest.data
     const resetResult =
       target === "initial"
-        ? gameStore.resetGameToInitialState(gameId)
+        ? await gameStore.resetGameToInitialState(gameId)
         : target === "opening_hand_snapshot"
-          ? gameStore.restoreOpeningHandSnapshot(gameId)
-          : gameStore.restoreTurnSnapshot(gameId, turnNumber!)
+          ? await gameStore.restoreOpeningHandSnapshot(gameId)
+          : await gameStore.restoreTurnSnapshot(gameId, turnNumber!)
 
     if (!resetResult.ok) {
       const error =
@@ -1255,7 +1264,7 @@ async function main() {
       }
 
       const { gameId } = parsedRequest.data
-      const gamePromptContext = gameStore.getGamePromptContext(gameId)
+      const gamePromptContext = await gameStore.getGamePromptContext(gameId)
 
       if (!gamePromptContext.ok) {
         res.status(404).json({
@@ -1290,7 +1299,7 @@ async function main() {
           )
         }
 
-        const snapshotResult = gameStore.saveOpeningHandSnapshot(
+        const snapshotResult = await gameStore.saveOpeningHandSnapshot(
           gameId,
           keptHandCards
         )
@@ -1341,7 +1350,7 @@ async function main() {
     }
 
     const { gameId } = parsedRequest.data
-    const gamePromptContext = gameStore.getGamePromptContext(gameId)
+    const gamePromptContext = await gameStore.getGamePromptContext(gameId)
 
     if (!gamePromptContext.ok) {
       res.status(404).json({
@@ -1372,7 +1381,7 @@ async function main() {
       return
     }
 
-    const startTurnResult = gameStore.startTurnSimulation(gameId)
+    const startTurnResult = await gameStore.startTurnSimulation(gameId)
 
     if (!startTurnResult.ok) {
       res
@@ -1436,7 +1445,7 @@ async function main() {
         error: message,
       })
     } finally {
-      const endTurnResult = gameStore.endTurnSimulation(gameId)
+      const endTurnResult = await gameStore.endTurnSimulation(gameId)
 
       if (!endTurnResult.ok) {
         logWarn("simulate_turn", `${shortId(gameId)} ${endTurnResult.reason}`)
@@ -1939,6 +1948,7 @@ Opponent C Life: 40
   return `${SIMULATE_TURN_PROMPT}
 
 Game ID: ${gameId}
+Current Turn: ${currentTurn}
 
 ===Start Game State===
 
@@ -2398,3 +2408,8 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
+
+
+
+
+

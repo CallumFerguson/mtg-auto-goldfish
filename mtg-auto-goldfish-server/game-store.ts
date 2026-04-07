@@ -1,18 +1,27 @@
 import { randomInt, randomUUID } from "node:crypto"
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs"
-import { dirname } from "node:path"
+import type { Pool, PoolClient } from "pg"
 
-const ONE_HOUR_IN_MS = 60 * 60 * 1000
-const GAME_RETENTION_IN_MS = 24 * ONE_HOUR_IN_MS
 const STARTING_HAND_SIZE = 7
 const EXPECTED_GAME_CARDS = 100
-const GAME_STORE_FILE_VERSION = 1
+
+type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">
+
+type GameRow = {
+  id: string
+  created_at: Date | string
+  seed: string
+  commanders: unknown
+  initial_library: unknown
+  library: unknown
+  current_turn: number
+  current_game_state: string | null
+  opening_hand_snapshot: unknown | null
+  turn_snapshots: unknown
+  active_turn_simulation: unknown | null
+  has_drawn_starting_hand: boolean
+  mulligan_count: number
+  random_state: string
+}
 
 export type GameCard = {
   name: string
@@ -64,11 +73,6 @@ type GameRecord = {
   hasDrawnStartingHand: boolean
   mulliganCount: number
   randomState: number
-}
-
-type PersistedGameStore = {
-  version: 1
-  games: GameRecord[]
 }
 
 export type DrawResult =
@@ -258,11 +262,6 @@ export type UpdateGameStateResult =
         | "turn_already_updated"
     }
 
-export type GameStoreOptions = {
-  onDeleteGame?: (gameId: string) => void
-  persistencePath?: string
-}
-
 type CreateGameResult = {
   gameId: string
   seed: number
@@ -272,30 +271,23 @@ type CreateGameResult = {
   totalGames: number
 }
 
+type LockedGameMutationResult<TResult> = {
+  persist?: boolean
+  result: TResult
+}
+
 export class GameStore {
-  private readonly games = new Map<string, GameRecord>()
-  private readonly onDeleteGame?: (gameId: string) => void
-  private readonly persistencePath?: string
+  private readonly pool: Pool
 
-  constructor(options: GameStoreOptions = {}) {
-    this.onDeleteGame = options.onDeleteGame
-    this.persistencePath = options.persistencePath
-    this.loadPersistedGames()
-
-    const cleanupTimer = setInterval(() => {
-      this.deleteExpiredGames()
-    }, ONE_HOUR_IN_MS)
-
-    cleanupTimer.unref()
+  constructor(pool: Pool) {
+    this.pool = pool
   }
 
-  createGame(
+  async createGame(
     commanders: readonly GameCard[],
     deck: readonly GameCard[],
     seed?: number
-  ): CreateGameResult {
-    this.deleteExpiredGames()
-
+  ): Promise<CreateGameResult> {
     const id = randomUUID()
     const resolvedSeed = normalizeSeed(seed)
     const sortedInitialLibrary = sortCardsAlphabetically(deck)
@@ -303,7 +295,7 @@ export class GameStore {
       id,
       createdAt: Date.now(),
       seed: resolvedSeed,
-      commanders: [...commanders],
+      commanders: cloneGameCards(commanders),
       initialLibrary: sortedInitialLibrary,
       library: [],
       currentTurn: 1,
@@ -321,304 +313,287 @@ export class GameStore {
       () => nextRandom(game)
     )
 
-    this.games.set(id, game)
-    this.persistGames()
+    return this.withTransaction(async (client) => {
+      await this.insertGame(client, game)
+      const totalGames = await this.getTotalGames(client)
 
-    return {
-      gameId: game.id,
-      seed: game.seed,
-      createdAt: new Date(game.createdAt).toISOString(),
-      commanderCount: game.commanders.length,
-      cardsRemaining: game.library.length,
-      totalGames: this.games.size,
-    }
+      return {
+        gameId: game.id,
+        seed: game.seed,
+        createdAt: new Date(game.createdAt).toISOString(),
+        commanderCount: game.commanders.length,
+        cardsRemaining: game.library.length,
+        totalGames,
+      }
+    })
   }
 
-  hasGame(gameId: string) {
-    this.deleteExpiredGames()
-
-    return this.games.has(gameId)
-  }
-
-  drawCardsFromTop(gameId: string, count: number): DrawResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    if (game.library.length === 0) {
-      return { ok: false, reason: "empty_library" }
-    }
-
-    const cards = game.library.splice(0, count)
-    this.persistGames()
-
-    return {
-      ok: true,
-      cards,
-      cardsRemaining: game.library.length,
-    }
-  }
-
-  drawCardsFromBottom(gameId: string, count: number): DrawResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    if (game.library.length === 0) {
-      return { ok: false, reason: "empty_library" }
-    }
-
-    const cards = game.library.splice(-count).reverse()
-    this.persistGames()
-
-    return {
-      ok: true,
-      cards,
-      cardsRemaining: game.library.length,
-    }
-  }
-
-  drawStartingHand(gameId: string): DrawStartingHandResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    if (game.hasDrawnStartingHand) {
-      return { ok: false, reason: "starting_hand_already_drawn" }
-    }
-
-    if (game.library.length === 0) {
-      return { ok: false, reason: "empty_library" }
-    }
-
-    game.hasDrawnStartingHand = true
-
-    const cards = game.library.splice(0, STARTING_HAND_SIZE)
-    this.persistGames()
-
-    return {
-      ok: true,
-      cards,
-      cardsRemaining: game.library.length,
-    }
-  }
-
-  mulligan(gameId: string): MulliganResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    if (!game.hasDrawnStartingHand) {
-      return { ok: false, reason: "starting_hand_not_drawn" }
-    }
-
-    game.library = shuffle(
-      game.initialLibrary.map((card) => card.name),
-      () => nextRandom(game)
+  async hasGame(gameId: string) {
+    const result = await this.pool.query<{ exists: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM games WHERE id = $1) AS "exists"`,
+      [gameId]
     )
-    game.mulliganCount += 1
 
-    const cards = game.library.splice(0, STARTING_HAND_SIZE)
-    this.persistGames()
-
-    return {
-      ok: true,
-      cards,
-      cardsRemaining: game.library.length,
-      mulliganCount: game.mulliganCount,
-      cardsToBottomIfKept: Math.max(0, game.mulliganCount - 1),
-    }
+    return result.rows[0]?.exists ?? false
   }
 
-  returnCardToLibrary(
+  async drawCardsFromTop(gameId: string, count: number): Promise<DrawResult> {
+    return this.withLockedGame<DrawResult>(gameId, (game) => {
+      if (game.library.length === 0) {
+        return {
+          result: { ok: false, reason: "empty_library" } as const,
+        }
+      }
+
+      const cards = game.library.splice(0, count)
+
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cards,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
+  }
+
+  async drawCardsFromBottom(
+    gameId: string,
+    count: number
+  ): Promise<DrawResult> {
+    return this.withLockedGame<DrawResult>(gameId, (game) => {
+      if (game.library.length === 0) {
+        return {
+          result: { ok: false, reason: "empty_library" } as const,
+        }
+      }
+
+      const cards = game.library.splice(-count).reverse()
+
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cards,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
+  }
+
+  async drawStartingHand(gameId: string): Promise<DrawStartingHandResult> {
+    return this.withLockedGame<DrawStartingHandResult>(gameId, (game) => {
+      if (game.hasDrawnStartingHand) {
+        return {
+          result: {
+            ok: false,
+            reason: "starting_hand_already_drawn",
+          } as const,
+        }
+      }
+
+      if (game.library.length === 0) {
+        return {
+          result: { ok: false, reason: "empty_library" } as const,
+        }
+      }
+
+      game.hasDrawnStartingHand = true
+      const cards = game.library.splice(0, STARTING_HAND_SIZE)
+
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cards,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
+  }
+
+  async mulligan(gameId: string): Promise<MulliganResult> {
+    return this.withLockedGame<MulliganResult>(gameId, (game) => {
+      if (!game.hasDrawnStartingHand) {
+        return {
+          result: {
+            ok: false,
+            reason: "starting_hand_not_drawn",
+          } as const,
+        }
+      }
+
+      game.library = shuffle(
+        game.initialLibrary.map((card) => card.name),
+        () => nextRandom(game)
+      )
+      game.mulliganCount += 1
+
+      const cards = game.library.splice(0, STARTING_HAND_SIZE)
+
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cards,
+          cardsRemaining: game.library.length,
+          mulliganCount: game.mulliganCount,
+          cardsToBottomIfKept: Math.max(0, game.mulliganCount - 1),
+        } as const,
+      }
+    })
+  }
+
+  async returnCardToLibrary(
     gameId: string,
     card: string,
     side: "top" | "bottom",
     position: number
-  ): ReturnCardToLibraryResult {
-    this.deleteExpiredGames()
+  ): Promise<ReturnCardToLibraryResult> {
+    return this.withLockedGame<ReturnCardToLibraryResult>(gameId, (game) => {
+      const normalizedPosition = Math.max(
+        0,
+        Math.min(position, game.library.length)
+      )
+      const insertIndex =
+        side === "top"
+          ? normalizedPosition
+          : Math.max(0, game.library.length - normalizedPosition)
 
-    const game = this.games.get(gameId)
+      game.library.splice(insertIndex, 0, card)
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    const normalizedPosition = Math.max(
-      0,
-      Math.min(position, game.library.length)
-    )
-    const insertIndex =
-      side === "top"
-        ? normalizedPosition
-        : Math.max(0, game.library.length - normalizedPosition)
-
-    game.library.splice(insertIndex, 0, card)
-    this.persistGames()
-
-    return {
-      ok: true,
-      cardsRemaining: game.library.length,
-      insertedFromTop: insertIndex,
-      insertedFromBottom: game.library.length - 1 - insertIndex,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cardsRemaining: game.library.length,
+          insertedFromTop: insertIndex,
+          insertedFromBottom: game.library.length - 1 - insertIndex,
+        } as const,
+      }
+    })
   }
 
-  returnCardsToLibrary(
+  async returnCardsToLibrary(
     gameId: string,
     cards: readonly string[],
     side: "top" | "bottom",
     randomizeOrder: boolean
-  ): ReturnCardsToLibraryResult {
-    this.deleteExpiredGames()
+  ): Promise<ReturnCardsToLibraryResult> {
+    return this.withLockedGame<ReturnCardsToLibraryResult>(gameId, (game) => {
+      const cardsToInsert = randomizeOrder
+        ? shuffle(cards, () => nextRandom(game))
+        : [...cards]
 
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    const cardsToInsert = randomizeOrder
-      ? shuffle(cards, () => nextRandom(game))
-      : [...cards]
-
-    for (const card of cardsToInsert) {
-      if (side === "top") {
-        game.library.unshift(card)
-      } else {
-        game.library.push(card)
-      }
-    }
-
-    this.persistGames()
-
-    return {
-      ok: true,
-      cards: cardsToInsert,
-      cardsRemaining: game.library.length,
-    }
-  }
-
-  takeCardsFromLibrary(
-    gameId: string,
-    requestedCards: readonly string[]
-  ): TakeCardsFromLibraryResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    const matches = requestedCards.map((requestedCard) => {
-      const matchedIndex = findBestLibraryMatchIndex(
-        game.library,
-        requestedCard
-      )
-
-      if (matchedIndex === -1) {
-        return {
-          requestedCard,
-          foundCard: null,
+      for (const card of cardsToInsert) {
+        if (side === "top") {
+          game.library.unshift(card)
+        } else {
+          game.library.push(card)
         }
       }
 
-      const [foundCard] = game.library.splice(matchedIndex, 1)
-
       return {
-        requestedCard,
-        foundCard,
+        persist: true,
+        result: {
+          ok: true,
+          cards: cardsToInsert,
+          cardsRemaining: game.library.length,
+        } as const,
       }
     })
-
-    this.persistGames()
-
-    return {
-      ok: true,
-      matches,
-      cardsRemaining: game.library.length,
-    }
   }
 
-  shuffleLibrary(gameId: string): ShuffleLibraryResult {
-    this.deleteExpiredGames()
+  async takeCardsFromLibrary(
+    gameId: string,
+    requestedCards: readonly string[]
+  ): Promise<TakeCardsFromLibraryResult> {
+    return this.withLockedGame<TakeCardsFromLibraryResult>(gameId, (game) => {
+      const matches = requestedCards.map((requestedCard) => {
+        const matchedIndex = findBestLibraryMatchIndex(
+          game.library,
+          requestedCard
+        )
 
-    const game = this.games.get(gameId)
+        if (matchedIndex === -1) {
+          return {
+            requestedCard,
+            foundCard: null,
+          }
+        }
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
+        const [foundCard] = game.library.splice(matchedIndex, 1)
 
-    game.library = shuffle(game.library, () => nextRandom(game))
-    this.persistGames()
+        return {
+          requestedCard,
+          foundCard,
+        }
+      })
 
-    return {
-      ok: true,
-      cardsRemaining: game.library.length,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          matches,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
   }
 
-  saveOpeningHandSnapshot(
+  async shuffleLibrary(gameId: string): Promise<ShuffleLibraryResult> {
+    return this.withLockedGame<ShuffleLibraryResult>(gameId, (game) => {
+      game.library = shuffle(game.library, () => nextRandom(game))
+
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
+  }
+
+  async saveOpeningHandSnapshot(
     gameId: string,
     startingHand: readonly string[]
-  ): SaveOpeningHandSnapshotResult {
-    this.deleteExpiredGames()
+  ): Promise<SaveOpeningHandSnapshotResult> {
+    return this.withLockedGame<SaveOpeningHandSnapshotResult>(gameId, (game) => {
+      game.openingHandSnapshot = createOpeningHandSnapshot(
+        startingHand,
+        game.library,
+        game.commanders.length,
+        game.mulliganCount
+      )
+      game.currentTurn = 1
+      game.currentGameState = undefined
+      game.turnSnapshots = [
+        createTurnSnapshot(
+          1,
+          game.openingHandSnapshot.startingHand,
+          game.openingHandSnapshot.library
+        ),
+      ]
+      game.activeTurnSimulation = undefined
 
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    game.openingHandSnapshot = createOpeningHandSnapshot(
-      startingHand,
-      game.library,
-      game.commanders.length,
-      game.mulliganCount
-    )
-    game.currentTurn = 1
-    game.currentGameState = undefined
-    game.turnSnapshots = [
-      createTurnSnapshot(
-        1,
-        game.openingHandSnapshot.startingHand,
-        game.openingHandSnapshot.library
-      ),
-    ]
-    game.activeTurnSimulation = undefined
-    this.persistGames()
-
-    return {
-      ok: true,
-      startingHand: [...game.openingHandSnapshot.startingHand],
-      library: [...game.openingHandSnapshot.library],
-      validation: { ...game.openingHandSnapshot.validation },
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          startingHand: [...game.openingHandSnapshot.startingHand],
+          library: [...game.openingHandSnapshot.library],
+          validation: { ...game.openingHandSnapshot.validation },
+        } as const,
+      }
+    })
   }
 
-  getOpeningHandSnapshotStatus(
+  async getOpeningHandSnapshotStatus(
     gameId: string
-  ): GetOpeningHandSnapshotStatusResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
+  ): Promise<GetOpeningHandSnapshotStatusResult> {
+    const game = await this.readGame(this.pool, gameId)
 
     if (!game) {
       return { ok: false, reason: "game_not_found" }
@@ -637,206 +612,215 @@ export class GameStore {
     }
   }
 
-  resetGameToInitialState(gameId: string): ResetGameToInitialStateResult {
-    this.deleteExpiredGames()
+  async resetGameToInitialState(
+    gameId: string
+  ): Promise<ResetGameToInitialStateResult> {
+    return this.withLockedGame<ResetGameToInitialStateResult>(gameId, (game) => {
+      game.randomState = game.seed >>> 0
+      game.library = shuffle(
+        game.initialLibrary.map((card) => card.name),
+        () => nextRandom(game)
+      )
+      game.currentTurn = 1
+      game.currentGameState = undefined
+      game.openingHandSnapshot = undefined
+      game.turnSnapshots = []
+      game.activeTurnSimulation = undefined
+      game.hasDrawnStartingHand = false
+      game.mulliganCount = 0
 
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    game.randomState = game.seed >>> 0
-    game.library = shuffle(
-      game.initialLibrary.map((card) => card.name),
-      () => nextRandom(game)
-    )
-    game.currentTurn = 1
-    game.currentGameState = undefined
-    game.openingHandSnapshot = undefined
-    game.turnSnapshots = []
-    game.activeTurnSimulation = undefined
-    game.hasDrawnStartingHand = false
-    game.mulliganCount = 0
-    this.persistGames()
-
-    return {
-      ok: true,
-      cardsRemaining: game.library.length,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cardsRemaining: game.library.length,
+        } as const,
+      }
+    })
   }
 
-  restoreOpeningHandSnapshot(gameId: string): RestoreOpeningHandSnapshotResult {
-    this.deleteExpiredGames()
+  async restoreOpeningHandSnapshot(
+    gameId: string
+  ): Promise<RestoreOpeningHandSnapshotResult> {
+    return this.withLockedGame<RestoreOpeningHandSnapshotResult>(gameId, (game) => {
+      if (!game.openingHandSnapshot) {
+        return {
+          result: {
+            ok: false,
+            reason: "opening_hand_snapshot_not_found",
+          } as const,
+        }
+      }
 
-    const game = this.games.get(gameId)
+      const turnOneSnapshot = game.turnSnapshots.find(
+        (snapshot) => snapshot.turnNumber === 1
+      )
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
+      game.library = [...game.openingHandSnapshot.library]
+      game.currentTurn = 1
+      game.currentGameState = undefined
+      game.turnSnapshots = turnOneSnapshot
+        ? [cloneTurnSnapshot(turnOneSnapshot)]
+        : []
+      game.activeTurnSimulation = undefined
+      game.hasDrawnStartingHand = true
+      game.mulliganCount = game.openingHandSnapshot.validation.mulliganCount
 
-    if (!game.openingHandSnapshot) {
-      return { ok: false, reason: "opening_hand_snapshot_not_found" }
-    }
-
-    const turnOneSnapshot = game.turnSnapshots.find(
-      (snapshot) => snapshot.turnNumber === 1
-    )
-
-    game.library = [...game.openingHandSnapshot.library]
-    game.currentTurn = 1
-    game.currentGameState = undefined
-    game.turnSnapshots = turnOneSnapshot
-      ? [cloneTurnSnapshot(turnOneSnapshot)]
-      : []
-    game.activeTurnSimulation = undefined
-    game.hasDrawnStartingHand = true
-    game.mulliganCount = game.openingHandSnapshot.validation.mulliganCount
-    this.persistGames()
-
-    return {
-      ok: true,
-      cardsRemaining: game.library.length,
-      startingHand: [...game.openingHandSnapshot.startingHand],
-      mulliganCount: game.mulliganCount,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cardsRemaining: game.library.length,
+          startingHand: [...game.openingHandSnapshot.startingHand],
+          mulliganCount: game.mulliganCount,
+        } as const,
+      }
+    })
   }
 
-  restoreTurnSnapshot(
+  async restoreTurnSnapshot(
     gameId: string,
     turnNumber: number
-  ): RestoreTurnSnapshotResult {
-    this.deleteExpiredGames()
+  ): Promise<RestoreTurnSnapshotResult> {
+    return this.withLockedGame<RestoreTurnSnapshotResult>(gameId, (game) => {
+      const snapshot = game.turnSnapshots.find(
+        (currentSnapshot) => currentSnapshot.turnNumber === turnNumber
+      )
 
-    const game = this.games.get(gameId)
+      if (!snapshot) {
+        return {
+          result: {
+            ok: false,
+            reason: "turn_snapshot_not_found",
+          } as const,
+        }
+      }
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
+      game.library = [...snapshot.library]
+      game.currentTurn = snapshot.turnNumber
+      game.currentGameState = snapshot.gameState
+      game.turnSnapshots = game.turnSnapshots
+        .filter((currentSnapshot) => currentSnapshot.turnNumber <= turnNumber)
+        .map(cloneTurnSnapshot)
+      game.activeTurnSimulation = undefined
+      game.hasDrawnStartingHand = true
+      game.mulliganCount = game.openingHandSnapshot?.validation.mulliganCount ?? 0
 
-    const snapshot = game.turnSnapshots.find(
-      (currentSnapshot) => currentSnapshot.turnNumber === turnNumber
-    )
-
-    if (!snapshot) {
-      return { ok: false, reason: "turn_snapshot_not_found" }
-    }
-
-    game.library = [...snapshot.library]
-    game.currentTurn = snapshot.turnNumber
-    game.currentGameState = snapshot.gameState
-    game.turnSnapshots = game.turnSnapshots
-      .filter((currentSnapshot) => currentSnapshot.turnNumber <= turnNumber)
-      .map(cloneTurnSnapshot)
-    game.activeTurnSimulation = undefined
-    game.hasDrawnStartingHand = true
-    game.mulliganCount = game.openingHandSnapshot?.validation.mulliganCount ?? 0
-    this.persistGames()
-
-    return {
-      ok: true,
-      cardsRemaining: game.library.length,
-      turnNumber: snapshot.turnNumber,
-      gameState: snapshot.gameState,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          cardsRemaining: game.library.length,
+          turnNumber: snapshot.turnNumber,
+          gameState: snapshot.gameState,
+        } as const,
+      }
+    })
   }
 
-  startTurnSimulation(gameId: string): StartTurnSimulationResult {
-    this.deleteExpiredGames()
+  async startTurnSimulation(
+    gameId: string
+  ): Promise<StartTurnSimulationResult> {
+    return this.withLockedGame<StartTurnSimulationResult>(gameId, (game) => {
+      if (game.activeTurnSimulation) {
+        return {
+          result: {
+            ok: false,
+            reason: "turn_simulation_already_active",
+          } as const,
+        }
+      }
 
-    const game = this.games.get(gameId)
+      game.activeTurnSimulation = {
+        turnNumber: game.currentTurn,
+        hasUpdatedGameState: false,
+      }
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    if (game.activeTurnSimulation) {
-      return { ok: false, reason: "turn_simulation_already_active" }
-    }
-
-    game.activeTurnSimulation = {
-      turnNumber: game.currentTurn,
-      hasUpdatedGameState: false,
-    }
-    this.persistGames()
-
-    return {
-      ok: true,
-      turnNumber: game.currentTurn,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          turnNumber: game.currentTurn,
+        } as const,
+      }
+    })
   }
 
-  endTurnSimulation(gameId: string): EndTurnSimulationResult {
-    this.deleteExpiredGames()
+  async endTurnSimulation(gameId: string): Promise<EndTurnSimulationResult> {
+    return this.withLockedGame<EndTurnSimulationResult>(gameId, (game) => {
+      const activeTurnSimulation = game.activeTurnSimulation
+      game.activeTurnSimulation = undefined
 
-    const game = this.games.get(gameId)
-
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
-
-    const activeTurnSimulation = game.activeTurnSimulation
-
-    game.activeTurnSimulation = undefined
-    this.persistGames()
-
-    return {
-      ok: true,
-      turnNumber: activeTurnSimulation?.turnNumber,
-      turnWasUpdated: activeTurnSimulation?.hasUpdatedGameState ?? false,
-    }
+      return {
+        persist: activeTurnSimulation !== undefined,
+        result: {
+          ok: true,
+          turnNumber: activeTurnSimulation?.turnNumber,
+          turnWasUpdated: activeTurnSimulation?.hasUpdatedGameState ?? false,
+        } as const,
+      }
+    })
   }
 
-  updateGameState(gameId: string, gameState: string): UpdateGameStateResult {
-    this.deleteExpiredGames()
+  async updateGameState(
+    gameId: string,
+    gameState: string
+  ): Promise<UpdateGameStateResult> {
+    return this.withLockedGame<UpdateGameStateResult>(gameId, (game) => {
+      if (!game.activeTurnSimulation) {
+        return {
+          result: {
+            ok: false,
+            reason: "no_active_turn_simulation",
+          } as const,
+        }
+      }
 
-    const game = this.games.get(gameId)
+      if (game.activeTurnSimulation.hasUpdatedGameState) {
+        return {
+          result: {
+            ok: false,
+            reason: "turn_already_updated",
+          } as const,
+        }
+      }
 
-    if (!game) {
-      return { ok: false, reason: "game_not_found" }
-    }
+      const completedTurnNumber = game.activeTurnSimulation.turnNumber
 
-    if (!game.activeTurnSimulation) {
-      return { ok: false, reason: "no_active_turn_simulation" }
-    }
+      game.currentGameState = gameState
+      game.currentTurn = completedTurnNumber + 1
+      game.turnSnapshots = [
+        ...game.turnSnapshots.filter(
+          (snapshot) => snapshot.turnNumber <= completedTurnNumber
+        ),
+        createTurnSnapshot(
+          game.currentTurn,
+          game.openingHandSnapshot?.startingHand ?? [],
+          game.library,
+          gameState
+        ),
+      ]
+      game.activeTurnSimulation = {
+        ...game.activeTurnSimulation,
+        hasUpdatedGameState: true,
+      }
 
-    if (game.activeTurnSimulation.hasUpdatedGameState) {
-      return { ok: false, reason: "turn_already_updated" }
-    }
-
-    const completedTurnNumber = game.activeTurnSimulation.turnNumber
-
-    game.currentGameState = gameState
-    game.currentTurn = completedTurnNumber + 1
-    game.turnSnapshots = [
-      ...game.turnSnapshots.filter(
-        (snapshot) => snapshot.turnNumber <= completedTurnNumber
-      ),
-      createTurnSnapshot(
-        game.currentTurn,
-        game.openingHandSnapshot?.startingHand ?? [],
-        game.library,
-        gameState
-      ),
-    ]
-    game.activeTurnSimulation = {
-      ...game.activeTurnSimulation,
-      hasUpdatedGameState: true,
-    }
-    this.persistGames()
-
-    return {
-      ok: true,
-      turnNumber: completedTurnNumber,
-      nextTurnNumber: game.currentTurn,
-      gameState,
-    }
+      return {
+        persist: true,
+        result: {
+          ok: true,
+          turnNumber: completedTurnNumber,
+          nextTurnNumber: game.currentTurn,
+          gameState,
+        } as const,
+      }
+    })
   }
 
-  getGamePromptContext(gameId: string): GetGamePromptContextResult {
-    this.deleteExpiredGames()
-
-    const game = this.games.get(gameId)
+  async getGamePromptContext(
+    gameId: string
+  ): Promise<GetGamePromptContextResult> {
+    const game = await this.readGame(this.pool, gameId)
 
     if (!game) {
       return { ok: false, reason: "game_not_found" }
@@ -845,8 +829,8 @@ export class GameStore {
     return {
       ok: true,
       gameId: game.id,
-      commanders: game.commanders.map((card) => ({ ...card })),
-      initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
+      commanders: cloneGameCards(game.commanders),
+      initialLibrary: cloneGameCards(game.initialLibrary),
       currentLibrary: [...game.library].sort((leftCard, rightCard) =>
         leftCard.localeCompare(rightCard)
       ),
@@ -863,111 +847,287 @@ export class GameStore {
     }
   }
 
-  private deleteExpiredGames() {
-    const expirationCutoff = Date.now() - GAME_RETENTION_IN_MS
-    let deletedAnyGames = false
-
-    for (const [gameId, game] of this.games.entries()) {
-      if (game.createdAt < expirationCutoff) {
-        this.games.delete(gameId)
-        this.onDeleteGame?.(gameId)
-        deletedAnyGames = true
-      }
-    }
-
-    if (deletedAnyGames) {
-      this.persistGames()
-    }
-  }
-
-  private loadPersistedGames() {
-    if (!this.persistencePath || !existsSync(this.persistencePath)) {
-      return
-    }
+  private async withTransaction<TResult>(
+    execute: (client: PoolClient) => Promise<TResult>
+  ) {
+    const client = await this.pool.connect()
 
     try {
-      const rawValue = readFileSync(this.persistencePath, "utf8")
-
-      if (!rawValue.trim()) {
-        return
-      }
-
-      const parsedValue = JSON.parse(rawValue) as Partial<PersistedGameStore>
-
-      if (
-        parsedValue.version !== GAME_STORE_FILE_VERSION ||
-        !Array.isArray(parsedValue.games)
-      ) {
-        return
-      }
-
-      for (const game of parsedValue.games) {
-        if (!isValidPersistedGameRecord(game)) {
-          continue
-        }
-
-        this.games.set(game.id, {
-          ...game,
-          commanders: game.commanders.map((card) => ({ ...card })),
-          initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
-          library: [...game.library],
-          currentTurn: game.currentTurn ?? 1,
-          currentGameState: game.currentGameState,
-          openingHandSnapshot: game.openingHandSnapshot
-            ? {
-                startingHand: [...game.openingHandSnapshot.startingHand],
-                library: [...game.openingHandSnapshot.library],
-                validation: { ...game.openingHandSnapshot.validation },
-              }
-            : undefined,
-          turnSnapshots: game.turnSnapshots?.map(cloneTurnSnapshot) ?? [],
-          activeTurnSimulation: undefined,
-        })
-      }
-
-      this.deleteExpiredGames()
+      await client.query("BEGIN")
+      const result = await execute(client)
+      await client.query("COMMIT")
+      return result
     } catch (error) {
-      console.warn(
-        "[game_store_persist]",
-        error instanceof Error
-          ? `Failed to load persisted game store: ${error.message}`
-          : "Failed to load persisted game store."
-      )
+      await client.query("ROLLBACK")
+      throw error
+    } finally {
+      client.release()
     }
   }
 
-  private persistGames() {
-    if (!this.persistencePath) {
-      return
-    }
+  private async withLockedGame<TResult>(
+    gameId: string,
+    mutate: (game: GameRecord) => LockedGameMutationResult<TResult>
+  ): Promise<TResult | { ok: false; reason: "game_not_found" }> {
+    return this.withTransaction(async (client) => {
+      const game = await this.readGame(client, gameId, true)
 
-    const persistedValue: PersistedGameStore = {
-      version: GAME_STORE_FILE_VERSION,
-      games: Array.from(this.games.values()).map((game) => ({
-        ...game,
-        commanders: game.commanders.map((card) => ({ ...card })),
-        initialLibrary: game.initialLibrary.map((card) => ({ ...card })),
-        library: [...game.library],
-        currentTurn: game.currentTurn,
-        currentGameState: game.currentGameState,
-        openingHandSnapshot: game.openingHandSnapshot
-          ? {
-              startingHand: [...game.openingHandSnapshot.startingHand],
-              library: [...game.openingHandSnapshot.library],
-              validation: { ...game.openingHandSnapshot.validation },
-            }
-          : undefined,
-        turnSnapshots: game.turnSnapshots.map(cloneTurnSnapshot),
-        activeTurnSimulation: undefined,
-      })),
-    }
+      if (!game) {
+        return { ok: false, reason: "game_not_found" } as const
+      }
 
-    mkdirSync(dirname(this.persistencePath), { recursive: true })
+      const { persist = false, result } = mutate(game)
 
-    const temporaryPath = `${this.persistencePath}.tmp`
-    writeFileSync(temporaryPath, JSON.stringify(persistedValue, null, 2))
-    renameSync(temporaryPath, this.persistencePath)
+      if (persist) {
+        await this.saveGame(client, game)
+      }
+
+      return result
+    })
   }
+
+  private async insertGame(client: PoolClient, game: GameRecord) {
+    await client.query(
+      `
+        INSERT INTO games (
+          id,
+          created_at,
+          seed,
+          random_state,
+          current_turn,
+          current_game_state,
+          has_drawn_starting_hand,
+          mulligan_count,
+          commanders,
+          initial_library,
+          library,
+          opening_hand_snapshot,
+          turn_snapshots,
+          active_turn_simulation
+        ) VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14
+        )
+      `,
+      [
+        game.id,
+        new Date(game.createdAt),
+        String(game.seed),
+        String(game.randomState),
+        game.currentTurn,
+        game.currentGameState ?? null,
+        game.hasDrawnStartingHand,
+        game.mulliganCount,
+        serializeJson(game.commanders),
+        serializeJson(game.initialLibrary),
+        serializeJson(game.library),
+        serializeNullableJson(game.openingHandSnapshot),
+        serializeJson(game.turnSnapshots),
+        serializeNullableJson(game.activeTurnSimulation),
+      ]
+    )
+  }
+
+  private async saveGame(client: PoolClient, game: GameRecord) {
+    await client.query(
+      `
+        UPDATE games
+        SET
+          seed = $2,
+          random_state = $3,
+          current_turn = $4,
+          current_game_state = $5,
+          has_drawn_starting_hand = $6,
+          mulligan_count = $7,
+          commanders = $8,
+          initial_library = $9,
+          library = $10,
+          opening_hand_snapshot = $11,
+          turn_snapshots = $12,
+          active_turn_simulation = $13
+        WHERE id = $1
+      `,
+      [
+        game.id,
+        String(game.seed),
+        String(game.randomState),
+        game.currentTurn,
+        game.currentGameState ?? null,
+        game.hasDrawnStartingHand,
+        game.mulliganCount,
+        serializeJson(game.commanders),
+        serializeJson(game.initialLibrary),
+        serializeJson(game.library),
+        serializeNullableJson(game.openingHandSnapshot),
+        serializeJson(game.turnSnapshots),
+        serializeNullableJson(game.activeTurnSimulation),
+      ]
+    )
+  }
+
+  private async readGame(
+    queryable: Queryable,
+    gameId: string,
+    forUpdate = false
+  ): Promise<GameRecord | undefined> {
+    const result = await queryable.query<GameRow>(
+      `
+        SELECT
+          id,
+          created_at,
+          seed::text AS seed,
+          commanders,
+          initial_library,
+          library,
+          current_turn,
+          current_game_state,
+          opening_hand_snapshot,
+          turn_snapshots,
+          active_turn_simulation,
+          has_drawn_starting_hand,
+          mulligan_count,
+          random_state::text AS random_state
+        FROM games
+        WHERE id = $1
+        ${forUpdate ? "FOR UPDATE" : ""}
+      `,
+      [gameId]
+    )
+
+    if (result.rowCount === 0) {
+      return undefined
+    }
+
+    return hydrateGameRecord(result.rows[0])
+  }
+
+  private async getTotalGames(queryable: Queryable) {
+    const result = await queryable.query<{ total_games: string }>(
+      `SELECT COUNT(*)::text AS total_games FROM games`
+    )
+
+    return Number(result.rows[0]?.total_games ?? "0")
+  }
+}
+
+function hydrateGameRecord(row: GameRow): GameRecord {
+  return {
+    id: row.id,
+    createdAt: resolveTimestamp(row.created_at),
+    seed: parseStoredInteger(row.seed, "seed"),
+    commanders: parseGameCardArray(row.commanders, "commanders"),
+    initialLibrary: parseGameCardArray(row.initial_library, "initial_library"),
+    library: parseStringArray(row.library, "library"),
+    currentTurn: row.current_turn,
+    currentGameState: row.current_game_state ?? undefined,
+    openingHandSnapshot:
+      row.opening_hand_snapshot === null
+        ? undefined
+        : parseOpeningHandSnapshot(
+            row.opening_hand_snapshot,
+            "opening_hand_snapshot"
+          ),
+    turnSnapshots: parseTurnSnapshots(row.turn_snapshots, "turn_snapshots"),
+    activeTurnSimulation:
+      row.active_turn_simulation === null
+        ? undefined
+        : parseActiveTurnSimulation(
+            row.active_turn_simulation,
+            "active_turn_simulation"
+          ),
+    hasDrawnStartingHand: row.has_drawn_starting_hand,
+    mulliganCount: row.mulligan_count,
+    randomState: parseStoredInteger(row.random_state, "random_state"),
+  }
+}
+
+function resolveTimestamp(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value)
+  const timestamp = date.getTime()
+
+  if (Number.isNaN(timestamp)) {
+    throw new Error("Failed to parse stored game timestamp.")
+  }
+
+  return timestamp
+}
+
+function parseStoredInteger(value: string, fieldName: string) {
+  const parsedValue = Number(value)
+
+  if (!Number.isSafeInteger(parsedValue)) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return parsedValue
+}
+
+function parseGameCardArray(value: unknown, fieldName: string) {
+  if (!Array.isArray(value) || !value.every(isGameCard)) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return cloneGameCards(value)
+}
+
+function parseStringArray(value: unknown, fieldName: string) {
+  if (!Array.isArray(value) || !value.every((card) => typeof card === "string")) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return [...value]
+}
+
+function parseOpeningHandSnapshot(value: unknown, fieldName: string) {
+  if (!isOpeningHandSnapshot(value)) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return {
+    startingHand: [...value.startingHand],
+    library: [...value.library],
+    validation: { ...value.validation },
+  }
+}
+
+function parseTurnSnapshots(value: unknown, fieldName: string) {
+  if (!Array.isArray(value) || !value.every(isTurnSnapshot)) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return value.map(cloneTurnSnapshot)
+}
+
+function parseActiveTurnSimulation(value: unknown, fieldName: string) {
+  if (!isActiveTurnSimulation(value)) {
+    throw new Error(`Stored game field ${fieldName} is invalid.`)
+  }
+
+  return { ...value }
+}
+
+function serializeJson(value: unknown) {
+  return JSON.stringify(value)
+}
+
+function serializeNullableJson(value: unknown) {
+  return value === undefined ? null : JSON.stringify(value)
+}
+
+function cloneGameCards(cards: readonly GameCard[]) {
+  return cards.map((card) => ({ ...card }))
 }
 
 function shuffle<T>(cards: readonly T[], random: () => number) {
@@ -1082,35 +1242,16 @@ function getExpectedStartingHandSize(mulliganCount: number) {
   return STARTING_HAND_SIZE - Math.max(0, mulliganCount - 1)
 }
 
-function isValidPersistedGameRecord(value: unknown): value is GameRecord {
+function isActiveTurnSimulation(value: unknown): value is ActiveTurnSimulation {
   if (value === null || typeof value !== "object") {
     return false
   }
 
-  const record = value as Partial<GameRecord>
+  const activeTurnSimulation = value as Partial<ActiveTurnSimulation>
 
   return (
-    typeof record.id === "string" &&
-    typeof record.createdAt === "number" &&
-    typeof record.seed === "number" &&
-    Array.isArray(record.commanders) &&
-    record.commanders.every(isGameCard) &&
-    Array.isArray(record.initialLibrary) &&
-    record.initialLibrary.every(isGameCard) &&
-    Array.isArray(record.library) &&
-    record.library.every((card) => typeof card === "string") &&
-    (record.currentTurn === undefined ||
-      typeof record.currentTurn === "number") &&
-    (record.currentGameState === undefined ||
-      typeof record.currentGameState === "string") &&
-    (record.turnSnapshots === undefined ||
-      (Array.isArray(record.turnSnapshots) &&
-        record.turnSnapshots.every(isTurnSnapshot))) &&
-    typeof record.hasDrawnStartingHand === "boolean" &&
-    typeof record.mulliganCount === "number" &&
-    typeof record.randomState === "number" &&
-    (record.openingHandSnapshot === undefined ||
-      isOpeningHandSnapshot(record.openingHandSnapshot))
+    typeof activeTurnSimulation.turnNumber === "number" &&
+    typeof activeTurnSimulation.hasUpdatedGameState === "boolean"
   )
 }
 
@@ -1309,3 +1450,9 @@ function levenshteinDistance(left: string, right: string) {
 
   return previousRow[right.length]
 }
+
+
+
+
+
+

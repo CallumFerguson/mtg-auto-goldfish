@@ -140,6 +140,16 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError"
 }
 
+async function readJsonResponse(response: Response) {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+
+  if (!contentType.includes("application/json")) {
+    return null
+  }
+
+  return (await response.json()) as unknown
+}
+
 function cancelPromptRuns(
   currentRuns: SimulationPromptRun[]
 ): SimulationPromptRun[] {
@@ -603,13 +613,14 @@ export function App() {
       }),
     })
 
-    const payload = (await response.json()) as
+    const payload = (await readJsonResponse(response)) as
       | Partial<CreateGameResponse & { error?: string }>
       | { details?: Array<{ message?: string }> }
+      | null
 
     if (!response.ok) {
       const detailMessage =
-        "details" in payload && Array.isArray(payload.details)
+        payload && "details" in payload && Array.isArray(payload.details)
           ? payload.details
               .map((detail) => detail.message)
               .filter(Boolean)
@@ -617,12 +628,13 @@ export function App() {
           : ""
       throw new Error(
         detailMessage ||
-          ("error" in payload && payload.error) ||
-          "Failed to create a game."
+          (payload && "error" in payload && payload.error) ||
+          `Failed to create a game (${response.status}).`
       )
     }
 
     if (
+      payload === null ||
       !("gameId" in payload) ||
       !payload.gameId ||
       !("seed" in payload) ||
@@ -1732,3 +1744,5 @@ export function App() {
 }
 
 export default App
+
+

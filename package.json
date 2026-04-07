@@ -11,7 +11,7 @@
     "ngrok": "ngrok http 3001 --host-header=rewrite",
     "server:build": "tsc -p tsconfig.server.json",
     "server:dev": "tsx mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
-    "server:watch": "tsx watch --watch-path mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts --watch-path mtg-auto-goldfish-server/game-store.ts --watch-path mtg-auto-goldfish-server/llm mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
+    "server:watch": "tsx watch --watch-path mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts --watch-path mtg-auto-goldfish-server/game-store.ts --watch-path mtg-auto-goldfish-server/postgres.ts --watch-path mtg-auto-goldfish-server/llm mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
     "server:start": "node dist-server/mtg-auto-goldfish-server.js",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"
@@ -24,6 +24,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.3.1",
     "lucide-react": "^0.577.0",
+    "pg": "^8.20.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -37,6 +38,7 @@
     "@eslint/js": "^9.39.4",
     "@types/express": "^5.0.6",
     "@types/node": "^24.12.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
@@ -52,5 +54,4 @@
     "vite": "^7.3.1"
   }
 }
-
 
