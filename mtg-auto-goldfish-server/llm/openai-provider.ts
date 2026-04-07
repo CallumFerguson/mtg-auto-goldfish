@@ -66,6 +66,12 @@ type ToolCallState = {
   argumentsText?: string
 }
 
+type NormalizedToolResult = {
+  content: Record<string, unknown>[]
+  structuredContent?: Record<string, unknown>
+  uiMetadata?: Record<string, unknown>
+  isError?: boolean
+}
 export function createOpenAiPromptProcessor(
   options: PromptProcessorOptions = {}
 ): PromptProcessor {
@@ -349,7 +355,11 @@ export function createOpenAiPromptProcessor(
                   const argumentsText =
                     normalizeArgumentsText(item.arguments) ??
                     knownToolCall?.argumentsText
-                  const output = stringifyUnknown(item.output)
+                  const normalizedToolResult = normalizeMcpToolResult(item.output)
+                  const output =
+                    normalizedToolResult !== undefined
+                      ? stringifyToolResult(normalizedToolResult)
+                      : stringifyUnknown(item.output)
                   const error = stringifyUnknown(item.error)
                   const isFailure = item.status === "failed" || Boolean(error)
 
@@ -366,6 +376,8 @@ export function createOpenAiPromptProcessor(
                     provider,
                     argumentsText,
                     output,
+                    structuredContent: normalizedToolResult?.structuredContent,
+                    uiMetadata: normalizedToolResult?.uiMetadata,
                     error,
                   })
                 }
@@ -581,6 +593,66 @@ function normalizeArgumentsText(value: unknown) {
   }
 
   return safeJsonStringify(value)
+}
+
+function normalizeMcpToolResult(toolResult: unknown) {
+  if (Array.isArray(toolResult)) {
+    return {
+      content: toolResult.map((item) => asObjectRecord(item)),
+    } satisfies NormalizedToolResult
+  }
+
+  const record = asObjectRecord(toolResult)
+  const compatibilityRecord = asObjectRecord(record.toolResult)
+  const resultRecord =
+    Array.isArray(record.content) ||
+    isPlainObject(record.structuredContent) ||
+    isPlainObject(record.uiMetadata)
+      ? record
+      : compatibilityRecord
+
+  if (
+    !Array.isArray(resultRecord.content) &&
+    !isPlainObject(resultRecord.structuredContent) &&
+    !isPlainObject(resultRecord.uiMetadata)
+  ) {
+    return undefined
+  }
+
+  return {
+    content: Array.isArray(resultRecord.content)
+      ? resultRecord.content.map((item) => asObjectRecord(item))
+      : [],
+    structuredContent: isPlainObject(resultRecord.structuredContent)
+      ? asObjectRecord(resultRecord.structuredContent)
+      : undefined,
+    uiMetadata: isPlainObject(resultRecord.uiMetadata)
+      ? asObjectRecord(resultRecord.uiMetadata)
+      : undefined,
+    isError:
+      typeof resultRecord.isError === "boolean"
+        ? resultRecord.isError
+        : undefined,
+  } satisfies NormalizedToolResult
+}
+
+function stringifyToolResult(toolResult: NormalizedToolResult) {
+  const textContent = toolResult.content
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n\n")
+    .trim()
+
+  if (textContent) {
+    return textContent
+  }
+
+  return safeJsonStringify({
+    isError: Boolean(toolResult.isError),
+    structuredContent: normalizeJsonValue(toolResult.structuredContent),
+    uiMetadata: normalizeJsonValue(toolResult.uiMetadata),
+    content: toolResult.content.map((item) => normalizeJsonValue(item)),
+  })
 }
 
 function isOpenAiResponse(value: unknown): value is OpenAiResponse {
@@ -831,6 +903,10 @@ function asString(value: unknown) {
   return typeof value === "string" ? value : undefined
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
 function safeJsonStringify(value: unknown) {
   if (value === undefined || value === null) {
     return undefined
@@ -853,5 +929,22 @@ function stringifyUnknown(value: unknown) {
   }
 
   return safeJsonStringify(value)
+}
+
+function normalizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeJsonValue(item))
+  }
+
+  if (!isPlainObject(value)) {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nestedValue]) => [
+      key,
+      normalizeJsonValue(nestedValue),
+    ])
+  )
 }
 

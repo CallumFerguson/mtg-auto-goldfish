@@ -385,6 +385,7 @@ CORE RULES
 - You must simulate the turn yourself.
 - The only hidden zone you can directly manipulate with tools is your own library.
 - You must use tools to interact with the library.
+- You must use log_turn_action throughout the turn as your authoritative irreversible action log.
 - You must not cheat, invent hidden information, reorder unknown cards without a rule allowing it, or break timing rules.
 - Do not assume a card can be cast, activated, equipped, or attacked with unless it is legal.
 - Do not assume mana works loosely. Check mana carefully.
@@ -393,6 +394,16 @@ CORE RULES
 - If a materially relevant value is absent from the input, infer it conservatively from the visible state.
 - Record that assumption in Notes only if it remains durable, legally relevant information that future turns will need.
 - If the assumption only explains this turn's reasoning and does not persist in the game state, keep it out of Notes and mention it only in the final short summary if useful.
+
+ACTION LOGGING AND FINALITY
+- Before committing to each phase change or meaningful game action, first call log_turn_action with a concise description of what you are now doing.
+- Log phase transitions, turn-beginning processing, draws, land plays, spell casts, major trigger resolutions, attacks, combat damage, notable zone changes, and the decision to finish the turn.
+- Each log entry is irreversible for this turn.
+- Once an action is logged, treat it as locked in and continue from that point.
+- Never backtrack, revise history, contradict an earlier logged action, or choose a different line that would require undoing a logged action.
+- Use the returned action list as the authoritative sequence of committed actions for the current turn.
+- Logging does not replace legality checks. Only log an action you are actually committing to take.
+- Do not call log_turn_action after update_game_state.
 
 STRATEGIC HORIZON
 - Do not optimize only for the current phase or for spending the most mana right now.
@@ -480,23 +491,27 @@ Follow this exact process in order.
 - In multiplayer Commander, draw on turn 1 as normal.
 
 3. UNTAP STEP
+- Log the start of the untap step before processing it.
 - Untap your permanents that should untap.
 - Do not untap permanents that a rule or effect says should not untap.
 - Remove only statuses that naturally end because of untapping or because the new turn has started, if applicable.
 
 4. UPKEEP STEP
+- Log the move to upkeep before processing upkeep actions.
 - Check for all beginning-of-upkeep triggers and required actions.
 - Resolve them legally.
 - If they require library interaction, use tools.
 - If choices are needed, choose the line that best advances the goldfish plan while remaining legal.
 
 5. DRAW STEP
+- Log the move to the draw step before drawing.
 - Draw exactly one card for turn unless a rule says otherwise.
 - Use a tool for the draw.
 - Add the drawn card to hand.
 - Track any effects that replace or modify the draw if applicable.
 
 6. PRECOMBAT MAIN PHASE
+- Log the move to precombat main before making precombat plays.
 Before making plays, evaluate:
 - available lands
 - available mana sources
@@ -526,6 +541,7 @@ LAND PLAY AND MANA-SEQUENCING GUIDANCE
 
 Then execute the best legal sequence.
 For every action:
+- Log the action immediately before committing to it.
 - Verify the action is legal before doing it.
 - Pay all costs correctly.
 - Tap the correct permanents for mana.
@@ -538,6 +554,7 @@ For every action:
 - If choices depend on hidden information you do not know, do not invent information.
 
 7. COMBAT PHASE
+- Log the move to combat before declaring attackers or explicitly log that you are skipping combat.
 - Decide whether attacking is legal and beneficial.
 - Only attack with creatures that are allowed to attack.
 - Respect summoning sickness, vigilance, defender, "can't attack", "attacks each combat if able", and any other restrictions or requirements.
@@ -548,11 +565,13 @@ For every action:
 - Remember that combat damage marked on creatures does not remain in the final end-of-turn game state.
 
 8. POSTCOMBAT MAIN PHASE
+- Log the move to postcombat main before taking postcombat actions.
 - Re-evaluate the board after combat.
 - Make any remaining legal plays.
 - Use the same care with mana, sequencing, triggers, and library interaction.
 
 9. END STEP AND CLEANUP
+- Log the move to end step and cleanup before processing those steps.
 - Resolve beginning-of-end-step triggers.
 - Remove effects that expire at end of turn.
 - Remove marked damage from creatures.
@@ -606,6 +625,7 @@ Before finalizing the turn, verify all of the following:
 
 FINAL GAME STATE REQUIREMENTS
 After the turn is fully complete, call update_game_state exactly once to lock in the new game state.
+- Log that you are finalizing the turn immediately before calling update_game_state.
 - update_game_state must be the final tool call of the turn.
 - The full end-of-turn game state belongs in the update_game_state argument, not in the final user-facing message.
 - Do not call update_game_state until you have:
@@ -780,3 +800,4 @@ COMMON ACTION WORDS
 - Populate: Create a token that is a copy of a creature token you control.
 - Proliferate: Choose any number of permanents and/or players with counters and give each another counter of a kind already there.
 `;
+

@@ -277,6 +277,17 @@ export type StartTurnSimulationResult =
       reason: "game_not_found" | "turn_simulation_already_active"
     }
 
+export type GetActiveTurnSimulationResult =
+  | {
+      ok: true
+      turnNumber: number
+      hasUpdatedGameState: boolean
+    }
+  | {
+      ok: false
+      reason: "game_not_found" | "no_active_turn_simulation"
+    }
+
 export type EndTurnSimulationResult =
   | {
       ok: true
@@ -785,6 +796,26 @@ export class GameStore {
         } as const,
       }
     })
+  }
+
+  async getActiveTurnSimulation(
+    gameId: string
+  ): Promise<GetActiveTurnSimulationResult> {
+    const game = await this.readGame(this.pool, gameId)
+
+    if (!game) {
+      return { ok: false, reason: "game_not_found" }
+    }
+
+    if (!game.activeTurnSimulation) {
+      return { ok: false, reason: "no_active_turn_simulation" }
+    }
+
+    return {
+      ok: true,
+      turnNumber: game.activeTurnSimulation.turnNumber,
+      hasUpdatedGameState: game.activeTurnSimulation.hasUpdatedGameState,
+    }
   }
 
   async endTurnSimulation(gameId: string): Promise<EndTurnSimulationResult> {

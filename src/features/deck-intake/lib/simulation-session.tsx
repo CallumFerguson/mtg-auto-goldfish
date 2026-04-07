@@ -945,6 +945,26 @@ function getUpdateGameStateDetail(
   }
 }
 
+function getLogTurnActionDetail(
+  event: Extract<PromptStreamEvent, { type: "tool" }>
+) {
+  if (event.tool !== "log_turn_action") {
+    return undefined
+  }
+
+  const latestAction = event.structuredContent?.latestAction
+  if (typeof latestAction !== "string" || !latestAction.trim()) {
+    return undefined
+  }
+
+  const trimmedLatestAction = latestAction.trim()
+
+  return {
+    kind: "text" as const,
+    text: trimmedLatestAction,
+  }
+}
+
 function getToolActivityDetail(
   event: Extract<PromptStreamEvent, { type: "tool" }>
 ) {
@@ -985,6 +1005,12 @@ function getToolActivityDetail(
 
   if (returnToolDetail) {
     return returnToolDetail
+  }
+
+  const logTurnActionDetail = getLogTurnActionDetail(event)
+
+  if (logTurnActionDetail) {
+    return logTurnActionDetail
   }
 
   return getTakeCardsFromLibraryDetail(event)

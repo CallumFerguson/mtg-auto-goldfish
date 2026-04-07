@@ -70,6 +70,11 @@ type ToolUiDataRecord = {
   uiMetadata?: Record<string, unknown>
 }
 
+type TurnActionLog = {
+  turnNumber: number
+  actions: string[]
+}
+
 type SimulationEventRecorderOptions = {
   simulationRunId: string
   gameId: string
@@ -78,7 +83,8 @@ type SimulationEventRecorderOptions = {
 }
 
 let gameStore!: GameStore
-const toolUiDataStore = new Map<string, ToolUiDataRecord>()
+const toolUiDataStore = new Map<string, ToolUiDataRecord[]>()
+const turnActionLogStore = new Map<string, TurnActionLog>()
 const gameCardSchema = z.object({
   name: z.string().trim().min(1).describe("The card name."),
   cardText: z
@@ -186,6 +192,7 @@ function createOpeningHandServer() {
 
 function createTurnSimulationServer() {
   return createServer(TURN_SIMULATION_SERVER_NAME, (server) => {
+    registerLogTurnActionTool(server)
     registerDrawCardFromTopTool(server)
     registerDrawCardFromBottomTool(server)
     registerTakeCardsFromLibraryTool(server)
@@ -866,6 +873,102 @@ function registerShuffleLibraryTool(server: McpServer) {
   )
 }
 
+function registerLogTurnActionTool(server: McpServer) {
+  server.registerTool(
+    "log_turn_action",
+    {
+      title: "Log Turn Action",
+      description:
+        "Append an irreversible action note to the active turn log for this game. Use this as the authoritative turn history while resolving the turn. The response returns the full logged action list for the active turn.",
+      inputSchema: {
+        gameId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
+          ),
+        action: z
+          .string()
+          .trim()
+          .min(1)
+          .describe(
+            "A concise description of the action being committed, such as a phase change, land play, spell cast, attack, or other turn progression."
+          ),
+      },
+      outputSchema: {
+        gameId: z.string(),
+        turnNumber: z.number().int().positive(),
+        latestAction: z.string(),
+        actions: z.array(z.string()),
+      },
+    },
+    async ({ gameId, action }) => {
+      const activeTurnInfo = await gameStore.getActiveTurnSimulation(gameId)
+
+      if (!activeTurnInfo.ok) {
+        logWarn("log_turn_action", `${shortId(gameId)} ${activeTurnInfo.reason}`)
+
+        const message =
+          activeTurnInfo.reason === "no_active_turn_simulation"
+            ? "There is no active turn simulation for that game. Only call log_turn_action while resolving the current turn."
+            : GAME_NOT_FOUND_MESSAGE
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: message,
+            },
+          ],
+          isError: true,
+        }
+      }
+
+      const existingLog = turnActionLogStore.get(gameId)
+      const turnLog =
+        existingLog && existingLog.turnNumber === activeTurnInfo.turnNumber
+          ? existingLog
+          : {
+              turnNumber: activeTurnInfo.turnNumber,
+              actions: [],
+            }
+
+      const response = {
+        gameId,
+        turnNumber: turnLog.turnNumber,
+        latestAction: action,
+        actions: [...turnLog.actions, action],
+      }
+
+      turnActionLogStore.set(gameId, {
+        turnNumber: turnLog.turnNumber,
+        actions: response.actions,
+      })
+
+      storeToolUiData("log_turn_action", gameId, {
+        structuredContent: response,
+        uiMetadata: {},
+      })
+
+      logInfo(
+        "log_turn_action",
+        `${shortId(gameId)} turn=${response.turnNumber} count=${response.actions.length}`
+      )
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Logged action for turn ${response.turnNumber}: ${JSON.stringify(response.latestAction)}. Locked actions so far: ${response.actions.map((loggedAction, index) => `${index + 1}. ${loggedAction}`).join(" | ")}`,
+          },
+        ],
+        structuredContent: response,
+      }
+    }
+  )
+}
+
 function registerUpdateGameStateTool(server: McpServer) {
   server.registerTool(
     "update_game_state",
@@ -1427,6 +1530,8 @@ async function main() {
       return
     }
 
+    initializeTurnActionLog(gameId, startTurnResult.turnNumber)
+
     const prompt = buildTurnSimulationPrompt(
       gamePromptContext.gameId,
       startTurnResult.turnNumber,
@@ -1492,6 +1597,7 @@ async function main() {
       })
     } finally {
       const endTurnResult = await gameStore.endTurnSimulation(gameId)
+      deleteTurnActionLog(gameId)
 
       if (!endTurnResult.ok) {
         logWarn("simulate_turn", `${shortId(gameId)} ${endTurnResult.reason}`)
@@ -2643,6 +2749,17 @@ main().catch((error) => {
   process.exit(1)
 })
 
+function initializeTurnActionLog(gameId: string, turnNumber: number) {
+  turnActionLogStore.set(gameId, {
+    turnNumber,
+    actions: [],
+  })
+}
+
+function deleteTurnActionLog(gameId: string) {
+  turnActionLogStore.delete(gameId)
+}
+
 function createToolUiDataKey(toolName: string, gameId: string) {
   return `${toolName}:${gameId}`
 }
@@ -2662,23 +2779,36 @@ function storeToolUiData(
   gameId: string,
   toolUiData: ToolUiDataRecord
 ) {
-  toolUiDataStore.set(createToolUiDataKey(toolName, gameId), toolUiData)
+  const key = createToolUiDataKey(toolName, gameId)
+  const existingEntries = toolUiDataStore.get(key) ?? []
+
+  toolUiDataStore.set(key, [...existingEntries, toolUiData])
 }
 
 function takeToolUiData(toolName: string, gameId: string) {
   const key = createToolUiDataKey(toolName, gameId)
-  const toolUiData = toolUiDataStore.get(key)
+  const toolUiDataEntries = toolUiDataStore.get(key)
 
-  if (!toolUiData) {
+  if (!toolUiDataEntries?.length) {
     return undefined
   }
 
-  toolUiDataStore.delete(key)
+  const [toolUiData, ...remainingEntries] = toolUiDataEntries
+
+  if (remainingEntries.length > 0) {
+    toolUiDataStore.set(key, remainingEntries)
+  } else {
+    toolUiDataStore.delete(key)
+  }
 
   return toolUiData
 }
 
 function getToolUiData(toolName: string, gameId: string) {
-  return toolUiDataStore.get(createToolUiDataKey(toolName, gameId))
+  return toolUiDataStore.get(createToolUiDataKey(toolName, gameId))?.[0]
 }
+
+
+
+
 
