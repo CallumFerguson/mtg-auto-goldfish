@@ -12,7 +12,7 @@
     "server:build": "tsc -p tsconfig.server.json",
     "server:dev": "tsx mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
     "server:watch": "tsx watch --watch-path mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts --watch-path mtg-auto-goldfish-server/game-store.ts --watch-path mtg-auto-goldfish-server/postgres.ts --watch-path mtg-auto-goldfish-server/llm mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
-    "server:start": "node dist-server/mtg-auto-goldfish-server.js",
+    "server:start": "node dist-server/mtg-auto-goldfish-server/mtg-auto-goldfish-server.js",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"
   },

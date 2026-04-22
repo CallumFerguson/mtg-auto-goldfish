@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { ComponentProps, Dispatch, SetStateAction } from "react"
+import type { ComponentProps } from "react"
 
 import { DeckIntakeForm } from "@/features/deck-intake/components/deck-intake-form"
 import { CustomPromptTestModal } from "@/features/deck-intake/components/custom-prompt-test-modal"
@@ -25,21 +25,7 @@ import {
   saveStoredDeckInput,
 } from "@/features/deck-intake/lib/deck-storage"
 import {
-  clearStoredSimulationSession,
-  loadStoredSimulationSession,
-  saveStoredSimulationSession,
-} from "@/features/deck-intake/lib/simulation-session-storage"
-import {
-  cancelPromptRun,
-  createPromptRun,
-  createStartingHandValidationRun,
-  getKeepHandCardsFromEvent,
-  getToolGameId,
-  markPromptRunError,
-  recordPromptStreamEvent,
-  restorePromptRuns,
   type GameCardPayload,
-  type PromptStreamEvent,
   type SimulationPayload,
   type SimulationPromptRun,
   type StartingHandValidation,
@@ -56,54 +42,36 @@ import type {
 } from "@/features/deck-intake/types"
 
 const MIN_PROCESSING_DURATION_MS = 250
-const SIMULATION_CANCELED_MESSAGE = "Simulation cancelled."
 const GOLDFISH_SERVER_URL =
   import.meta.env.VITE_GOLDFISH_SERVER_URL ?? "http://127.0.0.1:3001"
+const GAME_LIST_POLL_INTERVAL_MS = 5000
+const ACTIVE_SESSION_POLL_INTERVAL_MS = 1000
 
 type CreateGameResponse = {
   gameId: string
   seed: number
 }
 
-type ResetGameStateResponse =
-  | {
-      ok: true
-      target: "initial" | "opening_hand_snapshot" | "turn_snapshot"
-      cardsRemaining: number
-    }
-  | {
-      ok: false
-      error?: string
-    }
-
-type ToolUiDataResponse = {
-  structuredContent?: Record<string, unknown>
-  uiMetadata?: Record<string, unknown>
+type GameListItem = {
+  gameId: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  latestRunTitle: string | null
+  latestRunStatus: SimulationPromptRun["status"] | null
+  hasActiveJob: boolean
+  activeJobStage?: "opening_hand" | "turn" | "auto_goldfish"
 }
 
-type OpeningHandSnapshotStatusResponse =
-  | {
-      ok: true
-      hasSnapshot: boolean
-      snapshot?: {
-        validation: {
-          isValid: boolean
-          message: string
-        }
-      }
-    }
-  | {
-      ok: false
-      error?: string
-    }
-
-type SimulationPromptRunFlow = "main"
-
-type StoredSimulationSessionState = {
-  simulationPayload: SimulationPayload | null
+type GameSessionState = {
   gameId: string
-  currentSimulationSeed: number | null
-  simulationError: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  hasActiveJob: boolean
+  activeJobStage?: "opening_hand" | "turn" | "auto_goldfish"
+  openingHandValidation: StartingHandValidation | null
+  nextTurnPromptNumber: number | null
   promptRuns: SimulationPromptRun[]
 }
 
@@ -132,10 +100,6 @@ function expandResolvedCard(card: ResolvedCard) {
   }))
 }
 
-function createCancellationError() {
-  return new DOMException(SIMULATION_CANCELED_MESSAGE, "AbortError")
-}
-
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError"
 }
@@ -150,268 +114,69 @@ async function readJsonResponse(response: Response) {
   return (await response.json()) as unknown
 }
 
-function cancelPromptRuns(
-  currentRuns: SimulationPromptRun[]
-): SimulationPromptRun[] {
-  return currentRuns.map((run) => cancelPromptRun(run))
-}
+async function readErrorMessage(response: Response, fallbackMessage: string) {
+  const payload = await readJsonResponse(response)
 
-function markPromptRunFailed(
-  currentRuns: SimulationPromptRun[],
-  runId: string,
-  message: string
-): SimulationPromptRun[] {
-  return currentRuns.map((run) =>
-    run.id === runId ? markPromptRunError(run, message) : run
-  )
-}
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "details" in payload &&
+    Array.isArray(payload.details)
+  ) {
+    const detailMessage = payload.details
+      .map((detail) =>
+        detail && typeof detail === "object" && "message" in detail
+          ? detail.message
+          : undefined
+      )
+      .filter((message): message is string => typeof message === "string")
+      .join(" ")
 
-function getTurnRunTitle(turnNumber: number) {
-  return `Turn ${turnNumber}`
-}
-
-function getPromptRunTurnNumber(run: SimulationPromptRun) {
-  if (typeof run.turnNumber === "number") {
-    return run.turnNumber
+    if (detailMessage) {
+      return detailMessage
+    }
   }
 
-  if (run.title === "First play decision") {
-    return 1
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "error" in payload &&
+    typeof payload.error === "string" &&
+    payload.error.trim()
+  ) {
+    return payload.error
   }
 
-  const match = run.title.match(/^Turn (\d+)$/)
+  return fallbackMessage
+}
 
-  if (!match) {
+function getSelectedGameIdFromUrl() {
+  if (typeof window === "undefined") {
     return null
   }
 
-  const parsedTurnNumber = Number(match[1])
-  return Number.isSafeInteger(parsedTurnNumber) ? parsedTurnNumber : null
+  const value = new URLSearchParams(window.location.search).get("gameId")?.trim()
+  return value || null
 }
 
-function getNextTurnPromptNumber(promptRuns: SimulationPromptRun[]) {
-  const lastRun = promptRuns.at(-1)
-
-  if (
-    !lastRun ||
-    lastRun.kind !== "turn" ||
-    lastRun.status !== "done" ||
-    typeof lastRun.turnNumber !== "number"
-  ) {
-    return null
-  }
-
-  return lastRun.turnNumber + 1
-}
-
-async function hydrateToolEvent(
-  event: PromptStreamEvent,
-  signal?: AbortSignal
-): Promise<PromptStreamEvent> {
-  if (
-    event.type !== "tool" ||
-    event.event !== "tool_call.success" ||
-    !event.tool ||
-    event.structuredContent ||
-    event.uiMetadata
-  ) {
-    return event
-  }
-
-  const gameId = getToolGameId(event)
-
-  if (!gameId) {
-    return event
-  }
-
-  try {
-    const response = await fetch(`${GOLDFISH_SERVER_URL}/tool-ui-data`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal,
-      body: JSON.stringify({
-        toolName: event.tool,
-        gameId,
-      }),
-    })
-
-    if (!response.ok) {
-      return event
-    }
-
-    const toolUiData = (await response.json()) as ToolUiDataResponse
-
-    return {
-      ...event,
-      structuredContent:
-        toolUiData.structuredContent ?? event.structuredContent,
-      uiMetadata: toolUiData.uiMetadata ?? event.uiMetadata,
-    }
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw error
-    }
-
-    return event
-  }
-}
-
-function getToolCardsRemaining(
-  event: Extract<PromptStreamEvent, { type: "tool" }>
-) {
-  const cardsRemaining = event.structuredContent?.cardsRemaining
-
-  return typeof cardsRemaining === "number" ? cardsRemaining : undefined
-}
-
-function handlePromptStreamEvent(
-  event: PromptStreamEvent,
-  setPromptRuns: Dispatch<SetStateAction<SimulationPromptRun[]>>,
-  runId: string
-) {
-  handlePromptStreamEvents([event], setPromptRuns, runId)
-}
-
-function handlePromptStreamEvents(
-  events: PromptStreamEvent[],
-  setPromptRuns: Dispatch<SetStateAction<SimulationPromptRun[]>>,
-  runId: string
-) {
-  if (!events.length) {
+function replaceSelectedGameIdInUrl(gameId: string | null) {
+  if (typeof window === "undefined") {
     return
   }
 
-  setPromptRuns((currentRuns) =>
-    currentRuns.map((run) =>
-      run.id === runId
-        ? events.reduce(
-            (nextRun, event) => recordPromptStreamEvent(nextRun, event),
-            run
-          )
-        : run
-    )
-  )
-}
+  const url = new URL(window.location.href)
 
-async function readPromptStream(
-  response: Response,
-  setPromptRuns: Dispatch<SetStateAction<SimulationPromptRun[]>>,
-  runId: string,
-  signal?: AbortSignal
-) {
-  if (!response.body) {
-    throw new Error("The server response did not include a stream body.")
+  if (gameId) {
+    url.searchParams.set("gameId", gameId)
+  } else {
+    url.searchParams.delete("gameId")
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-  let finalResult = ""
-  let keptHandCards: string[] = []
-  let cardsRemaining: number | null = null
-
-  if (signal?.aborted) {
-    throw createCancellationError()
-  }
-
-  while (true) {
-    const { done, value } = await reader.read()
-
-    if (signal?.aborted) {
-      throw createCancellationError()
-    }
-
-    if (done) {
-      break
-    }
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-
-    const eventsToRecord: PromptStreamEvent[] = []
-
-    for (const line of lines) {
-      const trimmedLine = line.trim()
-
-      if (!trimmedLine) {
-        continue
-      }
-
-      const parsedEvent = JSON.parse(trimmedLine) as PromptStreamEvent
-      const event = await hydrateToolEvent(parsedEvent, signal)
-      eventsToRecord.push(event)
-
-      if (event.type === "message") {
-        finalResult += event.delta
-      }
-
-      if (event.type === "tool") {
-        keptHandCards = getKeepHandCardsFromEvent(event) ?? keptHandCards
-        cardsRemaining = getToolCardsRemaining(event) ?? cardsRemaining
-      }
-
-      if (event.type === "error") {
-        throw new Error(event.error)
-      }
-
-      if (event.type === "done") {
-        finalResult = event.result
-      }
-    }
-
-    handlePromptStreamEvents(eventsToRecord, setPromptRuns, runId)
-  }
-
-  const trailing = `${buffer}${decoder.decode()}`.trim()
-
-  if (trailing) {
-    const parsedEvent = JSON.parse(trailing) as PromptStreamEvent
-    const event = await hydrateToolEvent(parsedEvent, signal)
-    handlePromptStreamEvent(event, setPromptRuns, runId)
-
-    if (event.type === "message") {
-      finalResult += event.delta
-    }
-
-    if (event.type === "tool") {
-      keptHandCards = getKeepHandCardsFromEvent(event) ?? keptHandCards
-      cardsRemaining = getToolCardsRemaining(event) ?? cardsRemaining
-    }
-
-    if (event.type === "error") {
-      throw new Error(event.error)
-    }
-
-    if (event.type === "done") {
-      finalResult = event.result
-    }
-  }
-
-  return {
-    finalResult,
-    keptHandCards,
-    cardsRemaining,
-  }
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
 }
 
 export function App() {
   const [storedDeckInput] = useState(() => loadStoredDeckInput())
-  const [storedSimulationSession] = useState<StoredSimulationSessionState>(
-    () => {
-      const session = loadStoredSimulationSession()
-
-      return {
-        simulationPayload: session.simulationPayload,
-        gameId: session.gameId,
-        currentSimulationSeed: session.currentSimulationSeed,
-        simulationError: session.simulationError,
-        promptRuns: restorePromptRuns(session.promptRuns),
-      }
-    }
-  )
   const [commanderOneName, setCommanderOneName] = useState(
     storedDeckInput.commanderOneName
   )
@@ -433,36 +198,25 @@ export function App() {
     useState(false)
   const [isStartingSimulation, setIsStartingSimulation] = useState(false)
   const [isCreatingDevGame, setIsCreatingDevGame] = useState(false)
-  const [simulationError, setSimulationError] = useState(
-    storedSimulationSession.simulationError
+  const [simulationError, setSimulationError] = useState("")
+  const initialSelectedGameIdRef = useRef(getSelectedGameIdFromUrl())
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(
+    initialSelectedGameIdRef.current
   )
-  const [gameId, setGameId] = useState(storedSimulationSession.gameId)
+  const [gameList, setGameList] = useState<GameListItem[]>([])
+  const [selectedGameSession, setSelectedGameSession] =
+    useState<GameSessionState | null>(null)
   const [simulationSeedInput, setSimulationSeedInput] = useState(
     storedDeckInput.simulationSeedInput
   )
   const [autoSimulationTurnCount, setAutoSimulationTurnCount] = useState(
     storedDeckInput.autoSimulationTurnCount
   )
-  const [currentSimulationSeed, setCurrentSimulationSeed] = useState<
-    number | null
-  >(storedSimulationSession.currentSimulationSeed)
-  const [promptRuns, setPromptRuns] = useState<SimulationPromptRun[]>(
-    storedSimulationSession.promptRuns
-  )
-  const [savedSimulationPayload, setSavedSimulationPayload] =
-    useState<SimulationPayload | null>(
-      storedSimulationSession.simulationPayload
-    )
-  const promptRunsRef = useRef(promptRuns)
-  const simulationAbortControllerRef = useRef<AbortController | null>(null)
-  const pendingRerunRunIdRef = useRef<string | null>(null)
-  const previousDeckInputRef = useRef({
-    commanderOneName: storedDeckInput.commanderOneName,
-    commanderTwoName: storedDeckInput.commanderTwoName,
-    decklistText: storedDeckInput.decklistText,
-  })
-
-  promptRunsRef.current = promptRuns
+  const promptRuns = selectedGameSession?.promptRuns ?? []
+  const currentSimulationSeed = selectedGameSession?.seed ?? null
+  const currentGameId = selectedGameSession?.gameId ?? selectedGameId ?? ""
+  const nextTurnPromptNumber =
+    selectedGameSession?.nextTurnPromptNumber ?? null
 
   const parsedDeck = useMemo(() => parseDecklist(decklistText), [decklistText])
   const totalCards = parsedDeck.reduce(
@@ -585,7 +339,6 @@ export function App() {
       deck: deckCards.flatMap(expandResolvedCard),
     }
   }, [commanderCards, deckCards, isDeckReady])
-  const nextTurnPromptNumber = getNextTurnPromptNumber(promptRuns)
 
   function getRequestedSimulationSeed() {
     const trimmedValue = simulationSeedInput.trim()
@@ -607,25 +360,20 @@ export function App() {
     return seed
   }
 
-  async function createGame(
-    signal?: AbortSignal,
-    seedOverride?: number,
-    payloadOverride?: SimulationPayload | null
-  ) {
+  async function createGame(payloadOverride?: SimulationPayload | null) {
     const resolvedSimulationPayload = payloadOverride ?? simulationPayload
 
     if (!resolvedSimulationPayload) {
       throw new Error("The deck is not ready for simulation yet.")
     }
 
-    const requestedSeed = seedOverride ?? getRequestedSimulationSeed()
+    const requestedSeed = getRequestedSimulationSeed()
 
     const response = await fetch(`${GOLDFISH_SERVER_URL}/games`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      signal,
       body: JSON.stringify({
         ...resolvedSimulationPayload,
         ...(requestedSeed !== undefined ? { seed: requestedSeed } : {}),
@@ -672,6 +420,65 @@ export function App() {
       gameId: payload.gameId,
       seed: payload.seed,
     }
+  }
+
+  async function fetchGameList(signal?: AbortSignal) {
+    const response = await fetch(`${GOLDFISH_SERVER_URL}/games`, {
+      signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, "Failed to load games."))
+    }
+
+    return (await response.json()) as GameListItem[]
+  }
+
+  async function fetchGameSession(gameId: string, signal?: AbortSignal) {
+    const response = await fetch(
+      `${GOLDFISH_SERVER_URL}/games/${encodeURIComponent(gameId)}/session`,
+      {
+        signal,
+      }
+    )
+
+    if (response.status === 404) {
+      return null
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        await readErrorMessage(response, "Failed to load the selected game.")
+      )
+    }
+
+    return (await response.json()) as GameSessionState
+  }
+
+  async function refreshGameList(signal?: AbortSignal) {
+    const nextGameList = await fetchGameList(signal)
+    setGameList(nextGameList)
+    return nextGameList
+  }
+
+  async function refreshSelectedGameSession(
+    gameId: string,
+    signal?: AbortSignal
+  ) {
+    const session = await fetchGameSession(gameId, signal)
+
+    if (!session) {
+      setSelectedGameSession(null)
+      return null
+    }
+
+    setSelectedGameSession(session)
+    return session
+  }
+
+  async function selectGameAndRefresh(nextGameId: string) {
+    setSelectedGameId(nextGameId)
+    await Promise.all([refreshGameList(), refreshSelectedGameSession(nextGameId)])
   }
 
   const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
@@ -840,486 +647,164 @@ export function App() {
       return
     }
 
-    setSavedSimulationPayload(simulationPayload)
-    const abortController = new AbortController()
-    simulationAbortControllerRef.current = abortController
-
     setIsStartingSimulation(true)
     setSimulationError("")
-    setGameId("")
-    setCurrentSimulationSeed(null)
-    setPromptRuns([])
 
     try {
-      const { gameId: nextGameId, seed } = await createGame(
-        abortController.signal,
-        undefined,
-        simulationPayload
-      )
-
-      setGameId(nextGameId)
-      setCurrentSimulationSeed(seed)
-
-      const openingHandRun = await runOpeningHandSimulation(
-        nextGameId,
-        "Opening hand simulation",
-        abortController.signal,
-        {
-          flow: "main",
-          seed,
-        }
-      )
-
-      const startingHandValidation = await getStartingHandSnapshotValidation(
-        nextGameId,
-        abortController.signal
-      )
-
-      setPromptRuns((currentRuns) => [
-        ...currentRuns,
-        createStartingHandValidationRun(
-          startingHandValidation,
-          openingHandRun.keptHandCards,
-          {
-            flow: "main",
-            gameId: nextGameId,
-            seed,
-          }
-        ),
-      ])
-
-      if (!startingHandValidation.isValid) {
-        throw new Error(startingHandValidation.message)
-      }
-
-      for (
-        let turnNumber = 1;
-        turnNumber <= autoSimulationTurnCount;
-        turnNumber += 1
-      ) {
-        await runTurnSimulation(nextGameId, turnNumber, abortController.signal, {
-          flow: "main",
-          seed,
-        })
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        if (!pendingRerunRunIdRef.current) {
-          setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
-          setSimulationError(SIMULATION_CANCELED_MESSAGE)
-        }
-      } else {
-        setSimulationError(
-          error instanceof Error ? error.message : "Failed to create a game."
-        )
-      }
-    } finally {
-      if (simulationAbortControllerRef.current === abortController) {
-        simulationAbortControllerRef.current = null
-      }
-
-      setIsStartingSimulation(false)
-    }
-  }
-
-  async function getStartingHandSnapshotValidation(
-    currentGameId: string,
-    signal?: AbortSignal
-  ): Promise<StartingHandValidation> {
-    const response = await fetch(
-      `${GOLDFISH_SERVER_URL}/opening-hand-snapshot-status`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        signal,
-        body: JSON.stringify({
-          gameId: currentGameId,
-        }),
-      }
-    )
-
-    const payload = (await response.json()) as OpeningHandSnapshotStatusResponse
-
-    if (!response.ok || !payload.ok) {
-      throw new Error(
-        ("error" in payload && payload.error) ||
-          "Failed to load opening-hand snapshot status."
-      )
-    }
-
-    if (!payload.hasSnapshot || !payload.snapshot) {
-      throw new Error(
-        "The opening-hand simulation did not save a starting-hand snapshot."
-      )
-    }
-
-    return payload.snapshot.validation
-  }
-
-  async function resetGameState(
-    currentGameId: string,
-    target: "initial" | "opening_hand_snapshot" | "turn_snapshot",
-    signal?: AbortSignal,
-    turnNumber?: number
-  ) {
-    const response = await fetch(`${GOLDFISH_SERVER_URL}/reset-game-state`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal,
-      body: JSON.stringify({
-        gameId: currentGameId,
-        target,
-        ...(typeof turnNumber === "number" ? { turnNumber } : {}),
-      }),
-    })
-
-    const payload = (await response.json()) as ResetGameStateResponse
-
-    if (!response.ok || !payload.ok) {
-      throw new Error(
-        ("error" in payload && payload.error) ||
-          "Failed to reset the game state."
-      )
-    }
-  }
-
-  async function runTurnSimulation(
-    currentGameId: string,
-    turnNumber: number,
-    signal?: AbortSignal,
-    options?: {
-      flow?: SimulationPromptRunFlow
-      seed?: number | null
-    }
-  ) {
-    const turnRun = createPromptRun(getTurnRunTitle(turnNumber), {
-      kind: "turn",
-      flow: options?.flow ?? "main",
-      gameId: currentGameId,
-      seed: options?.seed ?? null,
-      turnNumber,
-    })
-    setPromptRuns((currentRuns) => [...currentRuns, turnRun])
-
-    try {
-      const turnResponse = await fetch(`${GOLDFISH_SERVER_URL}/simulate-turn`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        signal,
-        body: JSON.stringify({
-          gameId: currentGameId,
-        }),
-      })
-
-      if (!turnResponse.ok) {
-        const promptPayload = (await turnResponse.json()) as
-          | { result?: string; error?: string }
-          | { details?: Array<{ message?: string }> }
-        const detailMessage =
-          "details" in promptPayload && Array.isArray(promptPayload.details)
-            ? promptPayload.details
-                .map((detail) => detail.message)
-                .filter(Boolean)
-                .join(" ")
-            : ""
-        throw new Error(
-          detailMessage ||
-            ("error" in promptPayload && promptPayload.error) ||
-            `Failed to simulate turn ${turnNumber}.`
-        )
-      }
-
-      return await readPromptStream(
-        turnResponse,
-        setPromptRuns,
-        turnRun.id,
-        signal
-      )
-    } catch (error) {
-      if (!isAbortError(error)) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : `Failed to simulate turn ${turnNumber}.`
-        setPromptRuns((currentRuns) =>
-          markPromptRunFailed(currentRuns, turnRun.id, message)
-        )
-      }
-
-      throw error
-    }
-  }
-
-  async function runOpeningHandSimulation(
-    currentGameId: string,
-    title: string,
-    signal?: AbortSignal,
-    options?: {
-      flow?: SimulationPromptRunFlow
-      seed?: number | null
-    }
-  ) {
-    const openingHandRun = createPromptRun(title, {
-      kind: "opening_hand",
-      flow: options?.flow ?? "main",
-      gameId: currentGameId,
-      seed: options?.seed ?? null,
-    })
-    setPromptRuns((currentRuns) => [...currentRuns, openingHandRun])
-
-    try {
-      const openingHandResponse = await fetch(
-        `${GOLDFISH_SERVER_URL}/simulate-drawing-starting-hand`,
+      const requestedSeed = getRequestedSimulationSeed()
+      const response = await fetch(
+        `${GOLDFISH_SERVER_URL}/simulations/auto-goldfish`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          signal,
           body: JSON.stringify({
-            gameId: currentGameId,
+            ...simulationPayload,
+            autoSimulationTurnCount,
+            ...(requestedSeed !== undefined ? { seed: requestedSeed } : {}),
+          } satisfies {
+            commanders: GameCardPayload[]
+            deck: GameCardPayload[]
+            autoSimulationTurnCount: number
+            seed?: number
           }),
         }
       )
 
-      if (!openingHandResponse.ok) {
-        const promptPayload = (await openingHandResponse.json()) as
-          | { result?: string; error?: string }
-          | { details?: Array<{ message?: string }> }
-        const detailMessage =
-          "details" in promptPayload && Array.isArray(promptPayload.details)
-            ? promptPayload.details
-                .map((detail) => detail.message)
-                .filter(Boolean)
-                .join(" ")
-            : ""
+      if (!response.ok) {
         throw new Error(
-          detailMessage ||
-            ("error" in promptPayload && promptPayload.error) ||
-            "Failed to simulate drawing the starting hand."
+          await readErrorMessage(response, "Failed to start auto goldfish.")
         )
       }
 
-      return await readPromptStream(
-        openingHandResponse,
-        setPromptRuns,
-        openingHandRun.id,
-        signal
+      const payload = (await response.json()) as CreateGameResponse
+      await selectGameAndRefresh(payload.gameId)
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error ? error.message : "Failed to start auto goldfish."
       )
-    } catch (error) {
-      if (!isAbortError(error)) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to simulate drawing the starting hand."
-        setPromptRuns((currentRuns) =>
-          markPromptRunFailed(currentRuns, openingHandRun.id, message)
-        )
-      }
-
-      throw error
-    }
-  }
-
-  function cancelSimulation(runId?: string) {
-    if (runId) {
-      const matchingRun = promptRuns.find((run) => run.id === runId)
-
-      if (!matchingRun || matchingRun.status !== "running") {
-        return
-      }
-    }
-
-    const controller = simulationAbortControllerRef.current
-
-    if (!controller) {
-      return
-    }
-
-    controller.abort()
-    simulationAbortControllerRef.current = null
-    setIsStartingSimulation(false)
-    setSimulationError(SIMULATION_CANCELED_MESSAGE)
-    setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
-  }
-
-  async function rerunPromptRun(runId: string) {
-    const currentPromptRuns = promptRunsRef.current
-    const runIndex = currentPromptRuns.findIndex((run) => run.id === runId)
-
-    if (runIndex === -1) {
-      return
-    }
-
-    const run = currentPromptRuns[runIndex]
-
-    if (
-      !run.rerunnable ||
-      (run.status !== "done" &&
-        run.status !== "cancelled" &&
-        run.status !== "error")
-    ) {
-      return
-    }
-
-    if (isStartingSimulation) {
-      pendingRerunRunIdRef.current = runId
-      simulationAbortControllerRef.current?.abort()
-      return
-    }
-
-    const abortController = new AbortController()
-    simulationAbortControllerRef.current = abortController
-
-    setIsStartingSimulation(true)
-    setSimulationError("")
-
-    try {
-      if (run.kind === "opening_hand") {
-        await rerunMainSimulationFromOpeningHand(
-          runIndex,
-          run,
-          abortController.signal
-        )
-      } else if (run.kind === "turn") {
-        await rerunMainTurnSimulation(runIndex, run, abortController.signal)
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        if (!pendingRerunRunIdRef.current) {
-          setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
-          setSimulationError(SIMULATION_CANCELED_MESSAGE)
-        }
-      } else {
-        setSimulationError(
-          error instanceof Error
-            ? error.message
-            : "Failed to rerun the simulation."
-        )
-      }
     } finally {
-      if (simulationAbortControllerRef.current === abortController) {
-        simulationAbortControllerRef.current = null
-      }
-
       setIsStartingSimulation(false)
     }
   }
 
-  async function rerunMainSimulationFromOpeningHand(
-    runIndex: number,
-    run: SimulationPromptRun,
-    signal?: AbortSignal
-  ) {
-    const replaySeed = run.seed ?? currentSimulationSeed ?? undefined
-    const replayPayload = savedSimulationPayload ?? simulationPayload
-
-    setPromptRuns((currentRuns) => currentRuns.slice(0, runIndex))
-
-    const { gameId: nextGameId, seed } = await createGame(
-      signal,
-      replaySeed,
-      replayPayload
-    )
-    setGameId(nextGameId)
-    setCurrentSimulationSeed(seed)
-
-    const openingHandRun = await runOpeningHandSimulation(
-      nextGameId,
-      "Opening hand simulation",
-      signal,
-      {
-        flow: "main",
-        seed,
-      }
-    )
-
-    const startingHandValidation = await getStartingHandSnapshotValidation(
-      nextGameId,
-      signal
-    )
-
-    setPromptRuns((currentRuns) => [
-      ...currentRuns,
-      createStartingHandValidationRun(
-        startingHandValidation,
-        openingHandRun.keptHandCards,
-        {
-          flow: "main",
-          gameId: nextGameId,
-          seed,
-        }
-      ),
-    ])
-
-    if (!startingHandValidation.isValid) {
-      throw new Error(startingHandValidation.message)
-    }
-  }
-
-  async function rerunMainTurnSimulation(
-    runIndex: number,
-    run: SimulationPromptRun,
-    signal?: AbortSignal
-  ) {
-    const turnNumber = getPromptRunTurnNumber(run)
-
-    if (turnNumber === null) {
-      throw new Error(
-        "That turn cannot be rerun because its turn number is missing."
-      )
-    }
-
-    setPromptRuns((currentRuns) => currentRuns.slice(0, runIndex))
-    await resetGameState(run.gameId, "turn_snapshot", signal, turnNumber)
-    setGameId(run.gameId)
-    setCurrentSimulationSeed(run.seed)
-    await runTurnSimulation(run.gameId, turnNumber, signal, {
-      flow: "main",
-      seed: run.seed,
-    })
-  }
-
-  async function simulateNextTurn() {
-    const nextTurnNumber = getNextTurnPromptNumber(promptRuns)
-
-    if (!gameId || nextTurnNumber === null || isStartingSimulation) {
+  function cancelSimulation(runId?: string) {
+    if (
+      !currentGameId ||
+      (runId && !promptRuns.some((run) => run.id === runId && run.status === "running"))
+    ) {
       return
     }
 
-    const abortController = new AbortController()
-    simulationAbortControllerRef.current = abortController
+    setSimulationError("")
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `${GOLDFISH_SERVER_URL}/games/${encodeURIComponent(currentGameId)}/cancel`,
+          {
+            method: "POST",
+          }
+        )
+
+        if (!response.ok) {
+          throw new Error(
+            await readErrorMessage(response, "Failed to cancel the simulation.")
+          )
+        }
+
+        await Promise.all([
+          refreshGameList(),
+          refreshSelectedGameSession(currentGameId),
+        ])
+      } catch (error) {
+        setSimulationError(
+          error instanceof Error
+            ? error.message
+            : "Failed to cancel the simulation."
+        )
+      }
+    })()
+  }
+
+  async function rerunPromptRun(runId: string) {
+    const selectedRun = promptRuns.find((run) => run.id === runId)
+
+    if (
+      !selectedRun ||
+      !selectedRun.rerunnable ||
+      (selectedRun.status !== "done" &&
+        selectedRun.status !== "cancelled" &&
+        selectedRun.status !== "error")
+    ) {
+      return
+    }
 
     setIsStartingSimulation(true)
     setSimulationError("")
 
     try {
-      await runTurnSimulation(gameId, nextTurnNumber, abortController.signal, {
-        flow: "main",
-        seed: currentSimulationSeed,
-      })
-    } catch (error) {
-      if (isAbortError(error)) {
-        setPromptRuns((currentRuns) => cancelPromptRuns(currentRuns))
-        setSimulationError(SIMULATION_CANCELED_MESSAGE)
-      } else {
-        setSimulationError(
-          error instanceof Error
-            ? error.message
-            : `Failed to simulate turn ${nextTurnNumber}.`
+      const response = await fetch(
+        `${GOLDFISH_SERVER_URL}/simulation-runs/${encodeURIComponent(runId)}/rerun`,
+        {
+          method: "POST",
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(
+          await readErrorMessage(response, "Failed to rerun the simulation.")
         )
       }
+
+      const payload = (await response.json()) as CreateGameResponse
+      await selectGameAndRefresh(payload.gameId)
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error ? error.message : "Failed to rerun the simulation."
+      )
     } finally {
-      if (simulationAbortControllerRef.current === abortController) {
-        simulationAbortControllerRef.current = null
+      setIsStartingSimulation(false)
+    }
+  }
+
+  async function simulateNextTurn() {
+    if (!currentGameId || nextTurnPromptNumber === null || isStartingSimulation) {
+      return
+    }
+
+    setIsStartingSimulation(true)
+    setSimulationError("")
+
+    try {
+      const response = await fetch(
+        `${GOLDFISH_SERVER_URL}/games/${encodeURIComponent(currentGameId)}/simulate-next-turn`,
+        {
+          method: "POST",
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(
+          await readErrorMessage(
+            response,
+            `Failed to simulate turn ${nextTurnPromptNumber}.`
+          )
+        )
       }
 
+      await Promise.all([
+        refreshGameList(),
+        refreshSelectedGameSession(currentGameId),
+      ])
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error
+          ? error.message
+          : `Failed to simulate turn ${nextTurnPromptNumber}.`
+      )
+    } finally {
       setIsStartingSimulation(false)
     }
   }
@@ -1329,22 +814,14 @@ export function App() {
       return
     }
 
-    setSavedSimulationPayload(simulationPayload)
     setIsCreatingDevGame(true)
     setSimulationError("")
-    setCurrentSimulationSeed(null)
-    setPromptRuns([])
 
     try {
-      const { gameId: nextGameId, seed } = await createGame(
-        undefined,
-        undefined,
-        simulationPayload
-      )
+      const { gameId: nextGameId } = await createGame(simulationPayload)
 
-      setGameId(nextGameId)
-      setCurrentSimulationSeed(seed)
       await navigator.clipboard.writeText(nextGameId)
+      await selectGameAndRefresh(nextGameId)
     } catch (error) {
       setSimulationError(
         error instanceof Error ? error.message : "Failed to create a game."
@@ -1371,38 +848,126 @@ export function App() {
   ])
 
   useEffect(() => {
-    if (
-      !savedSimulationPayload &&
-      !gameId &&
-      currentSimulationSeed === null &&
-      !simulationError &&
-      !promptRuns.length
-    ) {
-      clearStoredSimulationSession()
+    const abortController = new AbortController()
+
+    void refreshGameList(abortController.signal).catch((error) => {
+      if (isAbortError(error)) {
+        return
+      }
+
+      setSimulationError(
+        error instanceof Error ? error.message : "Failed to load games."
+      )
+    })
+
+    const intervalId = window.setInterval(() => {
+      void refreshGameList().catch(() => {
+        // Ignore polling failures and try again on the next interval.
+      })
+    }, GAME_LIST_POLL_INTERVAL_MS)
+
+    return () => {
+      abortController.abort()
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (gameList.length === 0) {
+      if (selectedGameId !== null) {
+        setSelectedGameId(null)
+      }
+
+      setSelectedGameSession(null)
       return
     }
 
-    saveStoredSimulationSession({
-      version: 1,
-      simulationPayload: savedSimulationPayload,
-      gameId,
-      currentSimulationSeed,
-      simulationError,
-      promptRuns,
-    })
-  }, [
-    currentSimulationSeed,
-    gameId,
-    promptRuns,
-    savedSimulationPayload,
-    simulationError,
-  ])
+    if (
+      selectedGameId &&
+      gameList.some((gameSummary) => gameSummary.gameId === selectedGameId)
+    ) {
+      return
+    }
+
+    const requestedGameId = initialSelectedGameIdRef.current
+    const nextSelectedGameId =
+      (requestedGameId &&
+      gameList.some((gameSummary) => gameSummary.gameId === requestedGameId)
+        ? requestedGameId
+        : null) ??
+      gameList.find((gameSummary) => gameSummary.hasActiveJob)?.gameId ??
+      gameList[0]?.gameId ??
+      null
+
+    initialSelectedGameIdRef.current = null
+    setSelectedGameId(nextSelectedGameId)
+  }, [gameList, selectedGameId])
 
   useEffect(() => {
-    return () => {
-      simulationAbortControllerRef.current?.abort()
+    replaceSelectedGameIdInUrl(selectedGameId)
+  }, [selectedGameId])
+
+  useEffect(() => {
+    setSelectedPromptStreamRunId(null)
+  }, [selectedGameId])
+
+  useEffect(() => {
+    if (!selectedGameId) {
+      setSelectedGameSession(null)
+      return
     }
-  }, [])
+
+    setSelectedGameSession((currentSession) =>
+      currentSession?.gameId === selectedGameId ? currentSession : null
+    )
+
+    const abortController = new AbortController()
+
+    void refreshSelectedGameSession(selectedGameId, abortController.signal).catch(
+      async (error) => {
+        if (isAbortError(error)) {
+          return
+        }
+
+        setSelectedGameSession(null)
+
+        try {
+          await refreshGameList()
+        } catch {
+          // Ignore secondary refresh failures here.
+        }
+
+        setSimulationError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load the selected game."
+        )
+      }
+    )
+
+    return () => {
+      abortController.abort()
+    }
+  }, [selectedGameId])
+
+  useEffect(() => {
+    if (!selectedGameId || !selectedGameSession?.hasActiveJob) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void Promise.all([
+        refreshGameList(),
+        refreshSelectedGameSession(selectedGameId),
+      ]).catch(() => {
+        // Ignore polling failures and try again on the next tick.
+      })
+    }, ACTIVE_SESSION_POLL_INTERVAL_MS)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [selectedGameId, selectedGameSession?.hasActiveJob])
 
   useEffect(() => {
     if (!canProcess) {
@@ -1424,52 +989,6 @@ export function App() {
     void processDeck({ skipMinProcessingDuration: true })
   }, [])
 
-  useEffect(() => {
-    if (isStartingSimulation) {
-      return
-    }
-
-    const pendingRunId = pendingRerunRunIdRef.current
-
-    if (!pendingRunId) {
-      return
-    }
-
-    pendingRerunRunIdRef.current = null
-    setSimulationError("")
-    void rerunPromptRun(pendingRunId)
-  }, [isStartingSimulation])
-
-  useEffect(() => {
-    const previousDeckInput = previousDeckInputRef.current
-    const hasDeckInputChanged =
-      previousDeckInput.commanderOneName !== commanderOneName ||
-      previousDeckInput.commanderTwoName !== commanderTwoName ||
-      previousDeckInput.decklistText !== decklistText
-
-    if (!hasDeckInputChanged) {
-      return
-    }
-
-    previousDeckInputRef.current = {
-      commanderOneName,
-      commanderTwoName,
-      decklistText,
-    }
-
-    simulationAbortControllerRef.current?.abort()
-    simulationAbortControllerRef.current = null
-    pendingRerunRunIdRef.current = null
-    setIsStartingSimulation(false)
-    setSavedSimulationPayload(null)
-    setGameId("")
-    setCurrentSimulationSeed(null)
-    setSimulationError("")
-    setPromptRuns([])
-    setIsPromptStreamModalOpen(false)
-    clearStoredSimulationSession()
-  }, [commanderOneName, commanderTwoName, decklistText])
-
   function requestResetToSampleDeck() {
     if (isSampleDeckActive) {
       return
@@ -1479,8 +998,6 @@ export function App() {
   }
 
   function resetToSampleDeck() {
-    simulationAbortControllerRef.current?.abort()
-    simulationAbortControllerRef.current = null
     setCommanderOneName(DEFAULT_DECK_INPUT.commanderOneName)
     setCommanderTwoName(DEFAULT_DECK_INPUT.commanderTwoName)
     setDecklistText(DEFAULT_DECK_INPUT.decklistText)
@@ -1490,15 +1007,9 @@ export function App() {
     setLookupError("")
     setIsProcessing(false)
     setIsResetModalOpen(false)
-    setSavedSimulationPayload(null)
-    setGameId("")
     setSimulationSeedInput(DEFAULT_DECK_INPUT.simulationSeedInput)
     setAutoSimulationTurnCount(DEFAULT_DECK_INPUT.autoSimulationTurnCount)
-    setCurrentSimulationSeed(null)
     setSimulationError("")
-    setPromptRuns([])
-    setIsPromptStreamModalOpen(false)
-    clearStoredSimulationSession()
   }
 
   function updateManualText(name: string, manualText: string) {
@@ -1713,7 +1224,9 @@ export function App() {
           canStart={isDeckReady}
           isStarting={isStartingSimulation}
           isCreatingDevGame={isCreatingDevGame}
-          gameId={gameId}
+          gameList={gameList}
+          selectedGameId={selectedGameId}
+          gameId={currentGameId}
           simulationSeedInput={simulationSeedInput}
           autoSimulationTurnCount={autoSimulationTurnCount}
           currentSimulationSeed={currentSimulationSeed}
@@ -1722,6 +1235,11 @@ export function App() {
           errorMessage={simulationError}
           onSimulationSeedInputChange={setSimulationSeedInput}
           onAutoSimulationTurnCountChange={setAutoSimulationTurnCount}
+          onSelectedGameChange={(nextGameId) => {
+            setSelectedGameId(nextGameId || null)
+            setSimulationError("")
+            setSelectedPromptStreamRunId(null)
+          }}
           onCancelPromptRun={cancelSimulation}
           onRerunPromptRun={rerunPromptRun}
           onSimulateNextTurn={simulateNextTurn}
@@ -1744,7 +1262,7 @@ export function App() {
       <PromptStreamModal
         isOpen={isPromptStreamModalOpen}
         promptRuns={promptRuns}
-        isStarting={isStartingSimulation}
+        isStarting={selectedGameSession?.hasActiveJob ?? false}
         initialSelectedRunId={selectedPromptStreamRunId}
         onClose={() => {
           setIsPromptStreamModalOpen(false)

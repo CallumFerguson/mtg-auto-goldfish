@@ -1,6 +1,7 @@
 import "dotenv/config"
 
 import type { Request, Response } from "express"
+import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -10,6 +11,10 @@ import { z } from "zod/v4"
 
 import {
   GameStore,
+  type StoredGameSession,
+  type StoredGameSummary,
+  type StoredSimulationEvent,
+  type StoredSimulationRun,
   type AppendSimulationEventInput,
   type GameCard,
   type SimulationRunKind,
@@ -22,16 +27,28 @@ import {
 import {
   createPromptProcessor,
   normalizePromptProcessorProvider,
+  type PromptProcessor,
   type PromptProcessingResult,
   type PromptProcessorOptions,
   type PromptProcessorProvider,
-  type PromptStreamEvent,
+  type PromptStreamEvent as LlmPromptStreamEvent,
 } from "./llm/index.js"
 import {
   DRAW_STARTING_HAND_PROMPT,
   SIMULATE_TURN_PROMPT,
   GENERIC_GAME_RULES_REFERENCE,
 } from "./llm/prompt-constants.js"
+import {
+  cancelPromptRun,
+  createPromptRun,
+  createStartingHandValidationRun,
+  markPromptRunError,
+  recordPromptStreamEvent,
+  type PromptStreamEvent,
+  type SimulationPromptRun,
+  type SimulationPromptRunStatus,
+  type StartingHandValidation,
+} from "../src/shared/simulation-session-core.js"
 
 const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_PORT = 3001
@@ -75,6 +92,44 @@ type TurnActionLog = {
   actions: string[]
 }
 
+type ActiveSimulationJobStage = "opening_hand" | "turn" | "auto_goldfish"
+
+type ActiveSimulationJob = {
+  jobId: string
+  gameId: string
+  stage: ActiveSimulationJobStage
+  abortController: AbortController
+}
+
+type SimulationRuntime = {
+  llmProvider: PromptProcessorProvider
+  openingHandPromptProcessor: PromptProcessor
+  turnSimulationPromptProcessor: PromptProcessor
+}
+
+type GameListItemResponse = {
+  gameId: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  latestRunTitle: string | null
+  latestRunStatus: SimulationPromptRunStatus | null
+  hasActiveJob: boolean
+  activeJobStage?: ActiveSimulationJobStage
+}
+
+type GameSessionResponse = {
+  gameId: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  hasActiveJob: boolean
+  activeJobStage?: ActiveSimulationJobStage
+  openingHandValidation: StartingHandValidation | null
+  nextTurnPromptNumber: number | null
+  promptRuns: SimulationPromptRun[]
+}
+
 type SimulationEventRecorderOptions = {
   simulationRunId: string
   gameId: string
@@ -85,6 +140,7 @@ type SimulationEventRecorderOptions = {
 let gameStore!: GameStore
 const toolUiDataStore = new Map<string, ToolUiDataRecord[]>()
 const turnActionLogStore = new Map<string, TurnActionLog>()
+const activeSimulationJobs = new Map<string, ActiveSimulationJob>()
 const gameCardSchema = z.object({
   name: z.string().trim().min(1).describe("The card name."),
   cardText: z
@@ -159,6 +215,14 @@ const createGameSchema = z
       })
     }
   })
+const autoGoldfishSchema = createGameSchema.extend({
+  autoSimulationTurnCount: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .describe("How many turns to simulate after the opening hand."),
+})
 
 function createServer(
   name: string,
@@ -1125,6 +1189,577 @@ function registerKeepHandTool(server: McpServer) {
     }
   )
 }
+
+function getSimulationRunTitle(
+  kind: StoredSimulationRun["kind"],
+  turnNumber: number | null
+) {
+  if (kind === "opening_hand") {
+    return "Opening hand simulation"
+  }
+
+  return `Turn ${turnNumber ?? "?"}`
+}
+
+function mapStoredRunStatusToClientStatus(
+  status: StoredSimulationRun["status"]
+): SimulationPromptRunStatus {
+  switch (status) {
+    case "running":
+      return "running"
+    case "succeeded":
+      return "done"
+    case "failed":
+      return "error"
+    case "aborted":
+      return "cancelled"
+  }
+}
+
+function getStoredRunModel(storedRun: StoredSimulationRun) {
+  const key = storedRun.modelKey?.trim()
+  const displayName = storedRun.modelDisplayName?.trim()
+
+  if (!key || !displayName) {
+    return undefined
+  }
+
+  return {
+    key,
+    displayName,
+    ...(typeof storedRun.modelSizeBytes === "number"
+      ? { sizeBytes: storedRun.modelSizeBytes }
+      : {}),
+  }
+}
+
+function getStoredEventMetadataString(
+  event: StoredSimulationEvent,
+  key: string
+) {
+  const value = event.metadata?.[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function getStoredEventMetadataNumber(
+  event: StoredSimulationEvent,
+  key: string
+) {
+  const value = event.metadata?.[key]
+  return typeof value === "number" ? value : undefined
+}
+
+function mapStoredEventToPromptStreamEvent(
+  event: StoredSimulationEvent,
+  storedRun: StoredSimulationRun
+): PromptStreamEvent | null {
+  switch (event.eventType) {
+    case "start": {
+      const modelKey =
+        getStoredEventMetadataString(event, "modelKey") ?? storedRun.modelKey
+      const modelDisplayName =
+        getStoredEventMetadataString(event, "modelDisplayName") ??
+        storedRun.modelDisplayName
+      const modelSizeBytes =
+        getStoredEventMetadataNumber(event, "modelSizeBytes") ??
+        storedRun.modelSizeBytes
+
+      return {
+        type: "start",
+        model: {
+          key: modelKey ?? "unknown-model",
+          displayName: modelDisplayName ?? "Unknown model",
+          ...(typeof modelSizeBytes === "number" ? { sizeBytes: modelSizeBytes } : {}),
+        },
+      }
+    }
+    case "reasoning.delta":
+      return {
+        type: "reasoning",
+        delta: event.reasoningTextDelta ?? "",
+      }
+    case "message.delta":
+      return {
+        type: "message",
+        delta: event.messageTextDelta ?? "",
+      }
+    case "tool_call.start":
+    case "tool_call.arguments":
+    case "tool_call.success":
+    case "tool_call.failure":
+      return {
+        type: "tool",
+        event: event.eventType,
+        tool: event.toolName,
+        provider: event.toolProvider,
+        argumentsText: event.argumentsText,
+        output: event.outputText,
+        structuredContent: event.structuredContent,
+        uiMetadata: event.uiMetadata,
+        error: event.errorText,
+      }
+    case "error":
+      return {
+        type: "error",
+        error: event.errorText ?? storedRun.errorMessage ?? "Simulation failed.",
+      }
+    case "done": {
+      const model = getStoredRunModel(storedRun)
+
+      return {
+        type: "done",
+        result: storedRun.finalResultText ?? "",
+        reasoning: "",
+        ...(model ? { model } : {}),
+      }
+    }
+    default:
+      return {
+        type: "status",
+        event: event.eventType,
+        progress: getStoredEventMetadataNumber(event, "progress"),
+        modelInstanceId: getStoredEventMetadataString(event, "modelInstanceId"),
+      }
+  }
+}
+
+function materializePromptRuns(
+  session: StoredGameSession
+): SimulationPromptRun[] {
+  const eventsByRunId = new Map<string, StoredSimulationEvent[]>()
+
+  for (const event of session.simulationEvents) {
+    const existingEvents = eventsByRunId.get(event.simulationRunId) ?? []
+    eventsByRunId.set(event.simulationRunId, [...existingEvents, event])
+  }
+
+  const lastOpeningHandRunId = [...session.simulationRuns]
+    .reverse()
+    .find((simulationRun) => simulationRun.kind === "opening_hand")
+    ?.simulationRunId
+
+  return session.simulationRuns.flatMap((storedRun) => {
+    let promptRun = createPromptRun(
+      getSimulationRunTitle(storedRun.kind, storedRun.turnNumber),
+      {
+        id: storedRun.simulationRunId,
+        kind: storedRun.kind,
+        flow: "main",
+        gameId: storedRun.gameId,
+        seed: session.seed,
+        turnNumber: storedRun.turnNumber,
+      }
+    )
+    let hasDoneEvent = false
+    let hasErrorEvent = false
+
+    for (const event of eventsByRunId.get(storedRun.simulationRunId) ?? []) {
+      const promptEvent = mapStoredEventToPromptStreamEvent(event, storedRun)
+
+      if (!promptEvent) {
+        continue
+      }
+
+      if (promptEvent.type === "done") {
+        hasDoneEvent = true
+      }
+
+      if (promptEvent.type === "error") {
+        hasErrorEvent = true
+      }
+
+      promptRun = recordPromptStreamEvent(promptRun, promptEvent)
+    }
+
+    if (storedRun.status === "succeeded" && !hasDoneEvent) {
+      promptRun = recordPromptStreamEvent(promptRun, {
+        type: "done",
+        result: storedRun.finalResultText ?? promptRun.result,
+        reasoning: "",
+        ...(getStoredRunModel(storedRun)
+          ? { model: getStoredRunModel(storedRun) }
+          : {}),
+      })
+    }
+
+    if (
+      storedRun.status === "failed" &&
+      storedRun.errorMessage &&
+      !hasErrorEvent
+    ) {
+      promptRun = markPromptRunError(promptRun, storedRun.errorMessage)
+    }
+
+    if (storedRun.status === "aborted") {
+      promptRun = cancelPromptRun(promptRun)
+    }
+
+    const materializedRuns = [promptRun]
+
+    if (
+      storedRun.simulationRunId === lastOpeningHandRunId &&
+      session.openingHandSnapshot
+    ) {
+      materializedRuns.push(
+        createStartingHandValidationRun(
+          session.openingHandSnapshot.validation,
+          promptRun.keptHandCards,
+          {
+            id: `starting-hand-validation:${session.gameId}:${storedRun.simulationRunId}`,
+            flow: "main",
+            gameId: session.gameId,
+            seed: session.seed,
+          }
+        )
+      )
+    }
+
+    return materializedRuns
+  })
+}
+
+function createGameSessionResponse(
+  session: StoredGameSession,
+  activeJob: ActiveSimulationJob | undefined
+): GameSessionResponse {
+  const promptRuns = materializePromptRuns(session)
+  const openingHandValidation = session.openingHandSnapshot
+    ? {
+        isValid: session.openingHandSnapshot.validation.isValid,
+        message: session.openingHandSnapshot.validation.message,
+      }
+    : null
+
+  return {
+    gameId: session.gameId,
+    createdAt: session.createdAt,
+    seed: session.seed,
+    currentTurn: session.currentTurn,
+    hasActiveJob: Boolean(activeJob),
+    activeJobStage: activeJob?.stage,
+    openingHandValidation,
+    nextTurnPromptNumber:
+      !activeJob && openingHandValidation?.isValid ? session.currentTurn : null,
+    promptRuns,
+  }
+}
+
+function createGameListItemResponse(
+  gameSummary: StoredGameSummary,
+  activeJob: ActiveSimulationJob | undefined
+): GameListItemResponse {
+  let latestRunTitle = gameSummary.latestRun
+    ? getSimulationRunTitle(
+        gameSummary.latestRun.kind,
+        gameSummary.latestRun.turnNumber
+      )
+    : null
+  let latestRunStatus = gameSummary.latestRun
+    ? mapStoredRunStatusToClientStatus(gameSummary.latestRun.status)
+    : null
+
+  if (
+    gameSummary.latestRun?.kind === "opening_hand" &&
+    gameSummary.openingHandSnapshot
+  ) {
+    latestRunTitle = "Starting hand validation"
+    latestRunStatus = gameSummary.openingHandSnapshot.validation.isValid
+      ? "done"
+      : "error"
+  }
+
+  if (activeJob) {
+    latestRunStatus = "running"
+
+    if (!latestRunTitle) {
+      latestRunTitle =
+        activeJob.stage === "opening_hand"
+          ? "Opening hand simulation"
+          : activeJob.stage === "auto_goldfish"
+            ? "Auto goldfish"
+            : `Turn ${gameSummary.currentTurn}`
+    }
+  }
+
+  return {
+    gameId: gameSummary.gameId,
+    createdAt: gameSummary.createdAt,
+    seed: gameSummary.seed,
+    currentTurn: gameSummary.currentTurn,
+    latestRunTitle,
+    latestRunStatus,
+    hasActiveJob: Boolean(activeJob),
+    activeJobStage: activeJob?.stage,
+  }
+}
+
+function getActiveSimulationJob(gameId: string) {
+  return activeSimulationJobs.get(gameId)
+}
+
+function startActiveSimulationJob(
+  gameId: string,
+  stage: ActiveSimulationJobStage,
+  run: (signal: AbortSignal) => Promise<void>
+) {
+  if (activeSimulationJobs.has(gameId)) {
+    return {
+      ok: false as const,
+      existingJob: activeSimulationJobs.get(gameId),
+    }
+  }
+
+  const job: ActiveSimulationJob = {
+    jobId: randomUUID(),
+    gameId,
+    stage,
+    abortController: new AbortController(),
+  }
+
+  activeSimulationJobs.set(gameId, job)
+
+  void run(job.abortController.signal)
+    .catch((error) => {
+      const message =
+        error instanceof Error ? error.message : "Simulation job failed."
+      logWarn("simulation_job", `${shortId(gameId)} stage=${stage} ${message}`)
+    })
+    .finally(() => {
+      const currentJob = activeSimulationJobs.get(gameId)
+
+      if (currentJob?.jobId === job.jobId) {
+        activeSimulationJobs.delete(gameId)
+      }
+    })
+
+  return {
+    ok: true as const,
+    job,
+  }
+}
+
+function cancelActiveSimulationJob(gameId: string) {
+  const activeJob = activeSimulationJobs.get(gameId)
+
+  if (!activeJob) {
+    return false
+  }
+
+  activeJob.abortController.abort()
+  return true
+}
+
+function createAbortError() {
+  const error = new Error("Simulation cancelled.")
+  error.name = "AbortError"
+  return error
+}
+
+function assertNotAborted(signal: AbortSignal) {
+  if (signal.aborted) {
+    throw createAbortError()
+  }
+}
+
+async function executeOpeningHandSimulation(
+  runtime: SimulationRuntime,
+  gameId: string,
+  signal: AbortSignal
+) {
+  assertNotAborted(signal)
+
+  const gamePromptContext = await gameStore.getGamePromptContext(gameId)
+
+  if (!gamePromptContext.ok) {
+    throw new Error(GAME_NOT_FOUND_MESSAGE)
+  }
+
+  const prompt = buildStartingHandSimulationPrompt(
+    gamePromptContext.gameId,
+    gamePromptContext.commanders,
+    gamePromptContext.initialLibrary
+  )
+  const simulationRun = await gameStore.createSimulationRun({
+    gameId,
+    kind: "opening_hand",
+    promptText: prompt,
+    provider: runtime.llmProvider,
+  })
+  const simulationEventRecorder = new SimulationEventRecorder({
+    simulationRunId: simulationRun.simulationRunId,
+    gameId,
+    kind: "opening_hand",
+  })
+
+  try {
+    await writePromptLog(gameId, "opening-hand", prompt)
+
+    let keptHandCards: string[] | undefined
+    const response = await runtime.openingHandPromptProcessor.processPromptStream(
+      prompt,
+      (event) => {
+        simulationEventRecorder.recordEvent(event)
+        keptHandCards = getKeepHandCardsFromPromptEvent(event) ?? keptHandCards
+      },
+      signal
+    )
+
+    if (!keptHandCards?.length) {
+      throw new Error(
+        "The opening-hand simulation did not report a final kept hand through keep_hand."
+      )
+    }
+
+    const snapshotResult = await gameStore.saveOpeningHandSnapshot(
+      gameId,
+      keptHandCards
+    )
+
+    if (!snapshotResult.ok) {
+      throw new Error(GAME_NOT_FOUND_MESSAGE)
+    }
+
+    logInfo(
+      "simulate_starting_hand",
+      `${shortId(gameId)} hand=${snapshotResult.startingHand.length} library=${snapshotResult.library.length} valid=${snapshotResult.validation.isValid} len=${prompt.length} model=${response.model.key} size=${response.model.sizeBytes} ${formatPromptMetrics(response)}`
+    )
+
+    await simulationEventRecorder.complete(response)
+
+    return {
+      keptHandCards,
+      validation: {
+        isValid: snapshotResult.validation.isValid,
+        message: snapshotResult.validation.message,
+      } satisfies StartingHandValidation,
+    }
+  } catch (error) {
+    await simulationEventRecorder.fail(error)
+    throw error
+  }
+}
+
+async function executeTurnSimulation(
+  runtime: SimulationRuntime,
+  gameId: string,
+  signal: AbortSignal
+) {
+  assertNotAborted(signal)
+
+  const gamePromptContext = await gameStore.getGamePromptContext(gameId)
+
+  if (!gamePromptContext.ok) {
+    throw new Error(GAME_NOT_FOUND_MESSAGE)
+  }
+
+  const resolvedStartingHand = gamePromptContext.openingHandSnapshot?.startingHand
+
+  if (!resolvedStartingHand?.length) {
+    throw new Error(
+      "No saved opening-hand snapshot was found for that game. Run the opening-hand simulation first."
+    )
+  }
+
+  const snapshotValidation = gamePromptContext.openingHandSnapshot?.validation
+
+  if (!snapshotValidation?.isValid) {
+    throw new Error(
+      snapshotValidation?.message ?? "The saved opening-hand snapshot is invalid."
+    )
+  }
+
+  const startTurnResult = await gameStore.startTurnSimulation(gameId)
+
+  if (!startTurnResult.ok) {
+    throw new Error(
+      startTurnResult.reason === "turn_simulation_already_active"
+        ? "A turn simulation is already active for that game."
+        : GAME_NOT_FOUND_MESSAGE
+    )
+  }
+
+  initializeTurnActionLog(gameId, startTurnResult.turnNumber)
+
+  const prompt = buildTurnSimulationPrompt(
+    gamePromptContext.gameId,
+    startTurnResult.turnNumber,
+    resolvedStartingHand,
+    gamePromptContext.commanders,
+    gamePromptContext.currentLibrary,
+    gamePromptContext.initialLibrary,
+    gamePromptContext.currentGameState
+  )
+  const simulationRun = await gameStore.createSimulationRun({
+    gameId,
+    kind: "turn",
+    turnNumber: startTurnResult.turnNumber,
+    promptText: prompt,
+    provider: runtime.llmProvider,
+  })
+  const simulationEventRecorder = new SimulationEventRecorder({
+    simulationRunId: simulationRun.simulationRunId,
+    gameId,
+    kind: "turn",
+    turnNumber: startTurnResult.turnNumber,
+  })
+
+  try {
+    await writePromptLog(gameId, `turn-${startTurnResult.turnNumber}`, prompt)
+
+    const response = await runtime.turnSimulationPromptProcessor.processPromptStream(
+      prompt,
+      (event) => {
+        simulationEventRecorder.recordEvent(event)
+      },
+      signal
+    )
+
+    logInfo(
+      "simulate_turn",
+      `${shortId(gameId)} turn=${startTurnResult.turnNumber} hand=${resolvedStartingHand.length} len=${prompt.length} model=${response.model.key} size=${response.model.sizeBytes} ${formatPromptMetrics(response)}`
+    )
+
+    await simulationEventRecorder.complete(response)
+  } catch (error) {
+    await simulationEventRecorder.fail(error)
+    throw error
+  } finally {
+    const endTurnResult = await gameStore.endTurnSimulation(gameId)
+    deleteTurnActionLog(gameId)
+
+    if (!endTurnResult.ok) {
+      logWarn("simulate_turn", `${shortId(gameId)} ${endTurnResult.reason}`)
+    } else if (!endTurnResult.turnWasUpdated) {
+      logWarn(
+        "simulate_turn",
+        `${shortId(gameId)} turn=${endTurnResult.turnNumber ?? startTurnResult.turnNumber} ended_without_update_game_state`
+      )
+    }
+  }
+}
+
+async function executeAutoGoldfishSimulation(
+  runtime: SimulationRuntime,
+  gameId: string,
+  autoSimulationTurnCount: number,
+  signal: AbortSignal
+) {
+  const openingHandResult = await executeOpeningHandSimulation(
+    runtime,
+    gameId,
+    signal
+  )
+
+  if (!openingHandResult.validation.isValid) {
+    return
+  }
+
+  for (let index = 0; index < autoSimulationTurnCount; index += 1) {
+    assertNotAborted(signal)
+    await executeTurnSimulation(runtime, gameId, signal)
+  }
+}
+
 async function main() {
   const host = process.env.HOST ?? DEFAULT_HOST
   const port = getPort(process.env.PORT)
@@ -1160,6 +1795,11 @@ async function main() {
     ),
     mcpServerLabel: TURN_SIMULATION_SERVER_NAME,
   })
+  const simulationRuntime: SimulationRuntime = {
+    llmProvider,
+    openingHandPromptProcessor,
+    turnSimulationPromptProcessor,
+  }
 
   app.use((req: Request, res: Response, next) => {
     applyCors(req, res, allowedOrigins)
@@ -1177,6 +1817,29 @@ async function main() {
       ok: true,
       service: SERVER_NAME,
     })
+  })
+
+  app.get("/games", async (_req: Request, res: Response) => {
+    try {
+      const gameSummaries = await gameStore.listGames()
+
+      res.status(200).json(
+        gameSummaries.map((gameSummary) =>
+          createGameListItemResponse(
+            gameSummary,
+            getActiveSimulationJob(gameSummary.gameId)
+          )
+        )
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to list games."
+
+      logWarn("list_games", message)
+      res.status(500).json({
+        error: message,
+      })
+    }
   })
 
   app.post("/games", async (req: Request, res: Response) => {
@@ -1208,6 +1871,292 @@ async function main() {
         error instanceof Error ? error.message : "Failed to create a game."
 
       logWarn("new", message)
+      res.status(500).json({
+        error: message,
+      })
+    }
+  })
+
+  app.get("/games/:gameId/session", async (req: Request, res: Response) => {
+    const gameId =
+      typeof req.params.gameId === "string" ? req.params.gameId.trim() : ""
+
+    if (!gameId) {
+      res.status(400).json({
+        error: "A valid game ID is required.",
+      })
+      return
+    }
+
+    try {
+      const session = await gameStore.getGameSession(gameId)
+
+      if (!session) {
+        res.status(404).json({
+          error: GAME_NOT_FOUND_MESSAGE,
+        })
+        return
+      }
+
+      res.status(200).json(
+        createGameSessionResponse(session, getActiveSimulationJob(gameId))
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load game session."
+
+      logWarn("game_session", `${shortId(gameId)} ${message}`)
+      res.status(500).json({
+        error: message,
+      })
+    }
+  })
+
+  app.post("/simulations/auto-goldfish", async (req: Request, res: Response) => {
+    const parsedRequest = autoGoldfishSchema.safeParse(req.body)
+
+    if (!parsedRequest.success) {
+      res.status(400).json({
+        error: "Invalid request body.",
+        details: parsedRequest.error.issues,
+      })
+      return
+    }
+
+    try {
+      const game = await gameStore.createGame(
+        parsedRequest.data.commanders,
+        parsedRequest.data.deck,
+        parsedRequest.data.seed
+      )
+
+      const startedJob = startActiveSimulationJob(
+        game.gameId,
+        "auto_goldfish",
+        async (signal) => {
+          await executeAutoGoldfishSimulation(
+            simulationRuntime,
+            game.gameId,
+            parsedRequest.data.autoSimulationTurnCount,
+            signal
+          )
+        }
+      )
+
+      if (!startedJob.ok) {
+        res.status(409).json({
+          error: "A simulation is already active for that game.",
+        })
+        return
+      }
+
+      logInfo(
+        "auto_goldfish",
+        `${shortId(game.gameId)} seed=${game.seed} turns=${parsedRequest.data.autoSimulationTurnCount}`
+      )
+
+      res.status(202).json({
+        gameId: game.gameId,
+        seed: game.seed,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to start auto goldfish."
+
+      logWarn("auto_goldfish", message)
+      res.status(500).json({
+        error: message,
+      })
+    }
+  })
+
+  app.post("/games/:gameId/simulate-next-turn", async (req: Request, res: Response) => {
+    const gameId =
+      typeof req.params.gameId === "string" ? req.params.gameId.trim() : ""
+
+    if (!gameId) {
+      res.status(400).json({
+        error: "A valid game ID is required.",
+      })
+      return
+    }
+
+    if (getActiveSimulationJob(gameId)) {
+      res.status(409).json({
+        error: "A simulation is already active for that game.",
+      })
+      return
+    }
+
+    const gamePromptContext = await gameStore.getGamePromptContext(gameId)
+
+    if (!gamePromptContext.ok) {
+      res.status(404).json({
+        error: GAME_NOT_FOUND_MESSAGE,
+      })
+      return
+    }
+
+    if (!gamePromptContext.openingHandSnapshot?.startingHand.length) {
+      res.status(400).json({
+        error:
+          "No saved opening-hand snapshot was found for that game. Run the opening-hand simulation first.",
+      })
+      return
+    }
+
+    if (!gamePromptContext.openingHandSnapshot.validation.isValid) {
+      res.status(400).json({
+        error: gamePromptContext.openingHandSnapshot.validation.message,
+      })
+      return
+    }
+
+    const startedJob = startActiveSimulationJob(gameId, "turn", (signal) =>
+      executeTurnSimulation(simulationRuntime, gameId, signal)
+    )
+
+    if (!startedJob.ok) {
+      res.status(409).json({
+        error: "A simulation is already active for that game.",
+      })
+      return
+    }
+
+    res.status(202).json({
+      ok: true,
+      gameId,
+    })
+  })
+
+  app.post("/games/:gameId/cancel", async (req: Request, res: Response) => {
+    const gameId =
+      typeof req.params.gameId === "string" ? req.params.gameId.trim() : ""
+
+    if (!gameId) {
+      res.status(400).json({
+        error: "A valid game ID is required.",
+      })
+      return
+    }
+
+    const cancelled = cancelActiveSimulationJob(gameId)
+
+    res.status(200).json({
+      ok: true,
+      gameId,
+      cancelled,
+    })
+  })
+
+  app.post("/simulation-runs/:runId/rerun", async (req: Request, res: Response) => {
+    const runId =
+      typeof req.params.runId === "string" ? req.params.runId.trim() : ""
+
+    if (!runId) {
+      res.status(400).json({
+        error: "A valid simulation run ID is required.",
+      })
+      return
+    }
+
+    const simulationRun = await gameStore.getSimulationRun(runId)
+
+    if (!simulationRun) {
+      res.status(404).json({
+        error: "Simulation run not found.",
+      })
+      return
+    }
+
+    try {
+      if (simulationRun.kind === "opening_hand") {
+        const game = await gameStore.createGame(
+          simulationRun.commanders,
+          simulationRun.initialLibrary,
+          simulationRun.seed
+        )
+
+        const startedJob = startActiveSimulationJob(
+          game.gameId,
+          "opening_hand",
+          (signal) =>
+            executeOpeningHandSimulation(simulationRuntime, game.gameId, signal).then(
+              () => undefined
+            )
+        )
+
+        if (!startedJob.ok) {
+          res.status(409).json({
+            error: "A simulation is already active for that game.",
+          })
+          return
+        }
+
+        res.status(202).json({
+          gameId: game.gameId,
+          seed: game.seed,
+        })
+        return
+      }
+
+      if (simulationRun.turnNumber === null) {
+        res.status(400).json({
+          error: "That turn cannot be rerun because its turn number is missing.",
+        })
+        return
+      }
+
+      if (getActiveSimulationJob(simulationRun.gameId)) {
+        res.status(409).json({
+          error: "A simulation is already active for that game.",
+        })
+        return
+      }
+
+      const resetResult = await gameStore.restoreTurnSnapshot(
+        simulationRun.gameId,
+        simulationRun.turnNumber
+      )
+
+      if (!resetResult.ok) {
+        res.status(404).json({
+          error:
+            resetResult.reason === "turn_snapshot_not_found"
+              ? `No saved turn snapshot was found for turn ${simulationRun.turnNumber}.`
+              : GAME_NOT_FOUND_MESSAGE,
+        })
+        return
+      }
+
+      await gameStore.deleteSimulationRunsStartingFrom(
+        simulationRun.gameId,
+        simulationRun.simulationRunId,
+        simulationRun.startedAt
+      )
+
+      const startedJob = startActiveSimulationJob(
+        simulationRun.gameId,
+        "turn",
+        (signal) => executeTurnSimulation(simulationRuntime, simulationRun.gameId, signal)
+      )
+
+      if (!startedJob.ok) {
+        res.status(409).json({
+          error: "A simulation is already active for that game.",
+        })
+        return
+      }
+
+      res.status(202).json({
+        gameId: simulationRun.gameId,
+        seed: simulationRun.seed,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to rerun simulation."
+
+      logWarn("rerun_simulation", `${shortId(simulationRun.gameId)} ${message}`)
       res.status(500).json({
         error: message,
       })
@@ -1984,7 +2933,7 @@ class SimulationEventRecorder {
     this.turnNumber = options.turnNumber
   }
 
-  recordEvent(event: PromptStreamEvent) {
+  recordEvent(event: LlmPromptStreamEvent) {
     const eventTime = new Date()
 
     if (event.type === "start") {
@@ -2093,7 +3042,7 @@ class SimulationEventRecorder {
 }
 
 function mapPromptStreamEventToSimulationEvents(
-  event: PromptStreamEvent,
+  event: LlmPromptStreamEvent,
   eventTime: Date,
   gameId: string
 ): AppendSimulationEventInput[] {
@@ -2140,7 +3089,7 @@ function mapPromptStreamEventToSimulationEvents(
     case "tool": {
       const toolUiData =
         event.event === "tool_call.success" && event.tool
-          ? getToolUiData(event.tool, gameId)
+          ? takeToolUiData(event.tool, gameId)
           : undefined
 
       return [
@@ -2192,9 +3141,9 @@ function isPromptAbortError(error: unknown) {
 
 async function streamPromptResponse(
   res: Response,
-  promptProcessor: ReturnType<typeof createPromptProcessor>,
+  promptProcessor: PromptProcessor,
   prompt: string,
-  onEvent?: (event: PromptStreamEvent) => void
+  onEvent?: (event: LlmPromptStreamEvent) => void
 ) {
   const abortController = new AbortController()
 
@@ -2230,7 +3179,7 @@ function tryParseJsonObject(value: string | undefined) {
   }
 }
 
-function getKeepHandCardsFromPromptEvent(event: PromptStreamEvent) {
+function getKeepHandCardsFromPromptEvent(event: LlmPromptStreamEvent) {
   if (event.type !== "tool" || event.tool !== "keep_hand") {
     return undefined
   }
@@ -2803,12 +3752,5 @@ function takeToolUiData(toolName: string, gameId: string) {
 
   return toolUiData
 }
-
-function getToolUiData(toolName: string, gameId: string) {
-  return toolUiDataStore.get(createToolUiDataKey(toolName, gameId))?.[0]
-}
-
-
-
 
 

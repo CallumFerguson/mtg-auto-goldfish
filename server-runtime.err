@@ -1,0 +1,3 @@
+mtg-auto-goldfish-server listening at http://127.0.0.1:3001
+Opening-hand MCP endpoint available at http://127.0.0.1:3001/mcp/opening-hand
+Turn-simulation MCP endpoint available at http://127.0.0.1:3001/mcp/turn-simulation

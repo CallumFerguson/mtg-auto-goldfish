@@ -23,6 +23,76 @@ type GameRow = {
   random_state: string
 }
 
+type SimulationRunRow = {
+  id: string
+  game_id: string
+  kind: string
+  turn_number: number | null
+  status: string
+  provider: string | null
+  model_key: string | null
+  model_display_name: string | null
+  model_size_bytes: string | null
+  prompt_text: string
+  prompt_length_chars: number
+  input_tokens: number | null
+  output_tokens: number | null
+  reasoning_tokens: number | null
+  total_tokens: number | null
+  final_result_text: string | null
+  error_message: string | null
+  started_at: Date | string
+  completed_at: Date | string | null
+  updated_at: Date | string
+}
+
+type SimulationEventRow = {
+  id: string
+  simulation_run_id: string
+  game_id: string
+  kind: string
+  turn_number: number | null
+  sequence_index: number
+  event_type: string
+  event_time: Date | string
+  reasoning_text_delta: string | null
+  message_text_delta: string | null
+  tool_name: string | null
+  tool_provider: string | null
+  tool_status_event: string | null
+  arguments_text: string | null
+  output_text: string | null
+  structured_content: unknown | null
+  ui_metadata: unknown | null
+  error_text: string | null
+  metadata: unknown | null
+  created_at: Date | string
+}
+
+type GameSummaryRow = {
+  id: string
+  created_at: Date | string
+  seed: string
+  current_turn: number
+  opening_hand_snapshot: unknown | null
+  latest_run_id: string | null
+  latest_run_kind: string | null
+  latest_run_turn_number: number | null
+  latest_run_status: string | null
+}
+
+type SimulationRunWithGameRow = {
+  simulation_run_id: string
+  game_id: string
+  kind: string
+  turn_number: number | null
+  status: string
+  started_at: Date | string
+  seed: string
+  commanders: unknown
+  initial_library: unknown
+}
+
 export type GameCard = {
   name: string
   cardText: string
@@ -92,6 +162,88 @@ export type CompleteSimulationRunInput = {
   outputTokens?: number
   reasoningTokens?: number
   totalTokens?: number
+}
+
+export type StoredSimulationRun = {
+  simulationRunId: string
+  gameId: string
+  kind: SimulationRunKind
+  turnNumber: number | null
+  status: SimulationRunStatus
+  provider?: string
+  modelKey?: string
+  modelDisplayName?: string
+  modelSizeBytes?: number
+  promptText: string
+  promptLengthChars: number
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  totalTokens?: number
+  finalResultText?: string
+  errorMessage?: string
+  startedAt: string
+  completedAt?: string
+  updatedAt: string
+}
+
+export type StoredSimulationEvent = {
+  id: string
+  simulationRunId: string
+  gameId: string
+  kind: SimulationRunKind
+  turnNumber: number | null
+  sequenceIndex: number
+  eventType: string
+  eventTime: string
+  reasoningTextDelta?: string
+  messageTextDelta?: string
+  toolName?: string
+  toolProvider?: string
+  toolStatusEvent?: string
+  argumentsText?: string
+  outputText?: string
+  structuredContent?: Record<string, unknown>
+  uiMetadata?: Record<string, unknown>
+  errorText?: string
+  metadata?: Record<string, unknown>
+  createdAt: string
+}
+
+export type StoredGameSummary = {
+  gameId: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  openingHandSnapshot?: OpeningHandSnapshot
+  latestRun?: {
+    simulationRunId: string
+    kind: SimulationRunKind
+    turnNumber: number | null
+    status: SimulationRunStatus
+  }
+}
+
+export type StoredGameSession = {
+  gameId: string
+  createdAt: string
+  seed: number
+  currentTurn: number
+  openingHandSnapshot?: OpeningHandSnapshot
+  simulationRuns: StoredSimulationRun[]
+  simulationEvents: StoredSimulationEvent[]
+}
+
+export type SimulationRunWithGame = {
+  simulationRunId: string
+  gameId: string
+  kind: SimulationRunKind
+  turnNumber: number | null
+  status: SimulationRunStatus
+  startedAt: string
+  seed: number
+  commanders: GameCard[]
+  initialLibrary: GameCard[]
 }
 
 type ActiveTurnSimulation = {
@@ -1109,6 +1261,209 @@ export class GameStore {
     )
   }
 
+  async listGames(): Promise<StoredGameSummary[]> {
+    const result = await this.pool.query<GameSummaryRow>(
+      `
+        SELECT
+          games.id,
+          games.created_at,
+          games.seed::text AS seed,
+          games.current_turn,
+          games.opening_hand_snapshot,
+          latest_run.id AS latest_run_id,
+          latest_run.kind AS latest_run_kind,
+          latest_run.turn_number AS latest_run_turn_number,
+          latest_run.status AS latest_run_status
+        FROM games
+        LEFT JOIN LATERAL (
+          SELECT id, kind, turn_number, status
+          FROM simulation_runs
+          WHERE game_id = games.id
+          ORDER BY started_at DESC, id DESC
+          LIMIT 1
+        ) AS latest_run ON true
+        ORDER BY games.created_at DESC, games.id DESC
+      `
+    )
+
+    return result.rows.map((row) => ({
+      gameId: row.id,
+      createdAt: toIsoTimestamp(row.created_at),
+      seed: parseStoredInteger(row.seed, "seed"),
+      currentTurn: row.current_turn,
+      openingHandSnapshot:
+        row.opening_hand_snapshot === null
+          ? undefined
+          : parseOpeningHandSnapshot(
+              row.opening_hand_snapshot,
+              "opening_hand_snapshot"
+            ),
+      latestRun:
+        row.latest_run_id &&
+        row.latest_run_kind &&
+        row.latest_run_status
+          ? {
+              simulationRunId: row.latest_run_id,
+              kind: parseSimulationRunKind(row.latest_run_kind),
+              turnNumber: row.latest_run_turn_number,
+              status: parseSimulationRunStatus(row.latest_run_status),
+            }
+          : undefined,
+    }))
+  }
+
+  async getGameSession(gameId: string): Promise<StoredGameSession | undefined> {
+    const game = await this.readGame(this.pool, gameId)
+
+    if (!game) {
+      return undefined
+    }
+
+    const simulationRunsResult = await this.pool.query<SimulationRunRow>(
+      `
+        SELECT
+          id,
+          game_id,
+          kind,
+          turn_number,
+          status,
+          provider,
+          model_key,
+          model_display_name,
+          model_size_bytes::text AS model_size_bytes,
+          prompt_text,
+          prompt_length_chars,
+          input_tokens,
+          output_tokens,
+          reasoning_tokens,
+          total_tokens,
+          final_result_text,
+          error_message,
+          started_at,
+          completed_at,
+          updated_at
+        FROM simulation_runs
+        WHERE game_id = $1
+        ORDER BY started_at ASC, id ASC
+      `,
+      [gameId]
+    )
+
+    const simulationRuns = simulationRunsResult.rows.map(hydrateStoredSimulationRun)
+    const simulationRunIds = simulationRuns.map(
+      (simulationRun) => simulationRun.simulationRunId
+    )
+
+    const simulationEvents =
+      simulationRunIds.length === 0
+        ? []
+        : (
+            await this.pool.query<SimulationEventRow>(
+              `
+                SELECT
+                  id,
+                  simulation_run_id,
+                  game_id,
+                  kind,
+                  turn_number,
+                  sequence_index,
+                  event_type,
+                  event_time,
+                  reasoning_text_delta,
+                  message_text_delta,
+                  tool_name,
+                  tool_provider,
+                  tool_status_event,
+                  arguments_text,
+                  output_text,
+                  structured_content,
+                  ui_metadata,
+                  error_text,
+                  metadata,
+                  created_at
+                FROM simulation_events
+                WHERE simulation_run_id = ANY($1::uuid[])
+                ORDER BY simulation_run_id ASC, sequence_index ASC, created_at ASC
+              `,
+              [simulationRunIds]
+            )
+          ).rows.map(hydrateStoredSimulationEvent)
+
+    return {
+      gameId: game.id,
+      createdAt: new Date(game.createdAt).toISOString(),
+      seed: game.seed,
+      currentTurn: game.currentTurn,
+      openingHandSnapshot: game.openingHandSnapshot
+        ? {
+            startingHand: [...game.openingHandSnapshot.startingHand],
+            library: [...game.openingHandSnapshot.library],
+            validation: { ...game.openingHandSnapshot.validation },
+          }
+        : undefined,
+      simulationRuns,
+      simulationEvents,
+    }
+  }
+
+  async getSimulationRun(runId: string): Promise<SimulationRunWithGame | undefined> {
+    const result = await this.pool.query<SimulationRunWithGameRow>(
+      `
+        SELECT
+          simulation_runs.id AS simulation_run_id,
+          simulation_runs.game_id,
+          simulation_runs.kind,
+          simulation_runs.turn_number,
+          simulation_runs.status,
+          simulation_runs.started_at,
+          games.seed::text AS seed,
+          games.commanders,
+          games.initial_library
+        FROM simulation_runs
+        INNER JOIN games ON games.id = simulation_runs.game_id
+        WHERE simulation_runs.id = $1
+      `,
+      [runId]
+    )
+
+    if (result.rowCount === 0) {
+      return undefined
+    }
+
+    const row = result.rows[0]
+
+    return {
+      simulationRunId: row.simulation_run_id,
+      gameId: row.game_id,
+      kind: parseSimulationRunKind(row.kind),
+      turnNumber: row.turn_number,
+      status: parseSimulationRunStatus(row.status),
+      startedAt: toIsoTimestamp(row.started_at),
+      seed: parseStoredInteger(row.seed, "seed"),
+      commanders: parseGameCardArray(row.commanders, "commanders"),
+      initialLibrary: parseGameCardArray(row.initial_library, "initial_library"),
+    }
+  }
+
+  async deleteSimulationRunsStartingFrom(
+    gameId: string,
+    runId: string,
+    startedAt: string
+  ) {
+    await this.pool.query(
+      `
+        DELETE FROM simulation_runs
+        WHERE game_id = $1
+          AND (
+            started_at > $2::timestamptz
+            OR started_at = $2::timestamptz
+            OR id = $3
+          )
+      `,
+      [gameId, startedAt, runId]
+    )
+  }
+
   private async withTransaction<TResult>(
     execute: (client: PoolClient) => Promise<TResult>
   ) {
@@ -1336,6 +1691,35 @@ function parseStoredInteger(value: string, fieldName: string) {
   return parsedValue
 }
 
+function parseStoredNullableInteger(value: string | null, fieldName: string) {
+  if (value === null) {
+    return undefined
+  }
+
+  return parseStoredInteger(value, fieldName)
+}
+
+function parseSimulationRunKind(value: string): SimulationRunKind {
+  if (value === "opening_hand" || value === "turn") {
+    return value
+  }
+
+  throw new Error(`Stored simulation run kind ${value} is invalid.`)
+}
+
+function parseSimulationRunStatus(value: string): SimulationRunStatus {
+  if (
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "aborted"
+  ) {
+    return value
+  }
+
+  throw new Error(`Stored simulation run status ${value} is invalid.`)
+}
+
 function parseGameCardArray(value: unknown, fieldName: string) {
   if (!Array.isArray(value) || !value.every(isGameCard)) {
     throw new Error(`Stored game field ${fieldName} is invalid.`)
@@ -1378,6 +1762,88 @@ function parseActiveTurnSimulation(value: unknown, fieldName: string) {
   }
 
   return { ...value }
+}
+
+function hydrateStoredSimulationRun(row: SimulationRunRow): StoredSimulationRun {
+  return {
+    simulationRunId: row.id,
+    gameId: row.game_id,
+    kind: parseSimulationRunKind(row.kind),
+    turnNumber: row.turn_number,
+    status: parseSimulationRunStatus(row.status),
+    provider: row.provider ?? undefined,
+    modelKey: row.model_key ?? undefined,
+    modelDisplayName: row.model_display_name ?? undefined,
+    modelSizeBytes: parseStoredNullableInteger(
+      row.model_size_bytes,
+      "model_size_bytes"
+    ),
+    promptText: row.prompt_text,
+    promptLengthChars: row.prompt_length_chars,
+    inputTokens: row.input_tokens ?? undefined,
+    outputTokens: row.output_tokens ?? undefined,
+    reasoningTokens: row.reasoning_tokens ?? undefined,
+    totalTokens: row.total_tokens ?? undefined,
+    finalResultText: row.final_result_text ?? undefined,
+    errorMessage: row.error_message ?? undefined,
+    startedAt: toIsoTimestamp(row.started_at),
+    completedAt:
+      row.completed_at === null ? undefined : toIsoTimestamp(row.completed_at),
+    updatedAt: toIsoTimestamp(row.updated_at),
+  }
+}
+
+function hydrateStoredSimulationEvent(
+  row: SimulationEventRow
+): StoredSimulationEvent {
+  return {
+    id: row.id,
+    simulationRunId: row.simulation_run_id,
+    gameId: row.game_id,
+    kind: parseSimulationRunKind(row.kind),
+    turnNumber: row.turn_number,
+    sequenceIndex: row.sequence_index,
+    eventType: row.event_type,
+    eventTime: toIsoTimestamp(row.event_time),
+    reasoningTextDelta: row.reasoning_text_delta ?? undefined,
+    messageTextDelta: row.message_text_delta ?? undefined,
+    toolName: row.tool_name ?? undefined,
+    toolProvider: row.tool_provider ?? undefined,
+    toolStatusEvent: row.tool_status_event ?? undefined,
+    argumentsText: row.arguments_text ?? undefined,
+    outputText: row.output_text ?? undefined,
+    structuredContent: parseOptionalRecordJson(
+      row.structured_content,
+      "structured_content"
+    ),
+    uiMetadata: parseOptionalRecordJson(row.ui_metadata, "ui_metadata"),
+    errorText: row.error_text ?? undefined,
+    metadata: parseOptionalRecordJson(row.metadata, "metadata"),
+    createdAt: toIsoTimestamp(row.created_at),
+  }
+}
+
+function parseOptionalRecordJson(value: unknown, fieldName: string) {
+  if (value === null || value === undefined) {
+    return undefined
+  }
+
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+
+  throw new Error(`Stored simulation event field ${fieldName} is invalid.`)
+}
+
+function toIsoTimestamp(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value)
+  const timestamp = date.getTime()
+
+  if (Number.isNaN(timestamp)) {
+    throw new Error("Failed to parse stored timestamp.")
+  }
+
+  return new Date(timestamp).toISOString()
 }
 
 function serializeJson(value: unknown) {

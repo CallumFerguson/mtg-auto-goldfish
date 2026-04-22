@@ -93,6 +93,19 @@ export async function initializePostgres(pool: Pool) {
     SET active_turn_simulation = NULL
     WHERE active_turn_simulation IS NOT NULL
   `)
+
+  await pool.query(`
+    UPDATE simulation_runs
+    SET
+      status = 'aborted',
+      error_message = COALESCE(
+        error_message,
+        'The server restarted while this simulation was still running.'
+      ),
+      completed_at = COALESCE(completed_at, NOW()),
+      updated_at = NOW()
+    WHERE status = 'running'
+  `)
 }
 
 export function getRequiredDatabaseUrl() {

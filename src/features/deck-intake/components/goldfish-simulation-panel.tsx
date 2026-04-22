@@ -24,6 +24,16 @@ type GoldfishSimulationPanelProps = {
   canStart: boolean
   isStarting: boolean
   isCreatingDevGame: boolean
+  gameList: Array<{
+    gameId: string
+    createdAt: string
+    seed: number
+    currentTurn: number
+    latestRunTitle: string | null
+    latestRunStatus: SimulationPromptRun["status"] | null
+    hasActiveJob: boolean
+  }>
+  selectedGameId: string | null
   gameId: string
   simulationSeedInput: string
   autoSimulationTurnCount: number
@@ -33,6 +43,7 @@ type GoldfishSimulationPanelProps = {
   errorMessage: string
   onSimulationSeedInputChange: (value: string) => void
   onAutoSimulationTurnCountChange: (value: number) => void
+  onSelectedGameChange: (gameId: string) => void
   onCancelPromptRun: (runId: string) => void
   onRerunPromptRun: (runId: string) => void
   onSimulateNextTurn: () => void
@@ -331,6 +342,8 @@ export function GoldfishSimulationPanel({
   canStart,
   isStarting,
   isCreatingDevGame,
+  gameList,
+  selectedGameId,
   gameId,
   simulationSeedInput,
   autoSimulationTurnCount,
@@ -340,6 +353,7 @@ export function GoldfishSimulationPanel({
   errorMessage,
   onSimulationSeedInputChange,
   onAutoSimulationTurnCountChange,
+  onSelectedGameChange,
   onCancelPromptRun,
   onRerunPromptRun,
   onSimulateNextTurn,
@@ -504,7 +518,41 @@ export function GoldfishSimulationPanel({
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,16rem)_minmax(0,16rem)]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,18rem)_minmax(0,16rem)_minmax(0,16rem)]">
+          <div>
+            <label className="block space-y-2">
+              <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
+                Saved games
+              </span>
+              <select
+                value={selectedGameId ?? ""}
+                onChange={(event) => onSelectedGameChange(event.target.value)}
+                disabled={!gameList.length}
+                className="h-11 w-full cursor-pointer rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-stone-100 transition outline-none focus:border-amber-300/40 focus:bg-black/40 disabled:cursor-not-allowed disabled:text-stone-500"
+              >
+                {gameList.length ? (
+                  gameList.map((game) => (
+                    <option
+                      key={game.gameId}
+                      value={game.gameId}
+                      className="bg-stone-950 text-stone-100"
+                    >
+                      {formatGameSelectLabel(game)}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" className="bg-stone-950 text-stone-100">
+                    No saved games yet
+                  </option>
+                )}
+              </select>
+            </label>
+            <p className="mt-2 text-xs leading-5 text-stone-500">
+              Refresh-safe history lives on the server. Pick any game ID to
+              inspect or continue it.
+            </p>
+          </div>
+
           <div>
             <label className="block space-y-2">
               <span className="text-xs font-medium tracking-[0.16em] text-stone-400 uppercase">
@@ -565,7 +613,7 @@ export function GoldfishSimulationPanel({
 
       {gameId ? (
         <div className="mt-5 rounded-[24px] border border-white/10 bg-black/25 p-4 text-sm leading-6 text-stone-300">
-          <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)]">
             <div className="space-y-1">
               <p className="text-stone-400">Current game ID</p>
               <p className="font-mono text-sm text-emerald-300">{gameId}</p>
@@ -579,6 +627,12 @@ export function GoldfishSimulationPanel({
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+      {selectedGameId && !promptRuns.length && !errorMessage ? (
+        <div className="mt-4 rounded-[20px] border border-white/10 bg-black/20 p-4 text-sm leading-6 text-stone-400">
+          This game has no saved prompt runs yet.
         </div>
       ) : null}
 
@@ -708,4 +762,20 @@ function getPromptPreview(rawPromptStream: string) {
   }
 
   return `...${preview.replace(/^\S*\s?/, "")}`
+}
+
+function formatGameSelectLabel(game: {
+  gameId: string
+  seed: number
+  currentTurn: number
+  latestRunTitle: string | null
+  latestRunStatus: SimulationPromptRun["status"] | null
+  hasActiveJob: boolean
+}) {
+  const statusLabel = game.hasActiveJob
+    ? "running"
+    : game.latestRunStatus ?? "idle"
+  const runLabel = game.latestRunTitle ?? `Turn ${game.currentTurn}`
+
+  return `${game.gameId} • ${statusLabel} • ${runLabel} • seed ${game.seed}`
 }
