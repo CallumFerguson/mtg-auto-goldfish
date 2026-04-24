@@ -7,7 +7,6 @@ import {
 } from "react"
 import {
   ArrowLeft,
-  ExternalLink,
   Plus,
   RefreshCw,
   Sparkles,
@@ -62,7 +61,23 @@ const CARD_TYPE_PRIORITY = [
   "Artifact",
   "Enchantment",
 ] as const
+const CARD_TYPE_DISPLAY_ORDER = [
+  ...CARD_TYPE_PRIORITY.filter((type) => type !== "Land"),
+  "Land",
+] as const
 const DEFAULT_CARD_CATEGORY = "Other"
+const CARD_CATEGORY_LABELS: Record<string, string> = {
+  Artifact: "Artifacts",
+  Battle: "Battles",
+  Commander: "Commander",
+  Creature: "Creatures",
+  Enchantment: "Enchantments",
+  Instant: "Instants",
+  Land: "Lands",
+  Other: "Other",
+  Planeswalker: "Planeswalkers",
+  Sorcery: "Sorceries",
+}
 
 export function App() {
   const pathname = usePathname()
@@ -291,83 +306,96 @@ function DeckPage({ deckId }: { deckId: string }) {
 }
 
 function DeckDetailsView({ deck }: { deck: DeckDetails }) {
-  const cardGroups = groupCardsByCategory(deck.cards)
+  const cardGroups = getDeckCardGroups(deck)
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
-      <section className="rounded-lg border border-border bg-card/70">
-        <div className="border-b border-border px-5 py-4">
-          <h2 className="text-xl font-semibold">{deck.name}</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {deck.description?.trim() || "No description yet."}
-          </p>
-        </div>
+    <div className="space-y-6">
+      {deck.description?.trim() ? (
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+          {deck.description}
+        </p>
+      ) : null}
 
-        <div className="grid gap-4 p-4">
-          {cardGroups.map((group) => (
-            <div
-              key={group.category}
-              className="overflow-hidden rounded-lg border border-border bg-background/35"
-            >
-              <CardList title={group.category} cards={group.cards} />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <aside className="rounded-lg border border-border bg-card/70">
-        <CardList title="Commander" cards={deck.commanders} />
-      </aside>
+      <div className={getCardColumnClassName(cardGroups.length)}>
+        {cardGroups.map((group) => (
+          <CardList key={group.category} group={group} />
+        ))}
+      </div>
     </div>
   )
 }
 
-function CardList({ cards, title }: { cards: DeckCard[]; title: string }) {
+function CardList({ group }: { group: CardGroup }) {
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
-        <h3 className="text-sm font-semibold tracking-[0.14em] text-sky-200 uppercase">
-          {title}
+    <section className="mb-9 break-inside-avoid">
+      <div className="mb-1 flex items-center gap-2 border-b border-border pb-2">
+        <h3 className="text-sm font-semibold text-foreground">
+          {getCardCategoryLabel(group.category)} ({countCards(group.cards)})
         </h3>
-        <span className="text-xs text-muted-foreground">
-          {cards.reduce((total, card) => total + card.quantity, 0)}
-        </span>
       </div>
-      <ul className="divide-y divide-border">
-        {cards.map((card) => (
-          <li key={`${card.oracleId}-${title}`}>
+      <ul>
+        {group.cards.map((card) => (
+          <li
+            key={`${card.oracleId}-${group.category}`}
+            className="border-b border-border/45"
+          >
             <a
-              className="group flex items-center justify-between gap-3 px-5 py-3 text-sm text-foreground transition-colors hover:bg-muted/45 focus:bg-muted/45 focus:outline-none"
+              className="group flex min-w-0 items-baseline gap-2 py-1.5 text-sm text-foreground focus:outline-none"
               href={card.scryfallUri}
               rel="noreferrer"
               target="_blank"
             >
-              <span className="flex min-w-0 items-center gap-3">
-                <span className="w-8 shrink-0 text-muted-foreground">
-                  {card.quantity}x
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate">{card.name}</span>
-                  {card.typeLine ? (
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                      {card.typeLine}
-                    </span>
-                  ) : null}
-                </span>
+              <span className="w-5 shrink-0 text-right text-muted-foreground">
+                {card.quantity}
               </span>
-              <ExternalLink className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-sky-200" />
+              <span className="truncate decoration-primary decoration-2 underline-offset-3 group-hover:underline group-focus:underline">
+                {card.name}
+              </span>
             </a>
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   )
 }
 
-function groupCardsByCategory(cards: DeckCard[]) {
+type CardGroup = {
+  category: string
+  cards: DeckCard[]
+}
+
+function getDeckCardGroups(deck: DeckDetails) {
+  return [
+    {
+      category: "Commander",
+      cards: deck.commanders,
+    },
+    ...groupCardsByCategory(deck.cards),
+  ].filter((group) => group.cards.length > 0)
+}
+
+function getCardColumnClassName(categoryCount: number) {
+  const baseClassName = "gap-9"
+
+  if (categoryCount <= 1) {
+    return `${baseClassName} columns-1`
+  }
+
+  if (categoryCount === 2) {
+    return `${baseClassName} columns-1 sm:columns-2`
+  }
+
+  if (categoryCount === 3) {
+    return `${baseClassName} columns-1 sm:columns-2 lg:columns-3`
+  }
+
+  return `${baseClassName} columns-1 sm:columns-2 lg:columns-3 2xl:columns-4`
+}
+
+function groupCardsByCategory(cards: DeckCard[]): CardGroup[] {
   const groups = new Map<string, DeckCard[]>()
 
-  for (const type of CARD_TYPE_PRIORITY) {
+  for (const type of CARD_TYPE_DISPLAY_ORDER) {
     groups.set(type, [])
   }
 
@@ -383,6 +411,14 @@ function groupCardsByCategory(cards: DeckCard[]) {
       cards: groupedCards,
     }))
     .filter((group) => group.cards.length > 0)
+}
+
+function countCards(cards: DeckCard[]) {
+  return cards.reduce((total, card) => total + card.quantity, 0)
+}
+
+function getCardCategoryLabel(category: string) {
+  return CARD_CATEGORY_LABELS[category] ?? category
 }
 
 function getCardCategory(card: DeckCard) {
