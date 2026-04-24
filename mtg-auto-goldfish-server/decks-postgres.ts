@@ -14,6 +14,7 @@ export type DeckCard = {
   name: string
   quantity: number
   scryfallUri: string
+  defaultImageUrl: string | null
   typeLine: string | null
 }
 
@@ -138,6 +139,7 @@ export async function getDeck(deckId: string): Promise<DeckDetails | null> {
     name: string
     quantity: number
     scryfall_uri: string
+    default_image_url: string | null
     type_line: string | null
     zone: "commander" | "library"
   }>(
@@ -147,6 +149,7 @@ export async function getDeck(deckId: string): Promise<DeckDetails | null> {
         card.name,
         deck_card.quantity,
         card.scryfall_uri,
+        card.default_image_url,
         card.type_line,
         deck_card.zone
       FROM deck_cards deck_card
@@ -167,6 +170,7 @@ export async function getDeck(deckId: string): Promise<DeckDetails | null> {
     name: card.name,
     quantity: card.quantity,
     scryfallUri: card.scryfall_uri,
+    defaultImageUrl: card.default_image_url,
     typeLine: card.type_line,
   })
 

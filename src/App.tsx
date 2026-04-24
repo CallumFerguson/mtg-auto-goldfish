@@ -27,6 +27,7 @@ type DeckCard = {
   name: string
   quantity: number
   scryfallUri: string
+  defaultImageUrl: string | null
   typeLine: string | null
 }
 
@@ -307,25 +308,69 @@ function DeckPage({ deckId }: { deckId: string }) {
 
 function DeckDetailsView({ deck }: { deck: DeckDetails }) {
   const cardGroups = getDeckCardGroups(deck)
+  const [previewCard, setPreviewCard] = useState(
+    deck.commanders[0] ?? deck.cards[0] ?? null
+  )
 
   return (
-    <div className="space-y-6">
-      {deck.description?.trim() ? (
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {deck.description}
-        </p>
-      ) : null}
+    <div className="grid gap-7 sm:grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
+      <aside className="sm:sticky sm:top-6 sm:self-start">
+        <CardPreview card={previewCard} />
+      </aside>
 
-      <div className={getCardColumnClassName(cardGroups.length)}>
-        {cardGroups.map((group) => (
-          <CardList key={group.category} group={group} />
-        ))}
+      <div className="space-y-6">
+        {deck.description?.trim() ? (
+          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+            {deck.description}
+          </p>
+        ) : null}
+
+        <div className={getCardColumnClassName(cardGroups.length)}>
+          {cardGroups.map((group) => (
+            <CardList
+              key={group.category}
+              group={group}
+              onPreviewCard={setPreviewCard}
+            />
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
-function CardList({ group }: { group: CardGroup }) {
+function CardPreview({ card }: { card: DeckCard | null }) {
+  if (!card?.defaultImageUrl) {
+    return (
+      <div className="hidden aspect-[488/680] w-full place-items-center rounded-lg border border-border bg-card/70 px-4 text-center text-sm text-muted-foreground sm:grid">
+        No card image
+      </div>
+    )
+  }
+
+  return (
+    <a
+      className="hidden overflow-hidden rounded-[5.75%/4.4%] bg-card shadow-2xl shadow-black/30 outline-none sm:block"
+      href={card.scryfallUri}
+      rel="noreferrer"
+      target="_blank"
+    >
+      <img
+        alt={card.name}
+        className="block aspect-[488/680] w-full object-cover"
+        src={card.defaultImageUrl}
+      />
+    </a>
+  )
+}
+
+function CardList({
+  group,
+  onPreviewCard,
+}: {
+  group: CardGroup
+  onPreviewCard: (card: DeckCard) => void
+}) {
   return (
     <section className="mb-9 break-inside-avoid">
       <div className="mb-1 flex items-center gap-2 border-b border-border pb-2">
@@ -342,6 +387,8 @@ function CardList({ group }: { group: CardGroup }) {
             <a
               className="group flex min-w-0 items-baseline gap-2 py-1.5 text-sm text-foreground focus:outline-none"
               href={card.scryfallUri}
+              onFocus={() => onPreviewCard(card)}
+              onMouseEnter={() => onPreviewCard(card)}
               rel="noreferrer"
               target="_blank"
             >
@@ -382,14 +429,14 @@ function getCardColumnClassName(categoryCount: number) {
   }
 
   if (categoryCount === 2) {
-    return `${baseClassName} columns-1 sm:columns-2`
+    return `${baseClassName} columns-1 lg:columns-2`
   }
 
   if (categoryCount === 3) {
-    return `${baseClassName} columns-1 sm:columns-2 lg:columns-3`
+    return `${baseClassName} columns-1 lg:columns-2 xl:columns-3`
   }
 
-  return `${baseClassName} columns-1 sm:columns-2 lg:columns-3 2xl:columns-4`
+  return `${baseClassName} columns-1 lg:columns-2 xl:columns-3 2xl:columns-4`
 }
 
 function groupCardsByCategory(cards: DeckCard[]): CardGroup[] {
