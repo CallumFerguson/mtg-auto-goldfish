@@ -5,7 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { z } from "zod/v4"
 import { closeDatabasePool, verifyDatabaseConnection } from "./db.js"
-import { createDeck, ensureDecksSchema, listDecks } from "./decks-postgres.js"
+import {
+  createDeck,
+  ensureDecksSchema,
+  getDeck,
+  listDecks,
+} from "./decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
 import {
   createExactScryfallOracleCardMatchMap,
@@ -643,6 +648,30 @@ async function main() {
       console.error("Failed to list decks:", error)
       res.status(500).json({
         error: "Failed to list decks.",
+      })
+    }
+  })
+
+  app.get("/decks/:deckId", async (req: Request, res: Response) => {
+    const deckId = String(req.params.deckId)
+
+    try {
+      const deck = await getDeck(deckId)
+
+      if (!deck) {
+        res.status(404).json({
+          error: "Deck not found.",
+        })
+        return
+      }
+
+      res.status(200).json({
+        deck,
+      })
+    } catch (error) {
+      console.error("Failed to load deck:", error)
+      res.status(500).json({
+        error: "Failed to load deck.",
       })
     }
   })

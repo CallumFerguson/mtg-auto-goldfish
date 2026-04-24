@@ -9,6 +9,19 @@ export type DeckSummary = {
   updatedAt: string
 }
 
+export type DeckCard = {
+  oracleId: string
+  name: string
+  quantity: number
+  scryfallUri: string
+  typeLine: string | null
+}
+
+export type DeckDetails = DeckSummary & {
+  commanders: DeckCard[]
+  cards: DeckCard[]
+}
+
 export type CreateDeckCardInput = {
   oracleId: string
   quantity: number
@@ -96,6 +109,81 @@ export async function listDecks(): Promise<DeckSummary[]> {
     createdAt: deck.created_at.toISOString(),
     updatedAt: deck.updated_at.toISOString(),
   }))
+}
+
+export async function getDeck(deckId: string): Promise<DeckDetails | null> {
+  const deckResult = await queryDatabase<{
+    id: string
+    name: string
+    description: string | null
+    format: string
+    created_at: Date
+    updated_at: Date
+  }>(
+    `
+      SELECT id, name, description, format, created_at, updated_at
+      FROM decks
+      WHERE id = $1
+    `,
+    [deckId]
+  )
+  const deck = deckResult.rows[0]
+
+  if (!deck) {
+    return null
+  }
+
+  const cardResult = await queryDatabase<{
+    oracle_id: string
+    name: string
+    quantity: number
+    scryfall_uri: string
+    type_line: string | null
+    zone: "commander" | "library"
+  }>(
+    `
+      SELECT
+        card.oracle_id,
+        card.name,
+        deck_card.quantity,
+        card.scryfall_uri,
+        card.type_line,
+        deck_card.zone
+      FROM deck_cards deck_card
+      JOIN scryfall_oracle_cards card
+        ON card.oracle_id = deck_card.oracle_id
+      WHERE deck_card.deck_id = $1
+      ORDER BY
+        CASE deck_card.zone
+          WHEN 'commander' THEN 0
+          ELSE 1
+        END,
+        card.name ASC
+    `,
+    [deckId]
+  )
+  const mapCard = (card: (typeof cardResult.rows)[number]): DeckCard => ({
+    oracleId: card.oracle_id,
+    name: card.name,
+    quantity: card.quantity,
+    scryfallUri: card.scryfall_uri,
+    typeLine: card.type_line,
+  })
+
+  return {
+    id: deck.id,
+    name: deck.name,
+    description: deck.description,
+    format: deck.format,
+    createdAt: deck.created_at.toISOString(),
+    updatedAt: deck.updated_at.toISOString(),
+    commanders: cardResult.rows
+      .filter((card) => card.zone === "commander")
+      .map(mapCard),
+    cards: cardResult.rows
+      .filter((card) => card.zone === "library")
+      .map(mapCard),
+  }
 }
 
 export async function createDeck({

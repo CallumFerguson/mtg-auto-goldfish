@@ -1,5 +1,18 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react"
-import { Plus, RefreshCw, X } from "lucide-react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react"
+import {
+  ArrowLeft,
+  ExternalLink,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  X,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { validateAndParseDeckInput } from "@/lib/deck-input"
@@ -7,15 +20,58 @@ import { validateAndParseDeckInput } from "@/lib/deck-input"
 type Deck = {
   id: string
   name: string
+  description: string | null
+}
+
+type DeckCard = {
+  oracleId: string
+  name: string
+  quantity: number
+  scryfallUri: string
+  typeLine: string | null
+}
+
+type DeckDetails = Deck & {
+  commanders: DeckCard[]
+  cards: DeckCard[]
 }
 
 type DecksResponse = {
   decks: Deck[]
 }
 
+type DeckResponse = {
+  deck: DeckDetails
+}
+
+type DeckPageTab = "details" | "simulation"
+
 const API_BASE_URL = "http://127.0.0.1:3001"
+const SIMULATION_PLACEHOLDERS = [
+  "Opening hand check",
+  "Three-turn ramp line",
+  "Interaction-heavy table",
+]
+const CARD_TYPE_PRIORITY = [
+  "Land",
+  "Creature",
+  "Planeswalker",
+  "Battle",
+  "Instant",
+  "Sorcery",
+  "Artifact",
+  "Enchantment",
+] as const
+const DEFAULT_CARD_CATEGORY = "Other"
 
 export function App() {
+  const pathname = usePathname()
+  const deckId = getDeckIdFromPathname(pathname)
+
+  return deckId ? <DeckPage deckId={deckId} /> : <DeckListPage />
+}
+
+function DeckListPage() {
   const [decks, setDecks] = useState<Deck[]>([])
   const [isLoadingDecks, setIsLoadingDecks] = useState(true)
   const [deckLoadError, setDeckLoadError] = useState<string | null>(null)
@@ -98,11 +154,20 @@ export function App() {
           ) : decks.length > 0 ? (
             <ul className="divide-y divide-border">
               {decks.map((deck) => (
-                <li
-                  key={deck.id}
-                  className="px-4 py-4 text-base font-medium text-foreground transition-colors hover:bg-muted/45"
-                >
-                  {deck.name}
+                <li key={deck.id}>
+                  <a
+                    className="group flex items-center justify-between gap-4 px-4 py-4 text-base font-medium text-foreground transition-colors hover:bg-muted/45 focus:bg-muted/45 focus:outline-none"
+                    href={`/decks/${deck.id}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      navigateTo(`/decks/${deck.id}`)
+                    }}
+                  >
+                    <span>{deck.name}</span>
+                    <span className="text-sm text-muted-foreground transition-colors group-hover:text-sky-200">
+                      Open
+                    </span>
+                  </a>
                 </li>
               ))}
             </ul>
@@ -124,6 +189,285 @@ export function App() {
         />
       ) : null}
     </main>
+  )
+}
+
+function DeckPage({ deckId }: { deckId: string }) {
+  const [deck, setDeck] = useState<DeckDetails | null>(null)
+  const [activeTab, setActiveTab] = useState<DeckPageTab>("details")
+  const [isLoadingDeck, setIsLoadingDeck] = useState(true)
+  const [deckLoadError, setDeckLoadError] = useState<string | null>(null)
+
+  const loadDeck = useCallback(async () => {
+    setIsLoadingDeck(true)
+    setDeckLoadError(null)
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/decks/${deckId}`)
+
+      if (!response.ok) {
+        throw new Error(`Deck request failed with ${response.status}`)
+      }
+
+      const data = (await response.json()) as DeckResponse
+      setDeck(data.deck)
+    } catch {
+      setDeckLoadError("Deck could not be loaded.")
+    } finally {
+      setIsLoadingDeck(false)
+    }
+  }, [deckId])
+
+  useEffect(() => {
+    void loadDeck()
+  }, [loadDeck])
+
+  return (
+    <main className="min-h-svh bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8">
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+        <header className="flex flex-col gap-4 border-b border-border pb-5">
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-fit"
+            onClick={() => navigateTo("/")}
+          >
+            <ArrowLeft data-icon="inline-start" />
+            Decks
+          </Button>
+
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-2">
+              <p className="text-sm font-medium tracking-[0.18em] text-sky-300 uppercase">
+                Deck page
+              </p>
+              <h1 className="text-3xl font-semibold text-foreground sm:text-4xl">
+                {deck?.name ?? "Deck"}
+              </h1>
+            </div>
+
+            <div className="inline-grid w-full grid-cols-2 rounded-lg border border-border bg-card/70 p-1 sm:w-auto">
+              <TabButton
+                isActive={activeTab === "details"}
+                onClick={() => setActiveTab("details")}
+              >
+                Details
+              </TabButton>
+              <TabButton
+                isActive={activeTab === "simulation"}
+                onClick={() => setActiveTab("simulation")}
+              >
+                Simulation
+              </TabButton>
+            </div>
+          </div>
+        </header>
+
+        {isLoadingDeck ? (
+          <div className="rounded-lg border border-border bg-card/70 px-4 py-8 text-sm text-muted-foreground">
+            Loading deck...
+          </div>
+        ) : deckLoadError ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card/70 px-4 py-8 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-destructive">{deckLoadError}</p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void loadDeck()}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : deck ? (
+          activeTab === "details" ? (
+            <DeckDetailsView deck={deck} />
+          ) : (
+            <SimulationView deckName={deck.name} />
+          )
+        ) : null}
+      </section>
+    </main>
+  )
+}
+
+function DeckDetailsView({ deck }: { deck: DeckDetails }) {
+  const cardGroups = groupCardsByCategory(deck.cards)
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
+      <section className="rounded-lg border border-border bg-card/70">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-xl font-semibold">{deck.name}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {deck.description?.trim() || "No description yet."}
+          </p>
+        </div>
+
+        <div className="grid gap-4 p-4">
+          {cardGroups.map((group) => (
+            <div
+              key={group.category}
+              className="overflow-hidden rounded-lg border border-border bg-background/35"
+            >
+              <CardList title={group.category} cards={group.cards} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <aside className="rounded-lg border border-border bg-card/70">
+        <CardList title="Commander" cards={deck.commanders} />
+      </aside>
+    </div>
+  )
+}
+
+function CardList({ cards, title }: { cards: DeckCard[]; title: string }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <h3 className="text-sm font-semibold tracking-[0.14em] text-sky-200 uppercase">
+          {title}
+        </h3>
+        <span className="text-xs text-muted-foreground">
+          {cards.reduce((total, card) => total + card.quantity, 0)}
+        </span>
+      </div>
+      <ul className="divide-y divide-border">
+        {cards.map((card) => (
+          <li key={`${card.oracleId}-${title}`}>
+            <a
+              className="group flex items-center justify-between gap-3 px-5 py-3 text-sm text-foreground transition-colors hover:bg-muted/45 focus:bg-muted/45 focus:outline-none"
+              href={card.scryfallUri}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="w-8 shrink-0 text-muted-foreground">
+                  {card.quantity}x
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate">{card.name}</span>
+                  {card.typeLine ? (
+                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                      {card.typeLine}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+              <ExternalLink className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-sky-200" />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function groupCardsByCategory(cards: DeckCard[]) {
+  const groups = new Map<string, DeckCard[]>()
+
+  for (const type of CARD_TYPE_PRIORITY) {
+    groups.set(type, [])
+  }
+
+  groups.set(DEFAULT_CARD_CATEGORY, [])
+
+  for (const card of cards) {
+    groups.get(getCardCategory(card))?.push(card)
+  }
+
+  return Array.from(groups.entries())
+    .map(([category, groupedCards]) => ({
+      category,
+      cards: groupedCards,
+    }))
+    .filter((group) => group.cards.length > 0)
+}
+
+function getCardCategory(card: DeckCard) {
+  const typeLine = card.typeLine ?? ""
+  const category = CARD_TYPE_PRIORITY.find((type) =>
+    typeLineContainsCardType(typeLine, type)
+  )
+
+  return category ?? DEFAULT_CARD_CATEGORY
+}
+
+function typeLineContainsCardType(typeLine: string, cardType: string) {
+  return new RegExp(`(^|\\s)${cardType}(\\s|$|-)`, "i").test(typeLine)
+}
+
+function SimulationView({ deckName }: { deckName: string }) {
+  return (
+    <div className="grid min-h-[34rem] overflow-hidden rounded-lg border border-border bg-card/70 lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <aside className="border-b border-border bg-background/35 lg:border-r lg:border-b-0">
+        <div className="border-b border-border p-4">
+          <Button type="button" className="w-full">
+            <Plus data-icon="inline-start" />
+            New simulation
+          </Button>
+        </div>
+
+        <nav className="grid gap-1 p-2" aria-label="Simulations">
+          {SIMULATION_PLACEHOLDERS.map((simulation, index) => (
+            <button
+              key={simulation}
+              className={`rounded-md px-3 py-3 text-left text-sm transition-colors ${index === 0
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                }`}
+              type="button"
+            >
+              {simulation}
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <section className="flex min-h-[28rem] flex-col">
+        <header className="border-b border-border px-5 py-4">
+          <p className="text-sm font-medium tracking-[0.16em] text-sky-300 uppercase">
+            Simulation
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold">{deckName}</h2>
+        </header>
+
+        <div className="grid flex-1 place-items-center px-5 py-10 text-center">
+          <div className="max-w-md space-y-3">
+            <Sparkles className="mx-auto size-8 text-sky-300" />
+            <h3 className="text-lg font-semibold">Simulation workspace</h3>
+            <p className="text-sm leading-6 text-muted-foreground">
+              The structure is ready for saved simulations, creation, and the
+              active run view. Functionality can plug into this area next.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function TabButton({
+  children,
+  isActive,
+  onClick,
+}: {
+  children: ReactNode
+  isActive: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${isActive
+        ? "bg-accent text-accent-foreground"
+        : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+        }`}
+      type="button"
+      onClick={onClick}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -339,6 +683,37 @@ function Field({
       {children}
     </label>
   )
+}
+
+function usePathname() {
+  const [pathname, setPathname] = useState(window.location.pathname)
+
+  useEffect(() => {
+    function handleLocationChange() {
+      setPathname(window.location.pathname)
+    }
+
+    window.addEventListener("popstate", handleLocationChange)
+    window.addEventListener("app:navigate", handleLocationChange)
+
+    return () => {
+      window.removeEventListener("popstate", handleLocationChange)
+      window.removeEventListener("app:navigate", handleLocationChange)
+    }
+  }, [])
+
+  return pathname
+}
+
+function navigateTo(pathname: string) {
+  window.history.pushState(null, "", pathname)
+  window.dispatchEvent(new Event("app:navigate"))
+}
+
+function getDeckIdFromPathname(pathname: string) {
+  const match = pathname.match(/^\/decks\/([^/]+)$/)
+
+  return match?.[1] ? decodeURIComponent(match[1]) : null
 }
 
 export default App
