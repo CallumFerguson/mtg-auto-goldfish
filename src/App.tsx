@@ -49,7 +49,7 @@ export function App() {
       <section className="mx-auto flex w-full max-w-4xl flex-col gap-6">
         <header className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
-            <p className="text-sm font-medium tracking-[0.18em] text-amber-300 uppercase">
+            <p className="text-sm font-medium tracking-[0.18em] text-sky-300 uppercase">
               MTG Auto Goldfish
             </p>
             <h1 className="text-3xl font-semibold text-foreground sm:text-4xl">
