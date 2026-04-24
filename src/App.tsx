@@ -2,10 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react"
 import { Plus, RefreshCw, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import {
-  validateAndParseDeckInput,
-  type ParsedDeckInput,
-} from "@/lib/deck-input"
+import { validateAndParseDeckInput } from "@/lib/deck-input"
 
 type Deck = {
   id: string
@@ -118,17 +115,29 @@ export function App() {
       </section>
 
       {isCreateDeckOpen ? (
-        <CreateDeckModal onClose={() => setIsCreateDeckOpen(false)} />
+        <CreateDeckModal
+          onClose={() => setIsCreateDeckOpen(false)}
+          onCreated={() => {
+            setIsCreateDeckOpen(false)
+            void loadDecks()
+          }}
+        />
       ) : null}
     </main>
   )
 }
 
-function CreateDeckModal({ onClose }: { onClose: () => void }) {
+function CreateDeckModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: () => void
+}) {
   const [errors, setErrors] = useState<string[]>([])
-  const [parsedDeck, setParsedDeck] = useState<ParsedDeckInput | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     const formData = new FormData(event.currentTarget)
@@ -142,12 +151,33 @@ function CreateDeckModal({ onClose }: { onClose: () => void }) {
 
     if (!result.ok) {
       setErrors(result.errors)
-      setParsedDeck(null)
       return
     }
 
     setErrors([])
-    setParsedDeck(result.deck)
+    setIsCreating(true)
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/decks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(result.deck),
+      })
+
+      if (!response.ok) {
+        const errorMessage = await readCreateDeckError(response)
+        setErrors([errorMessage])
+        return
+      }
+
+      onCreated()
+    } catch {
+      setErrors(["Deck could not be sent to the server."])
+    } finally {
+      setIsCreating(false)
+    }
   }
 
   return (
@@ -248,27 +278,50 @@ function CreateDeckModal({ onClose }: { onClose: () => void }) {
             </div>
           ) : null}
 
-          {parsedDeck ? (
-            <div className="grid gap-2 rounded-md border border-sky-400/30 bg-sky-400/10 px-3 py-2">
-              <p className="text-sm font-medium text-sky-200">
-                Deck parsed successfully.
-              </p>
-              <pre className="max-h-56 overflow-auto rounded-md bg-background/80 p-3 text-xs text-foreground">
-                {JSON.stringify(parsedDeck, null, 2)}
-              </pre>
-            </div>
-          ) : null}
-
           <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isCreating}
+            >
               Cancel
             </Button>
-            <Button type="submit">Create deck</Button>
+            <Button type="submit" disabled={isCreating}>
+              {isCreating ? "Creating..." : "Create deck"}
+            </Button>
           </div>
         </form>
       </section>
     </div>
   )
+}
+
+async function readCreateDeckError(response: Response) {
+  try {
+    const data = (await response.json()) as {
+      error?: unknown
+      errors?: unknown
+    }
+
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error
+    }
+
+    if (Array.isArray(data.errors)) {
+      const errors = data.errors.filter(
+        (error): error is string => typeof error === "string" && !!error.trim()
+      )
+
+      if (errors.length > 0) {
+        return errors.join(" ")
+      }
+    }
+  } catch {
+    // Fall through to the generic HTTP error.
+  }
+
+  return `Deck could not be created. Server responded with ${response.status}.`
 }
 
 function Field({

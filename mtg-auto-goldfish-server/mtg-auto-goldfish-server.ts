@@ -35,6 +35,17 @@ const externalGameIdSchema = z
   .describe(
     "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
   )
+const createDeckSchema = z.object({
+  name: z.string().trim().min(1),
+  desc: z.string(),
+  commanders: z.array(z.string().trim().min(1)).min(1).max(2),
+  cards: z.array(
+    z.object({
+      name: z.string().trim().min(1),
+      quantity: z.number().int().positive(),
+    })
+  ),
+})
 
 function createServer(
   name: string,
@@ -629,6 +640,52 @@ async function main() {
         error: "Failed to list decks.",
       })
     }
+  })
+
+  app.post("/decks", (req: Request, res: Response) => {
+    const parsedDeck = createDeckSchema.safeParse(req.body)
+
+    if (!parsedDeck.success) {
+      res.status(400).json({
+        error: "Deck payload is not in the expected format.",
+      })
+      return
+    }
+
+    const commanderNames = new Set(
+      parsedDeck.data.commanders.map((commander) =>
+        commander.toLocaleLowerCase()
+      )
+    )
+
+    if (commanderNames.size !== parsedDeck.data.commanders.length) {
+      res.status(400).json({
+        error: "Commander cards must be different.",
+      })
+      return
+    }
+
+    const expectedDeckSize = parsedDeck.data.commanders.length === 2 ? 98 : 99
+    const actualDeckSize = parsedDeck.data.cards.reduce(
+      (total, card) => total + card.quantity,
+      0
+    )
+
+    if (actualDeckSize !== expectedDeckSize) {
+      res.status(400).json({
+        error: `Deck list must contain exactly ${expectedDeckSize} cards. Parsed ${actualDeckSize}.`,
+      })
+      return
+    }
+
+    console.info(
+      "Create deck request:",
+      JSON.stringify(parsedDeck.data, null, 2)
+    )
+
+    res.status(202).json({
+      ok: true,
+    })
   })
 
   registerMcpEndpoint(app, OPENING_HAND_MCP_PATH, createOpeningHandServer)
