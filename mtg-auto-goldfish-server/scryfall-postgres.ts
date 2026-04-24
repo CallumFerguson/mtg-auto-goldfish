@@ -133,7 +133,19 @@ export async function searchScryfallOracleCardsByName({
       WITH matches AS (
         SELECT
           card.oracle_id,
-          similarity(card.normalized_name, $1) AS score
+          similarity(card.normalized_name, $1) AS score,
+          CASE
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              AND card.legalities->>'commander' IN ('banned', 'legal')
+              THEN 0
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              THEN 1
+            ELSE 2
+          END AS card_priority
         FROM scryfall_oracle_cards card
         WHERE card.normalized_name % $1
 
@@ -141,19 +153,32 @@ export async function searchScryfallOracleCardsByName({
 
         SELECT
           face.oracle_id,
-          similarity(face.normalized_name, $1) AS score
+          similarity(face.normalized_name, $1) AS score,
+          CASE
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              AND card.legalities->>'commander' IN ('banned', 'legal')
+              THEN 0
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              THEN 1
+            ELSE 2
+          END AS card_priority
         FROM scryfall_card_faces face
+        JOIN scryfall_oracle_cards card ON card.oracle_id = face.oracle_id
         WHERE face.normalized_name % $1
       ),
       ranked_matches AS (
-        SELECT oracle_id, max(score) AS score
+        SELECT oracle_id, max(score) AS score, min(card_priority) AS card_priority
         FROM matches
         GROUP BY oracle_id
       )
       SELECT card.*, ranked_matches.score
       FROM ranked_matches
       JOIN scryfall_oracle_cards card ON card.oracle_id = ranked_matches.oracle_id
-      ORDER BY ranked_matches.score DESC, card.name ASC
+      ORDER BY ranked_matches.score DESC, ranked_matches.card_priority ASC, card.name ASC
       LIMIT $2
       `,
     [normalizedName, limit]
@@ -194,7 +219,19 @@ export async function resolveExactScryfallOracleCards(
           card.normalized_name,
           card.oracle_id,
           card.name,
-          0 AS priority
+          0 AS match_priority,
+          CASE
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              AND card.legalities->>'commander' IN ('banned', 'legal')
+              THEN 0
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              THEN 1
+            ELSE 2
+          END AS card_priority
         FROM scryfall_oracle_cards card
         WHERE card.normalized_name = ANY($1::text[])
 
@@ -204,7 +241,19 @@ export async function resolveExactScryfallOracleCards(
           face.normalized_name,
           face.oracle_id,
           card.name,
-          1 AS priority
+          1 AS match_priority,
+          CASE
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              AND card.legalities->>'commander' IN ('banned', 'legal')
+              THEN 0
+            WHEN card.layout NOT IN ('art_series', 'emblem', 'token')
+              AND COALESCE(card.type_line, '') NOT ILIKE 'Token%'
+              AND card.games && ARRAY['arena', 'mtgo', 'paper']::text[]
+              THEN 1
+            ELSE 2
+          END AS card_priority
         FROM scryfall_card_faces face
         JOIN scryfall_oracle_cards card ON card.oracle_id = face.oracle_id
         WHERE face.normalized_name = ANY($1::text[])
@@ -215,7 +264,7 @@ export async function resolveExactScryfallOracleCards(
         oracle_id,
         name
       FROM matches
-      ORDER BY normalized_name, priority ASC, name ASC
+      ORDER BY normalized_name, card_priority ASC, match_priority ASC, name ASC
     `,
     [normalizedCardNames]
   )
