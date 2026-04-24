@@ -2,6 +2,19 @@
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
+import { createWriteStream } from "node:fs"
+import {
+  access,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
+import { fileURLToPath } from "node:url"
 import { z } from "zod/v4"
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -11,6 +24,27 @@ const OPENING_HAND_SERVER_NAME = "opening-hand-server"
 const TURN_SIMULATION_SERVER_NAME = "turn-simulation-server"
 const OPENING_HAND_MCP_PATH = "/mcp/opening-hand"
 const TURN_SIMULATION_MCP_PATH = "/mcp/turn-simulation"
+const SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
+const SCRYFALL_ORACLE_CARDS_TYPE = "oracle_cards"
+const SCRYFALL_DATA_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const SCRYFALL_DATA_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "data",
+  "scryfall"
+)
+const SCRYFALL_ORACLE_CARDS_PATH = join(SCRYFALL_DATA_DIR, "oracle-cards.json")
+const SCRYFALL_ORACLE_CARDS_TEMP_PATH = join(
+  SCRYFALL_DATA_DIR,
+  "oracle-cards.json.tmp"
+)
+const SCRYFALL_ORACLE_CARDS_METADATA_PATH = join(
+  SCRYFALL_DATA_DIR,
+  "oracle-cards.metadata.json"
+)
+const SCRYFALL_ORACLE_CARDS_METADATA_TEMP_PATH = join(
+  SCRYFALL_DATA_DIR,
+  "oracle-cards.metadata.json.tmp"
+)
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -31,6 +65,20 @@ const externalGameIdSchema = z
   .describe(
     "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
   )
+
+type ScryfallBulkDataCatalog = {
+  data?: ScryfallBulkDataItem[]
+}
+
+type ScryfallBulkDataItem = {
+  type?: string
+  download_uri?: string
+}
+
+type ScryfallOracleCardsMetadata = {
+  downloaded_at?: string
+  bulk_data?: ScryfallBulkDataCatalog
+}
 
 function createServer(
   name: string,
@@ -574,7 +622,211 @@ function registerKeepHandTool(server: McpServer) {
   )
 }
 
+async function ensureFreshScryfallOracleCards() {
+  const cacheState = await getScryfallOracleCardsCacheState()
+
+  if (cacheState.isFresh) {
+    console.error(
+      `Using cached Scryfall oracle_cards data at ${SCRYFALL_ORACLE_CARDS_PATH}`
+    )
+    return
+  }
+
+  if (cacheState.exists) {
+    console.error(
+      "Cached Scryfall oracle_cards data is older than 7 days. Refreshing..."
+    )
+  } else {
+    console.error("No cached Scryfall oracle_cards data found. Downloading...")
+  }
+
+  try {
+    await downloadScryfallOracleCards()
+  } catch (error) {
+    if (cacheState.exists) {
+      console.error(
+        "Failed to refresh Scryfall oracle_cards data; continuing with the existing cached file.",
+        error
+      )
+      return
+    }
+
+    throw error
+  }
+}
+
+async function getScryfallOracleCardsCacheState() {
+  const hasOracleCardsFile = await fileExists(SCRYFALL_ORACLE_CARDS_PATH)
+  const metadata = await readScryfallOracleCardsMetadata()
+  const downloadedAtMs = metadata?.downloaded_at
+    ? Date.parse(metadata.downloaded_at)
+    : Number.NaN
+  const hasValidDownloadedAt = Number.isFinite(downloadedAtMs)
+  const ageMs = hasValidDownloadedAt ? Date.now() - downloadedAtMs : Infinity
+
+  return {
+    exists: hasOracleCardsFile,
+    isFresh: hasOracleCardsFile && ageMs <= SCRYFALL_DATA_MAX_AGE_MS,
+  }
+}
+
+async function downloadScryfallOracleCards() {
+  await mkdir(SCRYFALL_DATA_DIR, { recursive: true })
+  await removeTempScryfallOracleCardsFile()
+  await removeTempScryfallOracleCardsMetadataFile()
+
+  const bulkDataCatalog = await getScryfallBulkDataCatalog()
+  const oracleCardsBulkItem = getScryfallOracleCardsBulkItem(bulkDataCatalog)
+
+  if (!oracleCardsBulkItem.download_uri) {
+    throw new Error(
+      "Scryfall oracle_cards bulk item did not include download_uri."
+    )
+  }
+
+  const response = await fetch(oracleCardsBulkItem.download_uri, {
+    headers: getScryfallRequestHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download Scryfall oracle_cards data: ${response.status} ${response.statusText}`
+    )
+  }
+
+  if (!response.body) {
+    throw new Error("Scryfall oracle_cards download response had no body.")
+  }
+
+  await pipeline(
+    Readable.fromWeb(response.body),
+    createWriteStream(SCRYFALL_ORACLE_CARDS_TEMP_PATH)
+  )
+  await rename(SCRYFALL_ORACLE_CARDS_TEMP_PATH, SCRYFALL_ORACLE_CARDS_PATH)
+  await writeScryfallOracleCardsMetadata(bulkDataCatalog)
+
+  console.error(
+    `Downloaded Scryfall oracle_cards data to ${SCRYFALL_ORACLE_CARDS_PATH}`
+  )
+}
+
+async function getScryfallBulkDataCatalog() {
+  const response = await fetch(SCRYFALL_BULK_DATA_URL, {
+    headers: getScryfallRequestHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch Scryfall bulk data catalog: ${response.status} ${response.statusText}`
+    )
+  }
+
+  return (await response.json()) as ScryfallBulkDataCatalog
+}
+
+function getScryfallOracleCardsBulkItem(catalog: ScryfallBulkDataCatalog) {
+  const oracleCardsBulkItem = catalog.data?.find(
+    (item) => item.type === SCRYFALL_ORACLE_CARDS_TYPE
+  )
+
+  if (!oracleCardsBulkItem) {
+    throw new Error("Scryfall bulk data catalog did not include oracle_cards.")
+  }
+
+  return oracleCardsBulkItem
+}
+
+async function readScryfallOracleCardsMetadata() {
+  try {
+    const metadataJson = await readFile(
+      SCRYFALL_ORACLE_CARDS_METADATA_PATH,
+      "utf8"
+    )
+
+    return JSON.parse(metadataJson) as ScryfallOracleCardsMetadata
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return null
+    }
+
+    if (error instanceof SyntaxError) {
+      return null
+    }
+
+    throw error
+  }
+}
+
+async function writeScryfallOracleCardsMetadata(
+  bulkDataCatalog: ScryfallBulkDataCatalog
+) {
+  const metadata = {
+    downloaded_at: new Date().toISOString(),
+    bulk_data: bulkDataCatalog,
+  } satisfies ScryfallOracleCardsMetadata
+
+  await writeFile(
+    SCRYFALL_ORACLE_CARDS_METADATA_TEMP_PATH,
+    `${JSON.stringify(metadata, null, 2)}\n`,
+    "utf8"
+  )
+  await rename(
+    SCRYFALL_ORACLE_CARDS_METADATA_TEMP_PATH,
+    SCRYFALL_ORACLE_CARDS_METADATA_PATH
+  )
+}
+
+function getScryfallRequestHeaders() {
+  return {
+    Accept: "application/json",
+    "User-Agent": `${SERVER_NAME}/0.0.1`,
+  }
+}
+
+async function removeTempScryfallOracleCardsFile() {
+  try {
+    await unlink(SCRYFALL_ORACLE_CARDS_TEMP_PATH)
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return
+    }
+
+    throw error
+  }
+}
+
+async function removeTempScryfallOracleCardsMetadataFile() {
+  try {
+    await unlink(SCRYFALL_ORACLE_CARDS_METADATA_TEMP_PATH)
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return
+    }
+
+    throw error
+  }
+}
+
+async function fileExists(path: string) {
+  try {
+    await access(path)
+    return true
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return false
+    }
+
+    throw error
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error
+}
+
 async function main() {
+  await ensureFreshScryfallOracleCards()
+
   const host = DEFAULT_HOST
   const port = DEFAULT_PORT
   const allowedOrigins = DEFAULT_ALLOWED_ORIGINS
