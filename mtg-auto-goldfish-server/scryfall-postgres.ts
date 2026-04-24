@@ -25,6 +25,7 @@ type ScryfallCardFace = {
 
 type ScryfallCard = {
   id?: string
+  scryfall_uri?: string
   oracle_id?: string
   name?: string
   lang?: string
@@ -156,6 +157,7 @@ async function ensureScryfallOracleCardsSchema() {
     CREATE TABLE IF NOT EXISTS scryfall_oracle_cards (
       oracle_id uuid PRIMARY KEY,
       scryfall_id uuid NOT NULL UNIQUE,
+      scryfall_uri text NOT NULL,
 
       name text NOT NULL,
       normalized_name text NOT NULL,
@@ -279,6 +281,7 @@ async function upsertScryfallOracleCard(
 ) {
   const oracleId = requireString(card.oracle_id, "oracle_id", card)
   const scryfallId = requireString(card.id, "id", card)
+  const scryfallUri = requireString(card.scryfall_uri, "scryfall_uri", card)
   const name = requireString(card.name, "name", card)
   const lang = requireString(card.lang, "lang", card)
   const layout = requireString(card.layout, "layout", card)
@@ -288,6 +291,7 @@ async function upsertScryfallOracleCard(
     INSERT INTO scryfall_oracle_cards (
       oracle_id,
       scryfall_id,
+      scryfall_uri,
       name,
       normalized_name,
       default_image_url,
@@ -333,26 +337,28 @@ async function upsertScryfallOracleCard(
       $12,
       $13,
       $14,
-      $15::text[],
+      $15,
       $16::text[],
       $17::text[],
       $18::text[],
       $19::text[],
-      $20::jsonb,
+      $20::text[],
       $21::jsonb,
       $22::jsonb,
       $23::jsonb,
       $24::jsonb,
-      $25,
+      $25::jsonb,
       $26,
       $27,
       $28,
       $29,
       $30,
-      $31
+      $31,
+      $32
     )
     ON CONFLICT (oracle_id) DO UPDATE SET
       scryfall_id = EXCLUDED.scryfall_id,
+      scryfall_uri = EXCLUDED.scryfall_uri,
       name = EXCLUDED.name,
       normalized_name = EXCLUDED.normalized_name,
       default_image_url = EXCLUDED.default_image_url,
@@ -387,6 +393,7 @@ async function upsertScryfallOracleCard(
     [
       oracleId,
       scryfallId,
+      scryfallUri,
       name,
       normalizeCardName(name),
       getCardDefaultImageUrl(card),
