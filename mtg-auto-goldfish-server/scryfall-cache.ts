@@ -102,11 +102,12 @@ export async function ensureFreshScryfallOracleCards() {
     }
 
     if (cacheState.exists) {
-      console.error(
-        "Failed to refresh Scryfall oracle_cards data; continuing with the existing cached file.",
-        error
+      throw new Error(
+        "Cached Scryfall oracle_cards data is stale and could not be refreshed. Server startup cannot continue because Scryfall data must be fresh and imported into Postgres.",
+        {
+          cause: error,
+        }
       )
-      return
     }
 
     throw error
