@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { z } from "zod/v4"
 import { closeDatabasePool, verifyDatabaseConnection } from "./db.js"
+import { DRAW_STARTING_HAND_PROMPT } from "./llm/prompt-constants.js"
 import {
   createDeck,
   deleteDeck,
@@ -19,10 +20,15 @@ import {
   createStartingHand,
   deleteSimulation,
   ensureSimulationsSchema,
+  getStartingHandSimulationPromptData,
   listSimulationsForDeck,
   listStartingHandsForDeck,
   SimulationValidationError,
   StartingHandValidationError,
+} from "./simulations-postgres.js"
+import type {
+  SimulationPromptCard,
+  StartingHandSimulationPromptData,
 } from "./simulations-postgres.js"
 import {
   createExactScryfallOracleCardMatchMap,
@@ -1198,26 +1204,29 @@ function isMcpPath(path: string) {
   return path === OPENING_HAND_MCP_PATH || path === TURN_SIMULATION_MCP_PATH
 }
 
-/*
-Future prompt-builder reference. These are intentionally commented out because
-the old GameCard type and game-store model have been removed.
+export async function buildStartingHandSimulationPrompt(simulationId: string) {
+  const promptData = await getStartingHandSimulationPromptData(simulationId)
 
-function buildStartingHandSimulationPrompt(
-  gameId: string,
-  commanders: readonly GameCard[],
-  initialLibrary: readonly GameCard[]
-) {
+  if (!promptData) {
+    throw new Error("Simulation not found.")
+  }
+
+  return buildStartingHandSimulationPromptFromData(promptData)
+}
+
+function buildStartingHandSimulationPromptFromData({
+  commanders,
+  library,
+  simulationId,
+}: StartingHandSimulationPromptData) {
   const commanderLabel = commanders.length === 1 ? "Commander" : "Commanders"
-  const commanderNames = commanders.map((card) => card.name)
-  const cardNames = initialLibrary.map((card) => card.name)
-  const uniqueCards = dedupeCardsByNameAndText([
-    ...commanders,
-    ...initialLibrary,
-  ])
+  const commanderNames = expandCardNames(commanders)
+  const cardNames = expandCardNames(library)
+  const uniqueCards = dedupeCardsByNameAndText([...commanders, ...library])
 
   return `${DRAW_STARTING_HAND_PROMPT}
 
-Game ID: ${gameId}
+Game ID: ${simulationId}
 
 ${commanderLabel}:
 ${commanderNames.join("\n")}
@@ -1226,9 +1235,77 @@ Decklist:
 ${cardNames.join("\n")}
 
 Card reference:
-${uniqueCards.map((card) => `${card.name}\n${card.cardText}\n`).join("\n")}
+${uniqueCards.map((card) => `${card.name}\n${formatCardText(card)}\n`).join("\n")}
 `.trim()
 }
+
+function expandCardNames(cards: readonly SimulationPromptCard[]) {
+  return cards.flatMap((card) =>
+    Array.from({ length: card.quantity }, () => card.name)
+  )
+}
+
+function dedupeCardsByNameAndText(cards: readonly SimulationPromptCard[]) {
+  const cardsByNameAndText = new Map<string, SimulationPromptCard>()
+
+  for (const card of cards) {
+    const key = `${card.name}\n${formatCardText(card)}`
+
+    if (!cardsByNameAndText.has(key)) {
+      cardsByNameAndText.set(key, card)
+    }
+  }
+
+  return Array.from(cardsByNameAndText.values())
+}
+
+function formatCardText(card: SimulationPromptCard) {
+  const lines = [
+    formatCardLine("Mana Cost", card.manaCost),
+    formatCardLine("Type", card.typeLine),
+    formatCardLine("Rules Text", card.oracleText),
+    formatPowerToughness(card),
+    formatCardLine("Loyalty", card.loyalty),
+  ].filter((line) => line !== null)
+
+  if (card.cardFaces.length > 0) {
+    lines.push(
+      "Faces:",
+      ...card.cardFaces.flatMap((face) =>
+        [
+          face.name,
+          formatCardLine("Mana Cost", face.manaCost),
+          formatCardLine("Type", face.typeLine),
+          formatCardLine("Rules Text", face.oracleText),
+          formatPowerToughness(face),
+          formatCardLine("Loyalty", face.loyalty),
+        ].filter((line) => line !== null)
+      )
+    )
+  }
+
+  return lines.join("\n")
+}
+
+function formatCardLine(label: string, value: string | null) {
+  return value ? `${label}: ${value}` : null
+}
+
+function formatPowerToughness({
+  power,
+  toughness,
+}: {
+  power: string | null
+  toughness: string | null
+}) {
+  return power !== null && toughness !== null
+    ? `Power/Toughness: ${power}/${toughness}`
+    : null
+}
+
+/*
+Future prompt-builder reference. This is intentionally commented out because
+the old GameCard type and game-store model have been removed.
 
 function buildTurnSimulationPrompt(
   gameId: string,

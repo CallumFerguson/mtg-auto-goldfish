@@ -71,6 +71,38 @@ export type CreateSimulationInput = {
   startingHandId: string | null
 }
 
+export type SimulationPromptCardFace = {
+  name: string
+  manaCost: string | null
+  typeLine: string | null
+  oracleText: string | null
+  power: string | null
+  toughness: string | null
+  loyalty: string | null
+}
+
+export type SimulationPromptCard = {
+  deckCardId: number
+  oracleId: string
+  name: string
+  quantity: number
+  zone: "commander" | "library"
+  manaCost: string | null
+  typeLine: string | null
+  oracleText: string | null
+  power: string | null
+  toughness: string | null
+  loyalty: string | null
+  cardFaces: SimulationPromptCardFace[]
+}
+
+export type StartingHandSimulationPromptData = {
+  simulationId: string
+  deckId: string
+  commanders: SimulationPromptCard[]
+  library: SimulationPromptCard[]
+}
+
 export class SimulationValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -412,6 +444,58 @@ export async function deleteSimulation(
   return (result.rowCount ?? 0) > 0
 }
 
+export async function getStartingHandSimulationPromptData(
+  simulationId: string
+): Promise<StartingHandSimulationPromptData | null> {
+  const result = await queryDatabase<SimulationPromptCardRow>(
+    `
+      SELECT
+        simulation.id AS simulation_id,
+        simulation.deck_id,
+        deck_card.id AS deck_card_id,
+        deck_card.oracle_id,
+        deck_card.quantity,
+        deck_card.zone,
+        card.name,
+        card.mana_cost,
+        card.type_line,
+        card.oracle_text,
+        card.power,
+        card.toughness,
+        card.loyalty,
+        card.card_faces
+      FROM simulations simulation
+      JOIN deck_cards deck_card
+        ON deck_card.deck_id = simulation.deck_id
+      JOIN scryfall_oracle_cards card
+        ON card.oracle_id = deck_card.oracle_id
+      WHERE simulation.id = $1
+      ORDER BY
+        CASE deck_card.zone
+          WHEN 'commander' THEN 0
+          ELSE 1
+        END,
+        card.name ASC
+    `,
+    [simulationId]
+  )
+
+  const firstRow = result.rows[0]
+
+  if (!firstRow) {
+    return null
+  }
+
+  const cards = result.rows.map(mapSimulationPromptCard)
+
+  return {
+    simulationId: firstRow.simulation_id,
+    deckId: firstRow.deck_id,
+    commanders: cards.filter((card) => card.zone === "commander"),
+    library: cards.filter((card) => card.zone === "library"),
+  }
+}
+
 export async function listStartingHandsForDeck(
   deckId: string
 ): Promise<StartingHand[]> {
@@ -607,6 +691,79 @@ type StartingHandRow = {
   scryfall_uri: string | null
   default_image_url: string | null
   type_line: string | null
+}
+
+type SimulationPromptCardRow = {
+  simulation_id: string
+  deck_id: string
+  deck_card_id: number
+  oracle_id: string
+  quantity: number
+  zone: "commander" | "library"
+  name: string
+  mana_cost: string | null
+  type_line: string | null
+  oracle_text: string | null
+  power: string | null
+  toughness: string | null
+  loyalty: string | null
+  card_faces: unknown
+}
+
+function mapSimulationPromptCard(
+  row: SimulationPromptCardRow
+): SimulationPromptCard {
+  return {
+    deckCardId: Number(row.deck_card_id),
+    oracleId: row.oracle_id,
+    name: row.name,
+    quantity: row.quantity,
+    zone: row.zone,
+    manaCost: row.mana_cost,
+    typeLine: row.type_line,
+    oracleText: row.oracle_text,
+    power: row.power,
+    toughness: row.toughness,
+    loyalty: row.loyalty,
+    cardFaces: parseSimulationPromptCardFaces(row.card_faces),
+  }
+}
+
+function parseSimulationPromptCardFaces(
+  cardFaces: unknown
+): SimulationPromptCardFace[] {
+  if (!Array.isArray(cardFaces)) {
+    return []
+  }
+
+  return cardFaces.flatMap((face) => {
+    if (typeof face !== "object" || face === null) {
+      return []
+    }
+
+    const faceRecord = face as Record<string, unknown>
+    const name = getOptionalString(faceRecord.name)
+
+    if (!name) {
+      return []
+    }
+
+    return [
+      {
+        name,
+        manaCost: getOptionalString(faceRecord.mana_cost),
+        typeLine: getOptionalString(faceRecord.type_line),
+        oracleText: getOptionalString(faceRecord.oracle_text),
+        power: getOptionalString(faceRecord.power),
+        toughness: getOptionalString(faceRecord.toughness),
+        loyalty: getOptionalString(faceRecord.loyalty),
+      },
+    ]
+  })
+}
+
+function getOptionalString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null
 }
 
 function mapStartingHandRows(rows: readonly StartingHandRow[]) {
