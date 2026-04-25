@@ -25,3 +25,24 @@ export type DecksResponse = {
 export type DeckResponse = {
   deck: DeckDetails
 }
+
+export type SimulationStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export type Simulation = {
+  id: string
+  deckId: string
+  seed: string
+  turnsToSimulate: number
+  status: SimulationStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type SimulationsResponse = {
+  simulations: Simulation[]
+}

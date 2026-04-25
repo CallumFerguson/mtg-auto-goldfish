@@ -14,7 +14,10 @@ import {
   updateDeckDetails,
 } from "./decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
-import { ensureSimulationsSchema } from "./simulations-postgres.js"
+import {
+  ensureSimulationsSchema,
+  listSimulationsForDeck,
+} from "./simulations-postgres.js"
 import {
   createExactScryfallOracleCardMatchMap,
   normalizeScryfallCardNameForExactMatch,
@@ -680,6 +683,30 @@ async function main() {
       console.error("Failed to load deck:", error)
       res.status(500).json({
         error: "Failed to load deck.",
+      })
+    }
+  })
+
+  app.get("/decks/:deckId/simulations", async (req: Request, res: Response) => {
+    const deckId = String(req.params.deckId)
+
+    try {
+      const deck = await getDeck(deckId)
+
+      if (!deck) {
+        res.status(404).json({
+          error: "Deck not found.",
+        })
+        return
+      }
+
+      res.status(200).json({
+        simulations: await listSimulationsForDeck(deckId),
+      })
+    } catch (error) {
+      console.error("Failed to list simulations:", error)
+      res.status(500).json({
+        error: "Failed to list simulations.",
       })
     }
   })

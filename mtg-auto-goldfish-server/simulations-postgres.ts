@@ -27,6 +27,16 @@ export type LlmChunkKind =
   | "error"
   | "metadata"
 
+export type SimulationSummary = {
+  id: string
+  deckId: string
+  seed: string
+  turnsToSimulate: number
+  status: SimulationStatus
+  createdAt: string
+  updatedAt: string
+}
+
 export async function ensureSimulationsSchema() {
   await queryDatabase("CREATE EXTENSION IF NOT EXISTS pgcrypto")
   await createEnumType("simulation_status", [
@@ -175,6 +185,45 @@ export async function ensureSimulationsSchema() {
     CREATE INDEX IF NOT EXISTS simulation_turn_llm_runs_simulation_id_turn_number_idx
       ON simulation_turn_llm_runs (simulation_id, turn_number)
   `)
+}
+
+export async function listSimulationsForDeck(
+  deckId: string
+): Promise<SimulationSummary[]> {
+  const result = await queryDatabase<{
+    id: string
+    deck_id: string
+    seed: string
+    turns_to_simulate: number
+    status: SimulationStatus
+    created_at: Date
+    updated_at: Date
+  }>(
+    `
+      SELECT
+        id,
+        deck_id,
+        seed,
+        turns_to_simulate,
+        status,
+        created_at,
+        updated_at
+      FROM simulations
+      WHERE deck_id = $1
+      ORDER BY created_at DESC
+    `,
+    [deckId]
+  )
+
+  return result.rows.map((simulation) => ({
+    id: simulation.id,
+    deckId: simulation.deck_id,
+    seed: simulation.seed,
+    turnsToSimulate: simulation.turns_to_simulate,
+    status: simulation.status,
+    createdAt: simulation.created_at.toISOString(),
+    updatedAt: simulation.updated_at.toISOString(),
+  }))
 }
 
 async function createEnumType(name: string, values: readonly string[]) {

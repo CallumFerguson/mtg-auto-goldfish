@@ -201,7 +201,11 @@ export function DeckPage({
           activeTab === "details" ? (
             <ViewDeckCards deck={deck} />
           ) : (
-            <DeckSimulation deckName={deck.name} />
+            <DeckSimulation
+              cards={deck.cards}
+              deckId={deck.id}
+              deckName={deck.name}
+            />
           )
         ) : null}
       </section>

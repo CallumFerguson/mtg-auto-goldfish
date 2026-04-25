@@ -71,4 +71,14 @@
   button {
     @apply cursor-pointer;
   }
+
+  input[type="number"].no-number-spinner {
+    appearance: textfield;
+  }
+
+  input[type="number"].no-number-spinner::-webkit-inner-spin-button,
+  input[type="number"].no-number-spinner::-webkit-outer-spin-button {
+    margin: 0;
+    appearance: none;
+  }
 }
