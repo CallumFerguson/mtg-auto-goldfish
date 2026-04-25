@@ -298,7 +298,7 @@ PRACTICAL MULLIGAN LIMITS FOR THIS SIMULATION
 - Usually stop earlier if the phase-based guidance says the hand is good enough to keep.
 - Treat mulligan as the fallback for bad hands, not the default action after seeing a merely imperfect hand.
 - Never exceed 4 total mulligans.
-- If you reach the cap, keep the best available hand, even if it is weak.
+- If you reach the cap, keep the current hand, even if a previous hand was better.
 
 DECISION FLOW
 - Start by calling draw_starting_hand once to see the opening hand.

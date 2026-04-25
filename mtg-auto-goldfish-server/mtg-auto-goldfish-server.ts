@@ -56,13 +56,11 @@ const DEFAULT_ALLOWED_HEADERS = [
   "Mcp-Protocol-Version",
 ]
 
-const externalGameIdSchema = z
+const simulationIdSchema = z
   .string()
   .trim()
   .min(1)
-  .describe(
-    "The game ID returned by the regular HTTP create-game endpoint, not by an MCP tool."
-  )
+  .describe("The simulation ID returned by the regular HTTP API.")
 const createDeckSchema = z.object({
   name: z.string().trim().min(1),
   desc: z.string(),
@@ -144,20 +142,20 @@ function registerDrawCardFromTopTool(server: McpServer) {
     {
       title: "Draw Card From Top",
       description:
-        "Draw one or more cards from the top of the stored library for an existing game ID that was created outside MCP.",
+        "Draw one or more cards from the top of the stored library for an existing simulation.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         count: z.number().int().positive().describe("How many cards to draw."),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cards: z.array(z.string()),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId, count }) => {
+    async ({ simulationId, count }) => {
       const response = {
-        gameId,
+        simulationId,
         cards: [],
         cardsRemaining: 0,
       }
@@ -181,20 +179,20 @@ function registerDrawCardFromBottomTool(server: McpServer) {
     {
       title: "Draw Card From Bottom",
       description:
-        "Draw one or more cards from the bottom of the stored library for an existing game ID that was created outside MCP.",
+        "Draw one or more cards from the bottom of the stored library for an existing simulation.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         count: z.number().int().positive().describe("How many cards to draw."),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cards: z.array(z.string()),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId, count }) => {
+    async ({ simulationId, count }) => {
       const response = {
-        gameId,
+        simulationId,
         cards: [],
         cardsRemaining: 0,
       }
@@ -218,19 +216,19 @@ function registerDrawStartingHandTool(server: McpServer) {
     {
       title: "Draw Starting Hand",
       description:
-        "Draw the very first opening seven-card hand from the stored library for an existing game ID that was created outside MCP. Call this exactly once per game, before any mulligans. Never call this after mulligan, because mulligan already shuffles and draws the replacement seven-card hand.",
+        "Draw the very first opening seven-card hand from the stored library for an existing simulation. Call this exactly once per simulation, before any mulligans. Never call this after mulligan, because mulligan already shuffles and draws the replacement seven-card hand.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cards: z.array(z.string()),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId }) => {
+    async ({ simulationId }) => {
       const response = {
-        gameId,
+        simulationId,
         cards: [],
         cardsRemaining: 0,
       }
@@ -256,7 +254,7 @@ function registerMulliganTool(server: McpServer) {
       description:
         "Return the current opening hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn. Important: this tool already draws and returns the replacement hand, so do not call draw_starting_hand after using this tool.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         reason: z
           .string()
           .trim()
@@ -266,7 +264,7 @@ function registerMulliganTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         reason: z.string(),
         cards: z.array(z.string()),
         cardsRemaining: z.number().int().nonnegative(),
@@ -277,9 +275,9 @@ function registerMulliganTool(server: McpServer) {
         alreadyDrewReplacementHand: z.boolean(),
       },
     },
-    async ({ gameId, reason }) => {
+    async ({ simulationId, reason }) => {
       const response = {
-        gameId,
+        simulationId,
         reason,
         cards: [],
         cardsRemaining: 0,
@@ -310,9 +308,9 @@ function registerReturnCardToLibraryTool(server: McpServer) {
     {
       title: "Return Card To Library",
       description:
-        "Return a card to the library for an existing game ID, placing it a specific number of cards from the top or bottom.",
+        "Return a card to the library for an existing simulation, placing it a specific number of cards from the top or bottom.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         card: z
           .string()
           .trim()
@@ -332,7 +330,7 @@ function registerReturnCardToLibraryTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         card: z.string(),
         side: z.enum(["top", "bottom"]),
         position: z.number().int().nonnegative(),
@@ -341,9 +339,9 @@ function registerReturnCardToLibraryTool(server: McpServer) {
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId, card, side, position }) => {
+    async ({ simulationId, card, side, position }) => {
       const response = {
-        gameId,
+        simulationId,
         card,
         side,
         position,
@@ -371,9 +369,9 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
     {
       title: "Return Cards To Library",
       description:
-        "Return multiple cards to the top or bottom of the library for an existing game ID, optionally randomizing the order they are returned in.",
+        "Return multiple cards to the top or bottom of the library for an existing simulation, optionally randomizing the order they are returned in.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         cards: z
           .array(z.string().trim().min(1))
           .min(1)
@@ -390,16 +388,16 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cards: z.array(z.string()),
         side: z.enum(["top", "bottom"]),
         randomizeOrder: z.boolean(),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId, cards, side, randomizeOrder }) => {
+    async ({ simulationId, cards, side, randomizeOrder }) => {
       const response = {
-        gameId,
+        simulationId,
         cards: [],
         side,
         randomizeOrder,
@@ -427,7 +425,7 @@ function registerTakeCardsFromLibraryTool(server: McpServer) {
       description:
         "Take one or more specific cards out of the stored library for tutor and search effects. Each requested name uses the best reasonably close fuzzy match, ignoring case and punctuation. If no close enough match exists, that request returns no card.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         cards: z
           .array(z.string().trim().min(1))
           .min(1)
@@ -436,7 +434,7 @@ function registerTakeCardsFromLibraryTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         matches: z.array(
           z.object({
             requestedCard: z.string(),
@@ -447,9 +445,9 @@ function registerTakeCardsFromLibraryTool(server: McpServer) {
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId, cards }) => {
+    async ({ simulationId, cards }) => {
       const response = {
-        gameId,
+        simulationId,
         matches: cards.map((card) => ({
           requestedCard: card,
           foundCard: null,
@@ -477,18 +475,18 @@ function registerShuffleLibraryTool(server: McpServer) {
     {
       title: "Shuffle Library",
       description:
-        "Shuffle the stored library for an existing game ID that was created outside MCP.",
+        "Shuffle the stored library for an existing simulation.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cardsRemaining: z.number().int().nonnegative(),
       },
     },
-    async ({ gameId }) => {
+    async ({ simulationId }) => {
       const response = {
-        gameId,
+        simulationId,
         cardsRemaining: 0,
       }
 
@@ -511,9 +509,9 @@ function registerLogTurnActionTool(server: McpServer) {
     {
       title: "Log Turn Action",
       description:
-        "Append an irreversible action note to the active turn log for this game. Use this as the authoritative turn history while resolving the turn. The response returns the full logged action list for the active turn.",
+        "Append an irreversible action note to the active turn log for this simulation. Use this as the authoritative turn history while resolving the turn. The response returns the full logged action list for the active turn.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         action: z
           .string()
           .trim()
@@ -523,15 +521,15 @@ function registerLogTurnActionTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         turnNumber: z.number().int().positive(),
         latestAction: z.string(),
         actions: z.array(z.string()),
       },
     },
-    async ({ gameId, action }) => {
+    async ({ simulationId, action }) => {
       const response = {
-        gameId,
+        simulationId,
         turnNumber: 1,
         latestAction: action,
         actions: [],
@@ -558,7 +556,7 @@ function registerUpdateGameStateTool(server: McpServer) {
       description:
         "Save the current game state text for the active turn simulation. This can only be called once per turn, and it must be the final tool call for that turn.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         gameState: z
           .string()
           .describe(
@@ -566,16 +564,16 @@ function registerUpdateGameStateTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         turnNumber: z.number().int().positive(),
         nextTurnNumber: z.number().int().positive(),
         gameState: z.string(),
         updated: z.literal(true),
       },
     },
-    async ({ gameId, gameState }) => {
+    async ({ simulationId, gameState }) => {
       const response = {
-        gameId,
+        simulationId,
         turnNumber: 1,
         nextTurnNumber: 2,
         gameState,
@@ -603,7 +601,7 @@ function registerKeepHandTool(server: McpServer) {
       description:
         "Confirm the final opening hand after all mulligans and any bottoming decisions are complete. Call this exactly once, after you have fully decided to keep and after any required bottoming has already happened.",
       inputSchema: {
-        gameId: externalGameIdSchema,
+        simulationId: simulationIdSchema,
         cards: z
           .array(z.string().trim().min(1))
           .min(1)
@@ -612,14 +610,14 @@ function registerKeepHandTool(server: McpServer) {
           ),
       },
       outputSchema: {
-        gameId: z.string(),
+        simulationId: z.string(),
         cards: z.array(z.string()),
         kept: z.literal(true),
       },
     },
-    async ({ gameId, cards }) => {
+    async ({ simulationId, cards }) => {
       const response = {
-        gameId,
+        simulationId,
         cards: [],
         kept: true as const,
       }
@@ -1226,7 +1224,7 @@ function buildStartingHandSimulationPromptFromData({
 
   return `${DRAW_STARTING_HAND_PROMPT}
 
-Game ID: ${simulationId}
+Simulation ID: ${simulationId}
 
 ${commanderLabel}:
 ${commanderNames.join("\n")}
@@ -1308,7 +1306,7 @@ Future prompt-builder reference. This is intentionally commented out because
 the old GameCard type and game-store model have been removed.
 
 function buildTurnSimulationPrompt(
-  gameId: string,
+  simulationId: string,
   currentTurn: number,
   startingHand: readonly string[],
   commanders: readonly GameCard[],
@@ -1348,7 +1346,7 @@ Opponent C Life: 40
 
   return `${SIMULATE_TURN_PROMPT}
 
-Game ID: ${gameId}
+Simulation ID: ${simulationId}
 Current Turn: ${currentTurn}
 
 ===Start Game State===
