@@ -14,6 +14,7 @@ import {
   updateDeckDetails,
 } from "./decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
+import { ensureSimulationsSchema } from "./simulations-postgres.js"
 import {
   createExactScryfallOracleCardMatchMap,
   normalizeScryfallCardNameForExactMatch,
@@ -610,6 +611,7 @@ async function main() {
   await verifyDatabaseConnection()
   await ensureFreshScryfallOracleCards()
   await ensureDecksSchema()
+  await ensureSimulationsSchema()
 
   const host = DEFAULT_HOST
   const port = DEFAULT_PORT
