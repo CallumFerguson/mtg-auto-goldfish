@@ -64,7 +64,7 @@ export function DeckSimulation({
   const [isNewSimulationSelected, setIsNewSimulationSelected] = useState(true)
   const [simulationSeed, setSimulationSeed] = useState("")
   const [useRandomSeed, setUseRandomSeed] = useState(true)
-  const [turnsToSimulate, setTurnsToSimulate] = useState(10)
+  const [turnsToSimulate, setTurnsToSimulate] = useState("5")
   const [openingHandMode, setOpeningHandMode] = useState<
     "simulate" | "provide"
   >("simulate")
@@ -79,6 +79,11 @@ export function DeckSimulation({
       startingHands.find((hand) => hand.id === selectedOpeningHandId) ?? null,
     [startingHands, selectedOpeningHandId]
   )
+  const trimmedSimulationSeed = simulationSeed.trim()
+  const canStartSimulation =
+    (useRandomSeed || trimmedSimulationSeed.length > 0) &&
+    turnsToSimulate.length > 0 &&
+    (openingHandMode !== "provide" || Boolean(selectedOpeningHand))
 
   const loadSimulations = useCallback(async () => {
     setIsLoadingSimulations(true)
@@ -147,6 +152,14 @@ export function DeckSimulation({
     setSelectedOpeningHandId(hand.id)
     setOpeningHandMode("provide")
     setIsCreateHandModalOpen(false)
+  }
+
+  function handleRandomSeedChange(isChecked: boolean) {
+    setUseRandomSeed(isChecked)
+
+    if (isChecked) {
+      setSimulationSeed("")
+    }
   }
 
   return (
@@ -239,7 +252,7 @@ export function DeckSimulation({
                             type="checkbox"
                             checked={useRandomSeed}
                             onChange={(event) =>
-                              setUseRandomSeed(event.target.checked)
+                              handleRandomSeedChange(event.target.checked)
                             }
                           />
                           Use random seed
@@ -254,17 +267,20 @@ export function DeckSimulation({
                       >
                         Turns to simulate
                       </label>
-                      <input
+                      <select
                         id="turns-to-simulate"
                         className="no-number-spinner h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm text-foreground transition-colors outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/30 sm:max-w-36"
-                        type="number"
-                        min={0}
-                        step={1}
                         value={turnsToSimulate}
                         onChange={(event) =>
-                          setTurnsToSimulate(event.target.valueAsNumber || 0)
+                          setTurnsToSimulate(event.target.value)
                         }
-                      />
+                      >
+                        {Array.from({ length: 11 }, (_, turnCount) => (
+                          <option key={turnCount} value={turnCount}>
+                            {turnCount}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <fieldset className="grid gap-3">
@@ -404,9 +420,7 @@ export function DeckSimulation({
                   <div>
                     <Button
                       type="button"
-                      disabled={
-                        openingHandMode === "provide" && !selectedOpeningHand
-                      }
+                      disabled={!canStartSimulation}
                     >
                       <Dices data-icon="inline-start" />
                       Start simulation
