@@ -757,7 +757,7 @@ function SimulationDetails({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm text-sky-300">
-              Simulation {getSimulationLabel(simulation)}
+              Simulation {simulation.id}
             </p>
             <h3 className="text-xl font-semibold">Simulation setup</h3>
           </div>
