@@ -470,9 +470,10 @@ export async function createSimulation(
         random_state,
         turns_to_simulate,
         starting_hand_id,
-        library
+        library,
+        has_drawn_starting_hand
       )
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
       RETURNING
         id,
         deck_id,
@@ -491,6 +492,7 @@ export async function createSimulation(
       input.turnsToSimulate,
       input.startingHandId,
       JSON.stringify(shuffledLibrary.library),
+      input.startingHandId !== null,
     ]
   )
   const simulation = result.rows[0]
@@ -611,6 +613,8 @@ export async function drawStartingHand(
   return withDatabaseTransaction(async (client) => {
     const simulation = await getLockedLibrarySimulation(client, simulationId)
 
+    assertSimulationDoesNotHavePresetStartingHand(simulation)
+
     if (simulation.has_drawn_starting_hand) {
       throw new SimulationValidationError(
         "Starting hand has already been drawn for this simulation."
@@ -663,6 +667,8 @@ export async function mulliganSimulation(
 
   return withDatabaseTransaction(async (client) => {
     const simulation = await getLockedLibrarySimulation(client, simulationId)
+
+    assertSimulationDoesNotHavePresetStartingHand(simulation)
 
     if (!simulation.has_drawn_starting_hand) {
       throw new SimulationValidationError(
@@ -869,6 +875,27 @@ export async function takeCardsFromSimulationLibrary(
       cardsRemaining: library.length,
     }
   })
+}
+
+export async function assertCanKeepSimulationHand(simulationId: string) {
+  const result = await queryDatabase<{
+    starting_hand_id: string | null
+  }>(
+    `
+      SELECT starting_hand_id
+      FROM simulations
+      WHERE id = $1
+    `,
+    [simulationId]
+  )
+
+  const simulation = result.rows[0]
+
+  if (!simulation) {
+    throw new SimulationValidationError("Simulation not found.")
+  }
+
+  assertSimulationDoesNotHavePresetStartingHand(simulation)
 }
 
 export async function deleteSimulation(
@@ -1158,6 +1185,7 @@ type SimulationPromptCardRow = {
 type LibrarySimulationRow = {
   deck_id: string
   seed: string
+  starting_hand_id: string | null
   random_state: string
   library: unknown
   mulligan_count: number
@@ -1238,6 +1266,7 @@ async function getLockedLibrarySimulation(
       SELECT
         deck_id,
         seed,
+        starting_hand_id,
         random_state,
         library,
         mulligan_count,
@@ -1254,6 +1283,18 @@ async function getLockedLibrarySimulation(
   }
 
   return result.rows[0]
+}
+
+function assertSimulationDoesNotHavePresetStartingHand({
+  starting_hand_id: startingHandId,
+}: {
+  starting_hand_id: string | null
+}) {
+  if (startingHandId !== null) {
+    throw new SimulationValidationError(
+      "This simulation uses a preset starting hand, so opening-hand tools are not allowed."
+    )
+  }
 }
 
 async function updateSimulationLibrary(

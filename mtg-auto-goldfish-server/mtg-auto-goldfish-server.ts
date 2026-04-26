@@ -16,6 +16,7 @@ import {
 } from "./decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
 import {
+  assertCanKeepSimulationHand,
   createSimulation,
   createStartingHand,
   deleteSimulation,
@@ -622,6 +623,8 @@ function registerKeepHandTool(server: McpServer) {
       },
     },
     async ({ simulationId, cards }) => {
+      await assertCanKeepSimulationHand(simulationId)
+
       const response = {
         simulationId,
         cards,
