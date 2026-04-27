@@ -164,11 +164,20 @@ function createServer(
   return server
 }
 
-function formatToolResultContent(summary: string, structuredContent: unknown) {
-  return `${summary}
-
-Result JSON:
-${JSON.stringify(structuredContent, null, 2)}`
+function createToolResultContent(message: string, data: unknown) {
+  return [
+    {
+      type: "text" as const,
+      text: JSON.stringify(
+        {
+          message,
+          data,
+        },
+        null,
+        2
+      ),
+    },
+  ]
 }
 
 function createOpeningHandServer() {
@@ -202,26 +211,15 @@ function registerDrawCardFromTopTool(server: McpServer) {
         simulationId: simulationIdSchema,
         count: z.number().int().positive().describe("How many cards to draw."),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        cards: z.array(z.string()),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId, count }) => {
       const response = await drawCardsFromTop(simulationId, count)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Drew ${response.cards.length} card(s) from the top. ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Drew ${response.cards.length} card(s) from the top. ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -238,26 +236,15 @@ function registerDrawCardFromBottomTool(server: McpServer) {
         simulationId: simulationIdSchema,
         count: z.number().int().positive().describe("How many cards to draw."),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        cards: z.array(z.string()),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId, count }) => {
       const response = await drawCardsFromBottom(simulationId, count)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Drew ${response.cards.length} card(s) from the bottom. ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Drew ${response.cards.length} card(s) from the bottom. ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -273,26 +260,15 @@ function registerDrawStartingHandTool(server: McpServer) {
       inputSchema: {
         simulationId: simulationIdSchema,
       },
-      outputSchema: {
-        simulationId: z.string(),
-        cards: z.array(z.string()),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId }) => {
       const response = await drawStartingHand(simulationId)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Drew the starting hand. ${response.cardsRemaining} card(s) remain in the library.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Drew the starting hand. ${response.cardsRemaining} card(s) remain in the library.`,
+          response
+        ),
       }
     }
   )
@@ -315,32 +291,15 @@ function registerMulliganTool(server: McpServer) {
             "A short explanation of why this hand is being mulliganed."
           ),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        reason: z.string(),
-        cards: z.array(z.string()),
-        cardsRemaining: z.number().int().nonnegative(),
-        mulliganCount: z.number().int().positive(),
-        cardsToBottomIfKept: z.number().int().nonnegative(),
-        reminder: z.string(),
-        replacesPreviousOpeningHand: z.boolean(),
-        alreadyDrewReplacementHand: z.boolean(),
-      },
     },
     async ({ simulationId, reason }) => {
       const response = await mulliganSimulation(simulationId, reason)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Mulligan ${response.mulliganCount}: drew a replacement seven-card hand. ${response.cardsRemaining} card(s) remain. ${response.reminder}`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Mulligan ${response.mulliganCount}: drew a replacement seven-card hand. ${response.cardsRemaining} card(s) remain. ${response.reminder}`,
+          response
+        ),
       }
     }
   )
@@ -373,15 +332,6 @@ function registerReturnCardToLibraryTool(server: McpServer) {
             "How many cards should remain above the card if using top, or below the card if using bottom. Position 0 puts it directly on that end. For example, if you want the card 3rd from the top, use side top, position 2."
           ),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        card: z.string(),
-        side: z.enum(["top", "bottom"]),
-        position: z.number().int().nonnegative(),
-        insertedFromTop: z.number().int().nonnegative(),
-        insertedFromBottom: z.number().int().nonnegative(),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId, card, side, position }) => {
       const response = await returnCardToSimulationLibrary({
@@ -392,16 +342,10 @@ function registerReturnCardToLibraryTool(server: McpServer) {
       })
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Returned ${JSON.stringify(response.card)} to the ${side} of the library. ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Returned ${JSON.stringify(response.card)} to the ${side} of the library. ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -431,13 +375,6 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
             "Whether to shuffle the returned cards before putting them back."
           ),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        cards: z.array(z.string()),
-        side: z.enum(["top", "bottom"]),
-        randomizeOrder: z.boolean(),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId, cards, side, randomizeOrder }) => {
       const response = await returnCardsToSimulationLibrary({
@@ -448,16 +385,10 @@ function registerReturnCardsToLibraryTool(server: McpServer) {
       })
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Returned ${response.cards.length} card(s) to the ${side} of the library. ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Returned ${response.cards.length} card(s) to the ${side} of the library. ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -479,32 +410,15 @@ function registerTakeCardsFromLibraryTool(server: McpServer) {
             "The card names to remove from the library. Each request is matched independently against the current remaining library."
           ),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        matches: z.array(
-          z.object({
-            requestedCard: z.string(),
-            foundCard: z.string().nullable(),
-          })
-        ),
-        foundCards: z.array(z.string()),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId, cards }) => {
       const response = await takeCardsFromSimulationLibrary(simulationId, cards)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Found and removed ${response.foundCards.length} requested card(s). ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Found and removed ${response.foundCards.length} requested card(s). ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -519,25 +433,15 @@ function registerShuffleLibraryTool(server: McpServer) {
       inputSchema: {
         simulationId: simulationIdSchema,
       },
-      outputSchema: {
-        simulationId: z.string(),
-        cardsRemaining: z.number().int().nonnegative(),
-      },
     },
     async ({ simulationId }) => {
       const response = await shuffleSimulationLibrary(simulationId)
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              `Shuffled the library. ${response.cardsRemaining} card(s) remain.`,
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          `Shuffled the library. ${response.cardsRemaining} card(s) remain.`,
+          response
+        ),
       }
     }
   )
@@ -560,12 +464,6 @@ function registerLogTurnActionTool(server: McpServer) {
             "A concise description of the action being committed, such as a phase change, land play, spell cast, attack, or other turn progression."
           ),
       },
-      outputSchema: {
-        simulationId: z.string(),
-        turnNumber: z.number().int().positive(),
-        latestAction: z.string(),
-        actions: z.array(z.string()),
-      },
     },
     async ({ simulationId, action }) => {
       const response = {
@@ -576,16 +474,10 @@ function registerLogTurnActionTool(server: McpServer) {
       }
 
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: formatToolResultContent(
-              "Placeholder: would log this turn action. No action was persisted.",
-              response
-            ),
-          },
-        ],
-        structuredContent: response,
+        content: createToolResultContent(
+          "Placeholder: would log this turn action. No action was persisted.",
+          response
+        ),
       }
     }
   )
