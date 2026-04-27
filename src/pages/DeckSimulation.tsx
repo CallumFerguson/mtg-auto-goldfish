@@ -841,10 +841,7 @@ function SimulationDetails({
 
       if (!response.ok) {
         setOpeningHandRunError(
-          await readApiError(
-            response,
-            "Opening hand run could not be started."
-          )
+          await readApiError(response, "Opening hand run could not be started.")
         )
         return
       }
@@ -1280,9 +1277,7 @@ function SimulationResultsPanel({
     })),
     ...resultsInfo.turnLlmRuns.map((run) => ({
       ...run,
-      resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${
-        run.attemptNumber
-      }`,
+      resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${run.attemptNumber}`,
     })),
   ]
   const runsWithChunks = runs.filter((run) => run.chunks.length > 0)
@@ -1516,6 +1511,14 @@ function SimulationDebugRunGroup({
                 Attempt:{" "}
                 <span className="text-foreground">{run.attemptNumber}</span>
               </p>
+              {run.openingHandIsValid !== undefined ? (
+                <p className="text-muted-foreground">
+                  Valid opening hand:{" "}
+                  <span className="text-foreground">
+                    {run.openingHandIsValid ? "Yes" : "No"}
+                  </span>
+                </p>
+              ) : null}
               {run.turnNumber ? (
                 <p className="text-muted-foreground">
                   Turn:{" "}

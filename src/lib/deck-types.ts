@@ -91,6 +91,7 @@ export type SimulationDebugLlmRun = {
   runtimeStreamKey: string | null
   attemptNumber: number
   turnNumber?: number
+  openingHandIsValid?: boolean
   chunks: SimulationDebugLlmRunChunk[]
 }
 

@@ -96,6 +96,7 @@ export type SimulationDebugLlmRun = {
   runtimeStreamKey: string | null
   attemptNumber: number
   turnNumber?: number
+  openingHandIsValid?: boolean
   chunks: SimulationDebugLlmRunChunk[]
 }
 
@@ -329,12 +330,17 @@ export async function ensureSimulationsSchema() {
       attempt_number integer NOT NULL CHECK (attempt_number > 0),
       opening_hand jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(opening_hand) = 'array'),
       library_snapshot jsonb CHECK (library_snapshot IS NULL OR jsonb_typeof(library_snapshot) = 'array'),
+      opening_hand_is_valid boolean NOT NULL DEFAULT false,
       random_state_snapshot bigint,
       created_at timestamptz NOT NULL DEFAULT now(),
 
       UNIQUE (simulation_id, attempt_number),
       UNIQUE (llm_run_id)
     )
+  `)
+  await queryDatabase(`
+    ALTER TABLE simulation_opening_hand_llm_runs
+    ADD COLUMN IF NOT EXISTS opening_hand_is_valid boolean NOT NULL DEFAULT false
   `)
   await queryDatabase(`
     CREATE TABLE IF NOT EXISTS simulation_turn_llm_runs (
@@ -1167,12 +1173,25 @@ export async function completeOpeningHandLlmRun({
     const snapshotResult = await client.query<{
       library: unknown
       random_state: string
+      mulligan_count: number
+      deck_library_card_count: number
     }>(
       `
-        SELECT simulation.library, simulation.random_state
+        SELECT
+          simulation.library,
+          simulation.random_state,
+          simulation.mulligan_count,
+          COALESCE(deck_counts.library_card_count, 0)::integer AS deck_library_card_count
         FROM simulation_opening_hand_llm_runs opening_run
         JOIN simulations simulation
           ON simulation.id = opening_run.simulation_id
+        LEFT JOIN (
+          SELECT deck_id, SUM(quantity)::integer AS library_card_count
+          FROM deck_cards
+          WHERE zone = 'library'
+          GROUP BY deck_id
+        ) deck_counts
+          ON deck_counts.deck_id = simulation.deck_id
         WHERE opening_run.llm_run_id = $1
       `,
       [llmRunId]
@@ -1183,20 +1202,29 @@ export async function completeOpeningHandLlmRun({
     }
 
     const snapshot = snapshotResult.rows[0]
+    const librarySnapshot = parseStringArray(snapshot.library)
+    const openingHandIsValid = isValidCompletedOpeningHand({
+      deckLibraryCardCount: Number(snapshot.deck_library_card_count),
+      librarySnapshot,
+      mulliganCount: snapshot.mulligan_count,
+      openingHand,
+    })
 
     await client.query(
       `
         UPDATE simulation_opening_hand_llm_runs
         SET opening_hand = $2::jsonb,
             library_snapshot = $3::jsonb,
-            random_state_snapshot = $4
+            random_state_snapshot = $4,
+            opening_hand_is_valid = $5
         WHERE llm_run_id = $1
       `,
       [
         llmRunId,
         JSON.stringify(openingHand),
-        JSON.stringify(parseStringArray(snapshot.library)),
+        JSON.stringify(librarySnapshot),
         snapshot.random_state,
+        openingHandIsValid,
       ]
     )
 
@@ -1329,13 +1357,15 @@ export async function getSimulationDebugInfo(
   const openingHandRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_opening_hand_llm_runs",
-    selectColumns: "run.attempt_number, NULL::integer AS turn_number",
+    selectColumns:
+      "run.attempt_number, NULL::integer AS turn_number, run.opening_hand_is_valid",
     orderBy: "run.attempt_number ASC",
   })
   const turnRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_turn_llm_runs",
-    selectColumns: "run.attempt_number, run.turn_number",
+    selectColumns:
+      "run.attempt_number, run.turn_number, NULL::boolean AS opening_hand_is_valid",
     orderBy: "run.turn_number ASC, run.attempt_number ASC",
   })
 
@@ -1369,14 +1399,16 @@ export async function getSimulationResultsInfo(
   const openingHandRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_opening_hand_llm_runs",
-    selectColumns: "run.attempt_number, NULL::integer AS turn_number",
+    selectColumns:
+      "run.attempt_number, NULL::integer AS turn_number, run.opening_hand_is_valid",
     orderBy: "run.attempt_number ASC",
     excludeChunkKinds: SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
   })
   const turnRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_turn_llm_runs",
-    selectColumns: "run.attempt_number, run.turn_number",
+    selectColumns:
+      "run.attempt_number, run.turn_number, NULL::boolean AS opening_hand_is_valid",
     orderBy: "run.turn_number ASC, run.attempt_number ASC",
     excludeChunkKinds: SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
   })
@@ -1499,6 +1531,7 @@ type SimulationDebugLlmRunRow = {
   runtime_stream_key: string | null
   attempt_number: number
   turn_number: number | null
+  opening_hand_is_valid: boolean | null
   chunk_id: string | null
   sequence: number | null
   kind: LlmChunkKind | null
@@ -1579,6 +1612,10 @@ async function getSimulationDebugLlmRuns({
 
       if (row.turn_number !== null) {
         run.turnNumber = row.turn_number
+      }
+
+      if (row.opening_hand_is_valid !== null) {
+        run.openingHandIsValid = row.opening_hand_is_valid
       }
 
       runsById.set(row.llm_run_id, run)
@@ -1695,6 +1732,28 @@ function parseStringArray(value: unknown) {
   }
 
   return value.filter((item): item is string => typeof item === "string")
+}
+
+export function isValidCompletedOpeningHand({
+  deckLibraryCardCount,
+  librarySnapshot,
+  mulliganCount,
+  openingHand,
+}: {
+  deckLibraryCardCount: number
+  librarySnapshot: readonly string[]
+  mulliganCount: number
+  openingHand: readonly string[]
+}) {
+  const expectedOpeningHandCount = Math.max(
+    0,
+    7 - Math.max(0, mulliganCount - 1)
+  )
+
+  return (
+    openingHand.length === expectedOpeningHandCount &&
+    openingHand.length + librarySnapshot.length === deckLibraryCardCount
+  )
 }
 
 async function getLockedLibrarySimulation(

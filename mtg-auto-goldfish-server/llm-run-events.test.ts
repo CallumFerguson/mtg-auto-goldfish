@@ -6,7 +6,10 @@ import {
   normalizeOpenAiStreamEvent,
   parseOpeningHandFromResponseText,
 } from "./llm-run-events.js"
-import { SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS } from "./simulations-postgres.js"
+import {
+  SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
+  isValidCompletedOpeningHand,
+} from "./simulations-postgres.js"
 
 test("normalizes valid MCP output JSON", () => {
   const chunk = normalizeOpenAiStreamEvent({
@@ -81,4 +84,70 @@ test("normal results exclude only raw and completed chunks", () => {
     "raw_event",
     "completed",
   ])
+})
+
+test("validates completed opening hand size after commander mulligans", () => {
+  assert.equal(
+    isValidCompletedOpeningHand({
+      deckLibraryCardCount: 99,
+      librarySnapshot: Array.from(
+        { length: 92 },
+        (_, index) => `Card ${index}`
+      ),
+      mulliganCount: 0,
+      openingHand: Array.from({ length: 7 }, (_, index) => `Hand ${index}`),
+    }),
+    true
+  )
+  assert.equal(
+    isValidCompletedOpeningHand({
+      deckLibraryCardCount: 99,
+      librarySnapshot: Array.from(
+        { length: 92 },
+        (_, index) => `Card ${index}`
+      ),
+      mulliganCount: 1,
+      openingHand: Array.from({ length: 7 }, (_, index) => `Hand ${index}`),
+    }),
+    true
+  )
+  assert.equal(
+    isValidCompletedOpeningHand({
+      deckLibraryCardCount: 99,
+      librarySnapshot: Array.from(
+        { length: 93 },
+        (_, index) => `Card ${index}`
+      ),
+      mulliganCount: 2,
+      openingHand: Array.from({ length: 6 }, (_, index) => `Hand ${index}`),
+    }),
+    true
+  )
+})
+
+test("rejects completed opening hands with wrong hand or deck totals", () => {
+  assert.equal(
+    isValidCompletedOpeningHand({
+      deckLibraryCardCount: 99,
+      librarySnapshot: Array.from(
+        { length: 92 },
+        (_, index) => `Card ${index}`
+      ),
+      mulliganCount: 2,
+      openingHand: Array.from({ length: 7 }, (_, index) => `Hand ${index}`),
+    }),
+    false
+  )
+  assert.equal(
+    isValidCompletedOpeningHand({
+      deckLibraryCardCount: 99,
+      librarySnapshot: Array.from(
+        { length: 92 },
+        (_, index) => `Card ${index}`
+      ),
+      mulliganCount: 3,
+      openingHand: Array.from({ length: 5 }, (_, index) => `Hand ${index}`),
+    }),
+    false
+  )
 })
