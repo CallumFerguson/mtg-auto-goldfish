@@ -25,11 +25,8 @@ export type LlmChunkKind =
   | "raw_event"
   | "message_delta"
   | "reasoning_delta"
-  | "tool_call"
-  | "tool_result"
-  | "usage"
+  | "completed"
   | "error"
-  | "metadata"
 
 export type CreateOpeningHandLlmRunInput = {
   simulationId: string
@@ -52,6 +49,7 @@ export type LlmRunChunkInput = {
   sequence: number
   kind: LlmChunkKind
   providerEventType: string | null
+  itemType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
   payload: unknown
@@ -69,6 +67,7 @@ export type SimulationDebugLlmRunChunk = {
   sequence: number
   kind: LlmChunkKind
   providerEventType: string | null
+  itemType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
   payload: unknown
@@ -257,11 +256,8 @@ export async function ensureSimulationsSchema() {
     "raw_event",
     "message_delta",
     "reasoning_delta",
-    "tool_call",
-    "tool_result",
-    "usage",
+    "completed",
     "error",
-    "metadata",
   ])
 
   await queryDatabase(`
@@ -348,6 +344,7 @@ export async function ensureSimulationsSchema() {
       sequence integer NOT NULL,
       kind llm_chunk_kind NOT NULL,
       provider_event_type text,
+      item_type text,
       reasoning_delta text,
       output_delta text,
       payload jsonb NOT NULL DEFAULT '{}',
@@ -355,6 +352,42 @@ export async function ensureSimulationsSchema() {
 
       UNIQUE (llm_run_id, sequence)
     )
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_run_chunks
+      ADD COLUMN IF NOT EXISTS item_type text
+  `)
+  await queryDatabase(`
+    UPDATE llm_run_chunks
+    SET kind = CASE
+      WHEN provider_event_type = 'response.completed' THEN 'completed'::llm_chunk_kind
+      ELSE 'raw_event'::llm_chunk_kind
+    END
+    WHERE provider_event_type = 'response.completed'
+      OR kind NOT IN (
+        'raw_event',
+        'message_delta',
+        'reasoning_delta',
+        'completed',
+        'error'
+      )
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_run_chunks
+      DROP CONSTRAINT IF EXISTS llm_run_chunks_kind_active_values_check
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_run_chunks
+      ADD CONSTRAINT llm_run_chunks_kind_active_values_check
+      CHECK (
+        kind IN (
+          'raw_event',
+          'message_delta',
+          'reasoning_delta',
+          'completed',
+          'error'
+        )
+      )
   `)
   await queryDatabase(`
     CREATE TABLE IF NOT EXISTS simulation_opening_hand_llm_runs (
@@ -1091,19 +1124,20 @@ export async function appendLlmRunChunks(
 
   const values: unknown[] = []
   const valuePlaceholders = chunks.map((chunk, index) => {
-    const offset = index * 7
+    const offset = index * 8
 
     values.push(
       llmRunId,
       chunk.sequence,
       chunk.kind,
       chunk.providerEventType,
+      chunk.itemType,
       chunk.reasoningDelta,
       chunk.outputDelta,
       JSON.stringify(chunk.payload)
     )
 
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb)`
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}::jsonb)`
   })
 
   await queryDatabase(
@@ -1113,6 +1147,7 @@ export async function appendLlmRunChunks(
         sequence,
         kind,
         provider_event_type,
+        item_type,
         reasoning_delta,
         output_delta,
         payload
@@ -1338,16 +1373,47 @@ export async function deleteSimulation(
   deckId: string,
   simulationId: string
 ): Promise<boolean> {
-  const result = await queryDatabase(
-    `
-      DELETE FROM simulations
-      WHERE id = $1
-        AND deck_id = $2
-    `,
-    [simulationId, deckId]
-  )
+  return withDatabaseTransaction(async (client) => {
+    const linkedLlmRunResult = await client.query<{ llm_run_id: string }>(
+      `
+        SELECT llm_run_id
+        FROM simulation_opening_hand_llm_runs
+        WHERE simulation_id = $1
+        UNION
+        SELECT llm_run_id
+        FROM simulation_turn_llm_runs
+        WHERE simulation_id = $1
+      `,
+      [simulationId]
+    )
 
-  return (result.rowCount ?? 0) > 0
+    const result = await client.query(
+      `
+        DELETE FROM simulations
+        WHERE id = $1
+          AND deck_id = $2
+      `,
+      [simulationId, deckId]
+    )
+
+    if ((result.rowCount ?? 0) === 0) {
+      return false
+    }
+
+    const llmRunIds = linkedLlmRunResult.rows.map((row) => row.llm_run_id)
+
+    if (llmRunIds.length > 0) {
+      await client.query(
+        `
+          DELETE FROM llm_runs
+          WHERE id = ANY($1::uuid[])
+        `,
+        [llmRunIds]
+      )
+    }
+
+    return true
+  })
 }
 
 export async function getStartingHandSimulationPromptData(
@@ -1613,6 +1679,7 @@ type SimulationDebugLlmRunRow = {
   sequence: number | null
   kind: LlmChunkKind | null
   provider_event_type: string | null
+  item_type: string | null
   reasoning_delta: string | null
   output_delta: string | null
   payload: unknown
@@ -1644,6 +1711,7 @@ async function getSimulationDebugLlmRuns({
         chunk.sequence,
         chunk.kind,
         chunk.provider_event_type,
+        chunk.item_type,
         chunk.reasoning_delta,
         chunk.output_delta,
         chunk.payload,
@@ -1688,6 +1756,7 @@ async function getSimulationDebugLlmRuns({
         sequence: row.sequence,
         kind: row.kind,
         providerEventType: row.provider_event_type,
+        itemType: row.item_type,
         reasoningDelta: row.reasoning_delta,
         outputDelta: row.output_delta,
         payload: row.payload,
@@ -2193,15 +2262,22 @@ function isUniqueViolation(error: unknown) {
 }
 
 async function createEnumType(name: string, values: readonly string[]) {
+  const enumValues = values.map((value) => `'${value}'`).join(", ")
+
   await queryDatabase(`
     DO $$
     BEGIN
-      CREATE TYPE ${name} AS ENUM (${values
-        .map((value) => `'${value}'`)
-        .join(", ")});
+      CREATE TYPE ${name} AS ENUM (${enumValues});
     EXCEPTION
       WHEN duplicate_object THEN null;
     END
     $$;
   `)
+
+  for (const value of values) {
+    await queryDatabase(`
+      ALTER TYPE ${name}
+        ADD VALUE IF NOT EXISTS '${value}'
+    `)
+  }
 }

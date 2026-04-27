@@ -73,6 +73,7 @@ export type SimulationDebugLlmRunChunk = {
   sequence: number
   kind: string
   providerEventType: string | null
+  itemType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
   payload: unknown

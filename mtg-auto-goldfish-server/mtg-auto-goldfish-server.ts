@@ -837,12 +837,13 @@ function normalizeOpenAiStreamEvent(
 ): Omit<LlmRunChunkInput, "sequence"> {
   const eventRecord = asRecord(event)
   const eventType = getStringProperty(eventRecord, "type")
+  const itemType = getNestedStringProperty(eventRecord, "item", "type")
   const payload = event ?? {}
 
   if (eventType === "response.output_text.delta") {
     const delta = getStringProperty(eventRecord, "delta")
 
-    return createChunk("message_delta", eventType, {
+    return createChunk("message_delta", eventType, itemType, {
       outputDelta: delta,
       payload,
     })
@@ -851,29 +852,14 @@ function normalizeOpenAiStreamEvent(
   if (eventType === "response.reasoning_summary_text.delta") {
     const delta = getStringProperty(eventRecord, "delta")
 
-    return createChunk("reasoning_delta", eventType, {
+    return createChunk("reasoning_delta", eventType, itemType, {
       reasoningDelta: delta,
       payload,
     })
   }
 
-  if (eventType?.startsWith("response.mcp_call.completed")) {
-    return createChunk("tool_result", eventType, {
-      payload,
-    })
-  }
-
-  if (
-    eventType?.startsWith("response.mcp_call") ||
-    eventType?.startsWith("response.mcp_list_tools")
-  ) {
-    return createChunk("tool_call", eventType, {
-      payload,
-    })
-  }
-
   if (eventType === "response.completed") {
-    return createChunk("usage", eventType, {
+    return createChunk("completed", eventType, itemType, {
       payload,
     })
   }
@@ -883,24 +869,18 @@ function normalizeOpenAiStreamEvent(
     eventType === "response.incomplete" ||
     eventType?.endsWith(".failed")
   ) {
-    return createChunk("error", eventType, {
+    return createChunk("error", eventType, itemType, {
       payload,
     })
   }
 
-  if (eventType?.startsWith("response.reasoning_summary")) {
-    return createChunk("metadata", eventType, {
-      payload,
-    })
-  }
-
-  return createChunk("raw_event", eventType ?? null, {
+  return createChunk("raw_event", eventType ?? null, itemType, {
     payload,
   })
 }
 
 function createErrorChunk(error: unknown): Omit<LlmRunChunkInput, "sequence"> {
-  return createChunk("error", "server.error", {
+  return createChunk("error", "server.error", null, {
     payload: {
       message: getErrorMessage(error),
       name: error instanceof Error ? error.name : null,
@@ -911,6 +891,7 @@ function createErrorChunk(error: unknown): Omit<LlmRunChunkInput, "sequence"> {
 function createChunk(
   kind: LlmChunkKind,
   providerEventType: string | null,
+  itemType: string | null,
   values: {
     reasoningDelta?: string | null
     outputDelta?: string | null
@@ -920,6 +901,7 @@ function createChunk(
   return {
     kind,
     providerEventType,
+    itemType,
     reasoningDelta: values.reasoningDelta ?? null,
     outputDelta: values.outputDelta ?? null,
     payload: values.payload,
@@ -1015,6 +997,14 @@ function getStringProperty(
   const value = record[property]
 
   return typeof value === "string" ? value : null
+}
+
+function getNestedStringProperty(
+  record: Record<string, unknown>,
+  parentProperty: string,
+  childProperty: string
+) {
+  return getStringProperty(asRecord(record[parentProperty]), childProperty)
 }
 
 function isAbortError(error: unknown) {
