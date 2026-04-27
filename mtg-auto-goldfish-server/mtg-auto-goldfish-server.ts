@@ -30,6 +30,7 @@ import {
   drawStartingHand,
   ensureSimulationsSchema,
   failLlmRun,
+  getSimulationDebugInfo,
   getStartingHandSimulationPromptData,
   listSimulationsForDeck,
   listStartingHandsForDeck,
@@ -1236,6 +1237,34 @@ async function main() {
         console.error("Failed to stop simulation:", error)
         res.status(500).json({
           error: "Failed to stop simulation.",
+        })
+      }
+    }
+  )
+
+  app.get(
+    "/decks/:deckId/simulations/:simulationId/debug",
+    async (req: Request, res: Response) => {
+      const deckId = String(req.params.deckId)
+      const simulationId = String(req.params.simulationId)
+
+      try {
+        res.status(200).json({
+          debug: await getSimulationDebugInfo(deckId, simulationId),
+        })
+      } catch (error) {
+        if (error instanceof SimulationValidationError) {
+          const status = error.message === "Simulation not found." ? 404 : 400
+
+          res.status(status).json({
+            error: error.message,
+          })
+          return
+        }
+
+        console.error("Failed to load simulation debug info:", error)
+        res.status(500).json({
+          error: "Failed to load simulation debug info.",
         })
       }
     }

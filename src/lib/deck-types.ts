@@ -68,6 +68,42 @@ export type StopSimulationResponse = {
   cancelRequestedOpeningHandLlmRunIds: string[]
 }
 
+export type SimulationDebugLlmRunChunk = {
+  id: number
+  sequence: number
+  kind: string
+  providerEventType: string | null
+  reasoningDelta: string | null
+  outputDelta: string | null
+  content: string | null
+  payload: unknown
+  receivedAt: string
+}
+
+export type SimulationDebugLlmRun = {
+  llmRunId: string
+  phase: string
+  provider: string
+  model: string
+  status: string
+  runtimeStreamKey: string | null
+  attemptNumber: number
+  turnNumber?: number
+  chunks: SimulationDebugLlmRunChunk[]
+}
+
+export type SimulationDebugInfo = {
+  simulationId: string
+  openingHandLlmRunCount: number
+  turnLlmRunCount: number
+  openingHandLlmRuns: SimulationDebugLlmRun[]
+  turnLlmRuns: SimulationDebugLlmRun[]
+}
+
+export type SimulationDebugResponse = {
+  debug: SimulationDebugInfo
+}
+
 export type StartingHandCard = {
   deckCardId: number
   oracleId: string

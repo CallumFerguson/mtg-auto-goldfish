@@ -65,6 +65,38 @@ export type ActiveOpeningHandLlmRun = {
   status: LlmRunStatus
 }
 
+export type SimulationDebugLlmRunChunk = {
+  id: number
+  sequence: number
+  kind: LlmChunkKind
+  providerEventType: string | null
+  reasoningDelta: string | null
+  outputDelta: string | null
+  content: string | null
+  payload: unknown
+  receivedAt: string
+}
+
+export type SimulationDebugLlmRun = {
+  llmRunId: string
+  phase: LlmRunPhase
+  provider: string
+  model: string
+  status: LlmRunStatus
+  runtimeStreamKey: string | null
+  attemptNumber: number
+  turnNumber?: number
+  chunks: SimulationDebugLlmRunChunk[]
+}
+
+export type SimulationDebugInfo = {
+  simulationId: string
+  openingHandLlmRunCount: number
+  turnLlmRunCount: number
+  openingHandLlmRuns: SimulationDebugLlmRun[]
+  turnLlmRuns: SimulationDebugLlmRun[]
+}
+
 export type SimulationSummary = {
   id: string
   deckId: string
@@ -1267,6 +1299,46 @@ export async function requestCancelOpeningHandLlmRuns(
   })
 }
 
+export async function getSimulationDebugInfo(
+  deckId: string,
+  simulationId: string
+): Promise<SimulationDebugInfo> {
+  const simulationResult = await queryDatabase(
+    `
+      SELECT id
+      FROM simulations
+      WHERE id = $1
+        AND deck_id = $2
+    `,
+    [simulationId, deckId]
+  )
+
+  if (simulationResult.rowCount === 0) {
+    throw new SimulationValidationError("Simulation not found.")
+  }
+
+  const openingHandRuns = await getSimulationDebugLlmRuns({
+    simulationId,
+    tableName: "simulation_opening_hand_llm_runs",
+    selectColumns: "run.attempt_number, NULL::integer AS turn_number",
+    orderBy: "run.attempt_number ASC",
+  })
+  const turnRuns = await getSimulationDebugLlmRuns({
+    simulationId,
+    tableName: "simulation_turn_llm_runs",
+    selectColumns: "run.attempt_number, run.turn_number",
+    orderBy: "run.turn_number ASC, run.attempt_number ASC",
+  })
+
+  return {
+    simulationId,
+    openingHandLlmRunCount: openingHandRuns.length,
+    turnLlmRunCount: turnRuns.length,
+    openingHandLlmRuns: openingHandRuns,
+    turnLlmRuns: turnRuns,
+  }
+}
+
 export async function deleteSimulation(
   deckId: string,
   simulationId: string
@@ -1531,6 +1603,108 @@ type StartingHandRow = {
   scryfall_uri: string | null
   default_image_url: string | null
   type_line: string | null
+}
+
+type SimulationDebugLlmRunRow = {
+  llm_run_id: string
+  phase: LlmRunPhase
+  provider: string
+  model: string
+  status: LlmRunStatus
+  runtime_stream_key: string | null
+  attempt_number: number
+  turn_number: number | null
+  chunk_id: string | null
+  sequence: number | null
+  kind: LlmChunkKind | null
+  provider_event_type: string | null
+  reasoning_delta: string | null
+  output_delta: string | null
+  content: string | null
+  payload: unknown
+  received_at: Date | null
+}
+
+async function getSimulationDebugLlmRuns({
+  orderBy,
+  selectColumns,
+  simulationId,
+  tableName,
+}: {
+  simulationId: string
+  tableName: "simulation_opening_hand_llm_runs" | "simulation_turn_llm_runs"
+  selectColumns: string
+  orderBy: string
+}): Promise<SimulationDebugLlmRun[]> {
+  const result = await queryDatabase<SimulationDebugLlmRunRow>(
+    `
+      SELECT
+        llm_run.id AS llm_run_id,
+        llm_run.phase,
+        llm_run.provider,
+        llm_run.model,
+        llm_run.status,
+        llm_run.runtime_stream_key,
+        ${selectColumns},
+        chunk.id AS chunk_id,
+        chunk.sequence,
+        chunk.kind,
+        chunk.provider_event_type,
+        chunk.reasoning_delta,
+        chunk.output_delta,
+        chunk.content,
+        chunk.payload,
+        chunk.received_at
+      FROM ${tableName} run
+      JOIN llm_runs llm_run
+        ON llm_run.id = run.llm_run_id
+      LEFT JOIN llm_run_chunks chunk
+        ON chunk.llm_run_id = llm_run.id
+      WHERE run.simulation_id = $1
+      ORDER BY ${orderBy}, chunk.sequence ASC NULLS LAST
+    `,
+    [simulationId]
+  )
+  const runsById = new Map<string, SimulationDebugLlmRun>()
+
+  for (const row of result.rows) {
+    let run = runsById.get(row.llm_run_id)
+
+    if (!run) {
+      run = {
+        llmRunId: row.llm_run_id,
+        phase: row.phase,
+        provider: row.provider,
+        model: row.model,
+        status: row.status,
+        runtimeStreamKey: row.runtime_stream_key,
+        attemptNumber: row.attempt_number,
+        chunks: [],
+      }
+
+      if (row.turn_number !== null) {
+        run.turnNumber = row.turn_number
+      }
+
+      runsById.set(row.llm_run_id, run)
+    }
+
+    if (row.chunk_id !== null && row.sequence !== null && row.kind !== null) {
+      run.chunks.push({
+        id: Number(row.chunk_id),
+        sequence: row.sequence,
+        kind: row.kind,
+        providerEventType: row.provider_event_type,
+        reasoningDelta: row.reasoning_delta,
+        outputDelta: row.output_delta,
+        content: row.content,
+        payload: row.payload,
+        receivedAt: row.received_at?.toISOString() ?? "",
+      })
+    }
+  }
+
+  return Array.from(runsById.values())
 }
 
 type SimulationPromptCardRow = {

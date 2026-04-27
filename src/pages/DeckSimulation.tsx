@@ -25,7 +25,10 @@ import type {
   CreateStartingHandResponse,
   DeckCard,
   Simulation,
+  SimulationDebugInfo,
+  SimulationDebugLlmRunChunk,
   SimulationsResponse,
+  SimulationDebugResponse,
   StartingHand,
   StartingHandsResponse,
   StopSimulationResponse,
@@ -767,6 +770,9 @@ function SimulationDetails({
   )
   const [stopSimulationResult, setStopSimulationResult] =
     useState<StopSimulationResponse | null>(null)
+  const [isLoadingDebugInfo, setIsLoadingDebugInfo] = useState(false)
+  const [debugInfoError, setDebugInfoError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<SimulationDebugInfo | null>(null)
   const shouldSimulateOpeningHand = simulation.startingHandId === null
 
   useEffect(() => {
@@ -776,6 +782,9 @@ function SimulationDetails({
     setIsStoppingSimulation(false)
     setStopSimulationError(null)
     setStopSimulationResult(null)
+    setIsLoadingDebugInfo(false)
+    setDebugInfoError(null)
+    setDebugInfo(null)
   }, [simulation.id])
 
   async function handleStartOpeningHandRun() {
@@ -839,6 +848,33 @@ function SimulationDetails({
       setStopSimulationError("Simulation stop could not be sent to the server.")
     } finally {
       setIsStoppingSimulation(false)
+    }
+  }
+
+  async function handleRefreshDebugInfo() {
+    if (isLoadingDebugInfo) {
+      return
+    }
+
+    setIsLoadingDebugInfo(true)
+    setDebugInfoError(null)
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/decks/${deckId}/simulations/${simulation.id}/debug`
+      )
+
+      if (!response.ok) {
+        setDebugInfoError(await readSimulationDebugError(response))
+        return
+      }
+
+      const data = (await response.json()) as SimulationDebugResponse
+      setDebugInfo(data.debug)
+    } catch {
+      setDebugInfoError("Simulation debug info could not be loaded.")
+    } finally {
+      setIsLoadingDebugInfo(false)
     }
   }
 
@@ -984,12 +1020,271 @@ function SimulationDetails({
       </header>
 
       <div className="grid flex-1 place-items-center py-10 text-center">
-        <p className="text-sm text-muted-foreground">
-          Simulation has not started.
-        </p>
+        <div className="grid w-full max-w-4xl gap-4 text-left">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-medium text-foreground">
+                Simulation debug
+              </h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Refresh to load run counts and saved LLM chunks.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isLoadingDebugInfo}
+              onClick={() => void handleRefreshDebugInfo()}
+            >
+              <RefreshCw data-icon="inline-start" />
+              {isLoadingDebugInfo ? "Refreshing..." : "Refresh debug"}
+            </Button>
+          </div>
+
+          {debugInfoError ? (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              {debugInfoError}
+            </p>
+          ) : null}
+
+          {debugInfo ? <SimulationDebugPanel debugInfo={debugInfo} /> : null}
+        </div>
       </div>
     </div>
   )
+}
+
+function SimulationDebugPanel({
+  debugInfo,
+}: {
+  debugInfo: SimulationDebugInfo
+}) {
+  return (
+    <div className="grid gap-4">
+      <dl className="grid gap-3 text-sm sm:grid-cols-2">
+        <div className="rounded-md border border-border bg-background/35 p-3">
+          <dt className="text-muted-foreground">Opening hand LLM runs</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {debugInfo.openingHandLlmRunCount}
+          </dd>
+        </div>
+        <div className="rounded-md border border-border bg-background/35 p-3">
+          <dt className="text-muted-foreground">Turn LLM runs</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {debugInfo.turnLlmRunCount}
+          </dd>
+        </div>
+      </dl>
+
+      <SimulationDebugRunGroup
+        heading="Opening hand runs"
+        runs={debugInfo.openingHandLlmRuns}
+      />
+      <SimulationDebugRunGroup
+        heading="Turn runs"
+        runs={debugInfo.turnLlmRuns}
+      />
+    </div>
+  )
+}
+
+function SimulationDebugRunGroup({
+  heading,
+  runs,
+}: {
+  heading: string
+  runs: SimulationDebugInfo["openingHandLlmRuns"]
+}) {
+  return (
+    <section className="grid gap-3">
+      <h5 className="text-sm font-medium text-foreground">{heading}</h5>
+      {runs.length > 0 ? (
+        runs.map((run) => (
+          <div
+            key={run.llmRunId}
+            className="grid gap-3 rounded-md border border-border bg-background/35 p-3"
+          >
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              <p className="break-all text-muted-foreground">
+                ID: <span className="text-foreground">{run.llmRunId}</span>
+              </p>
+              <p className="text-muted-foreground">
+                Status: <span className="text-foreground">{run.status}</span>
+              </p>
+              <p className="text-muted-foreground">
+                Attempt:{" "}
+                <span className="text-foreground">{run.attemptNumber}</span>
+              </p>
+              {run.turnNumber ? (
+                <p className="text-muted-foreground">
+                  Turn:{" "}
+                  <span className="text-foreground">{run.turnNumber}</span>
+                </p>
+              ) : null}
+              <p className="text-muted-foreground">
+                Model: <span className="text-foreground">{run.model}</span>
+              </p>
+              <p className="break-all text-muted-foreground">
+                Runtime key:{" "}
+                <span className="text-foreground">
+                  {run.runtimeStreamKey ?? "none"}
+                </span>
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <p className="text-sm text-muted-foreground">
+                Chunks: {run.chunks.length}
+              </p>
+              {run.chunks.length > 0 ? (
+                <>
+                  <details className="min-w-0 rounded-md border border-sky-500/35 bg-sky-950/20 shadow-sm shadow-sky-950/20">
+                    <summary className="cursor-pointer border-b border-sky-500/20 px-3 py-2 text-sm font-medium text-sky-200 transition-colors hover:text-sky-100">
+                      Raw chunk JSON
+                    </summary>
+                    <pre className="debug-scrollbar max-h-96 min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words p-3 text-xs leading-5 text-sky-50/80">
+                      {JSON.stringify(run.chunks, null, 2)}
+                    </pre>
+                  </details>
+                  <FormattedDebugChunks chunks={run.chunks} />
+                </>
+              ) : null}
+            </div>
+          </div>
+        ))
+      ) : (
+        <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
+          No runs yet.
+        </p>
+      )}
+    </section>
+  )
+}
+
+type FormattedDebugChunkBlock =
+  | {
+      id: string
+      type: "reasoning" | "output"
+      text: string
+      chunks: SimulationDebugLlmRunChunk[]
+    }
+  | {
+      id: string
+      type: "event"
+      chunk: SimulationDebugLlmRunChunk
+    }
+
+function FormattedDebugChunks({
+  chunks,
+}: {
+  chunks: SimulationDebugLlmRunChunk[]
+}) {
+  const blocks = formatDebugChunkBlocks(chunks)
+
+  return (
+    <div className="grid gap-2">
+      {blocks.map((block) =>
+        block.type === "event" ? (
+          <details
+            key={block.id}
+            className="min-w-0 rounded-md border border-border bg-black/20"
+          >
+            <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+              {getDebugChunkEventLabel(block.chunk)}
+            </summary>
+            <pre className="debug-scrollbar-neutral max-h-80 min-w-0 max-w-full overflow-y-auto whitespace-pre-wrap break-words border-t border-border p-3 text-xs leading-5 text-muted-foreground">
+              {JSON.stringify(block.chunk, null, 2)}
+            </pre>
+          </details>
+        ) : (
+          <section
+            key={block.id}
+            className="rounded-md border border-border bg-black/20 p-3"
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-sky-300">
+                {block.type === "reasoning" ? "Reasoning" : "Output"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {block.chunks.length} chunk
+                {block.chunks.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
+              {block.text}
+            </p>
+          </section>
+        )
+      )}
+    </div>
+  )
+}
+
+function formatDebugChunkBlocks(
+  chunks: readonly SimulationDebugLlmRunChunk[]
+): FormattedDebugChunkBlock[] {
+  const blocks: FormattedDebugChunkBlock[] = []
+
+  for (const chunk of chunks) {
+    const deltaType = getDebugChunkDeltaType(chunk)
+
+    if (!deltaType) {
+      blocks.push({
+        id: `event-${chunk.id}`,
+        type: "event",
+        chunk,
+      })
+      continue
+    }
+
+    const deltaText = getDebugChunkDeltaText(chunk, deltaType)
+    const previousBlock = blocks[blocks.length - 1]
+
+    if (previousBlock?.type === deltaType) {
+      previousBlock.text += deltaText
+      previousBlock.chunks.push(chunk)
+      continue
+    }
+
+    blocks.push({
+      id: `${deltaType}-${chunk.id}`,
+      type: deltaType,
+      text: deltaText,
+      chunks: [chunk],
+    })
+  }
+
+  return blocks
+}
+
+function getDebugChunkDeltaType(chunk: SimulationDebugLlmRunChunk) {
+  if (chunk.kind === "reasoning_delta") {
+    return "reasoning" as const
+  }
+
+  if (chunk.kind === "message_delta") {
+    return "output" as const
+  }
+
+  return null
+}
+
+function getDebugChunkDeltaText(
+  chunk: SimulationDebugLlmRunChunk,
+  deltaType: "reasoning" | "output"
+) {
+  if (deltaType === "reasoning") {
+    return chunk.reasoningDelta ?? chunk.content ?? ""
+  }
+
+  return chunk.outputDelta ?? chunk.content ?? ""
+}
+
+function getDebugChunkEventLabel(chunk: SimulationDebugLlmRunChunk) {
+  return chunk.providerEventType ?? chunk.kind
 }
 
 function EmptySimulationSelection() {
@@ -1331,4 +1626,20 @@ async function readStopSimulationError(response: Response) {
   }
 
   return `Simulation could not be stopped. Server responded with ${response.status}.`
+}
+
+async function readSimulationDebugError(response: Response) {
+  try {
+    const data = (await response.json()) as {
+      error?: unknown
+    }
+
+    if (typeof data.error === "string" && data.error.trim()) {
+      return data.error
+    }
+  } catch {
+    // Fall through to the generic HTTP error.
+  }
+
+  return `Simulation debug info could not be loaded. Server responded with ${response.status}.`
 }
