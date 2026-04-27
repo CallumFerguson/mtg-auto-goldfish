@@ -731,13 +731,10 @@ async function runOpeningHandLlmRun({
       const eventRecord = asRecord(event)
       const eventType = getStringProperty(eventRecord, "type")
 
-      if (eventType === "response.output_text.delta") {
-        outputText += getStringProperty(eventRecord, "delta") ?? ""
-      } else if (eventType === "response.output_text.done") {
-        outputText = getStringProperty(eventRecord, "text") ?? outputText
-      } else if (eventType === "response.completed") {
+      if (eventType === "response.completed") {
         const response = eventRecord.response
         const responseRecord = asRecord(response)
+        outputText = getCompletedResponseOutputText(response)
         responseMetadata = response ?? {}
         usage = responseRecord.usage ?? {}
       }
@@ -847,7 +844,6 @@ function normalizeOpenAiStreamEvent(
 
     return createChunk("message_delta", eventType, {
       outputDelta: delta,
-      content: delta,
       payload,
     })
   }
@@ -857,14 +853,12 @@ function normalizeOpenAiStreamEvent(
 
     return createChunk("reasoning_delta", eventType, {
       reasoningDelta: delta,
-      content: delta,
       payload,
     })
   }
 
   if (eventType?.startsWith("response.mcp_call.completed")) {
     return createChunk("tool_result", eventType, {
-      content: stringifyEventContent(event),
       payload,
     })
   }
@@ -874,14 +868,12 @@ function normalizeOpenAiStreamEvent(
     eventType?.startsWith("response.mcp_list_tools")
   ) {
     return createChunk("tool_call", eventType, {
-      content: stringifyEventContent(event),
       payload,
     })
   }
 
   if (eventType === "response.completed") {
     return createChunk("usage", eventType, {
-      content: stringifyEventContent(asRecord(eventRecord.response).usage),
       payload,
     })
   }
@@ -892,27 +884,23 @@ function normalizeOpenAiStreamEvent(
     eventType?.endsWith(".failed")
   ) {
     return createChunk("error", eventType, {
-      content: stringifyEventContent(event),
       payload,
     })
   }
 
   if (eventType?.startsWith("response.reasoning_summary")) {
     return createChunk("metadata", eventType, {
-      content: stringifyEventContent(event),
       payload,
     })
   }
 
   return createChunk("raw_event", eventType ?? null, {
-    content: stringifyEventContent(event),
     payload,
   })
 }
 
 function createErrorChunk(error: unknown): Omit<LlmRunChunkInput, "sequence"> {
   return createChunk("error", "server.error", {
-    content: getErrorMessage(error),
     payload: {
       message: getErrorMessage(error),
       name: error instanceof Error ? error.name : null,
@@ -926,7 +914,6 @@ function createChunk(
   values: {
     reasoningDelta?: string | null
     outputDelta?: string | null
-    content?: string | null
     payload: unknown
   }
 ): Omit<LlmRunChunkInput, "sequence"> {
@@ -935,7 +922,6 @@ function createChunk(
     providerEventType,
     reasoningDelta: values.reasoningDelta ?? null,
     outputDelta: values.outputDelta ?? null,
-    content: values.content ?? null,
     payload: values.payload,
   }
 }
@@ -957,6 +943,65 @@ function parseOpeningHandFromResponseText(responseText: string) {
   }
 }
 
+function getCompletedResponseOutputText(response: unknown) {
+  const responseRecord = asRecord(response)
+  const topLevelOutputText = getStringProperty(responseRecord, "output_text")
+
+  if (topLevelOutputText) {
+    return topLevelOutputText
+  }
+
+  const output = responseRecord.output
+
+  if (!Array.isArray(output)) {
+    return ""
+  }
+
+  const finalAnswerTextParts = output.flatMap((item) => {
+    const itemRecord = asRecord(item)
+
+    if (
+      itemRecord.type !== "message" ||
+      itemRecord.phase !== "final_answer" ||
+      !Array.isArray(itemRecord.content)
+    ) {
+      return []
+    }
+
+    return getOutputTextParts(itemRecord.content)
+  })
+
+  if (finalAnswerTextParts.length > 0) {
+    return finalAnswerTextParts.join("")
+  }
+
+  return output
+    .flatMap((item) => {
+      const itemRecord = asRecord(item)
+
+      if (itemRecord.type !== "message" || !Array.isArray(itemRecord.content)) {
+        return []
+      }
+
+      return getOutputTextParts(itemRecord.content)
+    })
+    .join("")
+}
+
+function getOutputTextParts(content: unknown[]) {
+  return content.flatMap((part) => {
+    const partRecord = asRecord(part)
+
+    if (partRecord.type !== "output_text") {
+      return []
+    }
+
+    const text = getStringProperty(partRecord, "text")
+
+    return text === null ? [] : [text]
+  })
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -970,18 +1015,6 @@ function getStringProperty(
   const value = record[property]
 
   return typeof value === "string" ? value : null
-}
-
-function stringifyEventContent(value: unknown) {
-  if (typeof value === "string") {
-    return value
-  }
-
-  if (value === null || value === undefined) {
-    return null
-  }
-
-  return JSON.stringify(value)
 }
 
 function isAbortError(error: unknown) {

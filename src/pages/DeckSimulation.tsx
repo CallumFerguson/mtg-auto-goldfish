@@ -1277,10 +1277,10 @@ function getDebugChunkDeltaText(
   deltaType: "reasoning" | "output"
 ) {
   if (deltaType === "reasoning") {
-    return chunk.reasoningDelta ?? chunk.content ?? ""
+    return chunk.reasoningDelta ?? ""
   }
 
-  return chunk.outputDelta ?? chunk.content ?? ""
+  return chunk.outputDelta ?? ""
 }
 
 function getDebugChunkEventLabel(chunk: SimulationDebugLlmRunChunk) {

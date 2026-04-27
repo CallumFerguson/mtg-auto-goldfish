@@ -75,7 +75,6 @@ export type SimulationDebugLlmRunChunk = {
   providerEventType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
-  content: string | null
   payload: unknown
   receivedAt: string
 }

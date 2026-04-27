@@ -54,7 +54,6 @@ export type LlmRunChunkInput = {
   providerEventType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
-  content: string | null
   payload: unknown
 }
 
@@ -72,7 +71,6 @@ export type SimulationDebugLlmRunChunk = {
   providerEventType: string | null
   reasoningDelta: string | null
   outputDelta: string | null
-  content: string | null
   payload: unknown
   receivedAt: string
 }
@@ -352,12 +350,15 @@ export async function ensureSimulationsSchema() {
       provider_event_type text,
       reasoning_delta text,
       output_delta text,
-      content text,
       payload jsonb NOT NULL DEFAULT '{}',
       received_at timestamptz NOT NULL DEFAULT now(),
 
       UNIQUE (llm_run_id, sequence)
     )
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_run_chunks
+      DROP COLUMN IF EXISTS content
   `)
   await queryDatabase(`
     CREATE TABLE IF NOT EXISTS simulation_opening_hand_llm_runs (
@@ -1094,7 +1095,7 @@ export async function appendLlmRunChunks(
 
   const values: unknown[] = []
   const valuePlaceholders = chunks.map((chunk, index) => {
-    const offset = index * 8
+    const offset = index * 7
 
     values.push(
       llmRunId,
@@ -1103,11 +1104,10 @@ export async function appendLlmRunChunks(
       chunk.providerEventType,
       chunk.reasoningDelta,
       chunk.outputDelta,
-      chunk.content,
       JSON.stringify(chunk.payload)
     )
 
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}::jsonb)`
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb)`
   })
 
   await queryDatabase(
@@ -1119,7 +1119,6 @@ export async function appendLlmRunChunks(
         provider_event_type,
         reasoning_delta,
         output_delta,
-        content,
         payload
       )
       VALUES ${valuePlaceholders.join(", ")}
@@ -1620,7 +1619,6 @@ type SimulationDebugLlmRunRow = {
   provider_event_type: string | null
   reasoning_delta: string | null
   output_delta: string | null
-  content: string | null
   payload: unknown
   received_at: Date | null
 }
@@ -1652,7 +1650,6 @@ async function getSimulationDebugLlmRuns({
         chunk.provider_event_type,
         chunk.reasoning_delta,
         chunk.output_delta,
-        chunk.content,
         chunk.payload,
         chunk.received_at
       FROM ${tableName} run
@@ -1697,7 +1694,6 @@ async function getSimulationDebugLlmRuns({
         providerEventType: row.provider_event_type,
         reasoningDelta: row.reasoning_delta,
         outputDelta: row.output_delta,
-        content: row.content,
         payload: row.payload,
         receivedAt: row.received_at?.toISOString() ?? "",
       })
