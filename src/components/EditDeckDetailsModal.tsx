@@ -3,6 +3,7 @@ import { Save, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { API_BASE_URL } from "@/lib/api"
+import { readApiError } from "@/lib/api-error"
 import type { Deck } from "@/lib/deck-types"
 
 export function EditDeckDetailsModal({
@@ -45,7 +46,9 @@ export function EditDeckDetailsModal({
       })
 
       if (!response.ok) {
-        setError(await readEditDeckError(response))
+        setError(
+          await readApiError(response, "Deck details could not be updated.")
+        )
         return
       }
 
@@ -143,22 +146,6 @@ export function EditDeckDetailsModal({
       </section>
     </div>
   )
-}
-
-async function readEditDeckError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Deck details could not be updated. Server responded with ${response.status}.`
 }
 
 function Field({

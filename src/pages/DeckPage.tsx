@@ -5,6 +5,7 @@ import { DeleteDeckModal } from "@/components/DeleteDeckModal"
 import { EditDeckDetailsModal } from "@/components/EditDeckDetailsModal"
 import { Button } from "@/components/ui/button"
 import { API_BASE_URL } from "@/lib/api"
+import { readApiError } from "@/lib/api-error"
 import type { DeckDetails, DeckResponse } from "@/lib/deck-types"
 import {
   getDeckSimulationPath,
@@ -41,7 +42,10 @@ export function DeckPage({
       const response = await fetch(`${API_BASE_URL}/decks/${deckId}`)
 
       if (!response.ok) {
-        throw new Error(`Deck request failed with ${response.status}`)
+        setDeckLoadError(
+          await readApiError(response, "Deck could not be loaded.")
+        )
+        return
       }
 
       const data = (await response.json()) as DeckResponse
@@ -80,7 +84,10 @@ export function DeckPage({
       })
 
       if (!response.ok) {
-        throw new Error(`Deck delete failed with ${response.status}`)
+        setDeleteDeckError(
+          await readApiError(response, "Deck could not be deleted.")
+        )
+        return
       }
 
       navigateTo("/")

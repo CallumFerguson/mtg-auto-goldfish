@@ -3,6 +3,7 @@ import { X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { API_BASE_URL } from "@/lib/api"
+import { readApiError } from "@/lib/api-error"
 import { validateAndParseDeckInput } from "@/lib/deck-input"
 
 export function CreateDeckModal({
@@ -45,8 +46,9 @@ export function CreateDeckModal({
       })
 
       if (!response.ok) {
-        const errorMessage = await readCreateDeckError(response)
-        setErrors([errorMessage])
+        setErrors([
+          await readApiError(response, "Deck could not be created."),
+        ])
         return
       }
 
@@ -173,33 +175,6 @@ export function CreateDeckModal({
       </section>
     </div>
   )
-}
-
-async function readCreateDeckError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-      errors?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-
-    if (Array.isArray(data.errors)) {
-      const errors = data.errors.filter(
-        (error): error is string => typeof error === "string" && !!error.trim()
-      )
-
-      if (errors.length > 0) {
-        return errors.join(" ")
-      }
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Deck could not be created. Server responded with ${response.status}.`
 }
 
 function Field({

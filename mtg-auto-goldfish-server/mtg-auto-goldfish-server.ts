@@ -18,12 +18,12 @@ import {
 } from "./decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
 import {
+  appendLlmRunChunkAtNextSequence,
   appendLlmRunChunks,
   cancelLlmRun,
   completeOpeningHandLlmRun,
   createOpeningHandLlmRun,
   createSimulation,
-  createStartingHand,
   deleteSimulation,
   drawCardsFromBottom,
   drawCardsFromTop,
@@ -34,7 +34,6 @@ import {
   getSimulationResultsInfo,
   getStartingHandSimulationPromptData,
   listSimulationsForDeck,
-  listStartingHandsForDeck,
   markLlmRunStreaming,
   mulliganSimulation,
   requestCancelOpeningHandLlmRuns,
@@ -42,16 +41,33 @@ import {
   returnCardsToSimulationLibrary,
   shuffleSimulationLibrary,
   SimulationValidationError,
-  StartingHandValidationError,
   takeCardsFromSimulationLibrary,
   verifySimulationCanStartOpeningHandLlmRun,
 } from "./simulations-postgres.js"
 import type {
-  LlmChunkKind,
   LlmRunChunkInput,
   SimulationPromptCard,
   StartingHandSimulationPromptData,
 } from "./simulations-postgres.js"
+import {
+  createStartingHand,
+  ensureStartingHandsSchema,
+  listStartingHandsForDeck,
+  StartingHandValidationError,
+} from "./starting-hands-postgres.js"
+import {
+  ProviderTerminalEventError,
+  asRecord,
+  createCancellationChunk,
+  createServerErrorChunk,
+  getCompletedResponseOutputText,
+  getErrorMessage,
+  getStringProperty,
+  isAbortError,
+  isProviderTerminalEvent,
+  normalizeOpenAiStreamEvent,
+  parseOpeningHandFromResponseText,
+} from "./llm-run-events.js"
 import {
   createExactScryfallOracleCardMatchMap,
   normalizeScryfallCardNameForExactMatch,
@@ -607,6 +623,8 @@ async function runOpeningHandLlmRun({
   let outputText = ""
   let responseMetadata: unknown = {}
   let usage: unknown = {}
+  let didReceiveCompletedResponse = false
+  let providerTerminalEventError: ProviderTerminalEventError | null = null
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
 
@@ -623,19 +641,37 @@ async function runOpeningHandLlmRun({
     for await (const event of stream) {
       const eventRecord = asRecord(event)
       const eventType = getStringProperty(eventRecord, "type")
+      const normalizedEvent = normalizeOpenAiStreamEvent(event)
 
       if (eventType === "response.completed") {
         const response = eventRecord.response
         const responseRecord = asRecord(response)
+        didReceiveCompletedResponse = true
         outputText = getCompletedResponseOutputText(response)
         responseMetadata = response ?? {}
         usage = responseRecord.usage ?? {}
       }
 
-      appendRuntimeChunk(runtime, normalizeOpenAiStreamEvent(event))
+      appendRuntimeChunk(runtime, normalizedEvent)
+
+      if (isProviderTerminalEvent(eventType)) {
+        providerTerminalEventError = new ProviderTerminalEventError(
+          eventType,
+          event
+        )
+      }
     }
 
     await forceFlushRuntimeChunks(runtime)
+
+    if (providerTerminalEventError) {
+      throw providerTerminalEventError
+    }
+
+    if (!didReceiveCompletedResponse) {
+      throw new Error("Opening-hand LLM stream ended without response.completed.")
+    }
+
     const parsedOpeningHand = parseOpeningHandFromResponseText(outputText)
 
     await completeOpeningHandLlmRun({
@@ -645,16 +681,22 @@ async function runOpeningHandLlmRun({
       usage,
     })
   } catch (error) {
-    appendRuntimeChunk(runtime, createErrorChunk(error))
-    await forceFlushRuntimeChunks(runtime)
-
     if (isAbortError(error) || runtime.abortController.signal.aborted) {
+      appendRuntimeChunk(runtime, createCancellationChunk())
+      await tryForceFlushRuntimeChunks(runtime, "cancelled opening-hand run")
       await cancelLlmRun(llmRunId, "Opening-hand LLM run was cancelled.")
       return
     }
 
-    console.error("Opening-hand LLM run failed:", error)
-    await failLlmRun(llmRunId, getErrorMessage(error))
+    const effectiveError = providerTerminalEventError ?? error
+
+    if (!(effectiveError instanceof ProviderTerminalEventError)) {
+      appendRuntimeChunk(runtime, createServerErrorChunk(effectiveError))
+    }
+
+    await tryForceFlushRuntimeChunks(runtime, "failed opening-hand run")
+    console.error("Opening-hand LLM run failed:", effectiveError)
+    await failLlmRun(llmRunId, getErrorMessage(effectiveError))
   } finally {
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
@@ -680,7 +722,9 @@ function scheduleRuntimeFlush(runtime: ActiveLlmRunRuntime) {
 
   runtime.flushTimer = setTimeout(() => {
     runtime.flushTimer = null
-    void flushRuntimeChunks(runtime)
+    void flushRuntimeChunks(runtime).catch((error: unknown) => {
+      console.error("Failed to flush LLM run chunks:", error)
+    })
   }, STREAM_FLUSH_INTERVAL_MS)
 }
 
@@ -690,21 +734,23 @@ async function flushRuntimeChunks(runtime: ActiveLlmRunRuntime) {
     return
   }
 
-  const chunks = runtime.chunkBuffer.splice(0)
+  const chunks = runtime.chunkBuffer.slice()
 
   if (chunks.length === 0) {
     return
   }
 
-  runtime.flushPromise = appendLlmRunChunks(runtime.llmRunId, chunks).finally(
-    () => {
+  runtime.flushPromise = appendLlmRunChunks(runtime.llmRunId, chunks)
+    .then(() => {
+      runtime.chunkBuffer.splice(0, chunks.length)
+    })
+    .finally(() => {
       runtime.flushPromise = null
 
       if (runtime.chunkBuffer.length > 0) {
         scheduleRuntimeFlush(runtime)
       }
-    }
-  )
+    })
   await runtime.flushPromise
 }
 
@@ -713,6 +759,19 @@ async function forceFlushRuntimeChunks(runtime: ActiveLlmRunRuntime) {
 
   while (runtime.flushPromise || runtime.chunkBuffer.length > 0) {
     await flushRuntimeChunks(runtime)
+  }
+}
+
+async function tryForceFlushRuntimeChunks(
+  runtime: ActiveLlmRunRuntime,
+  context: string
+) {
+  try {
+    await forceFlushRuntimeChunks(runtime)
+    return true
+  } catch (error) {
+    console.error(`Failed to flush chunks for ${context}:`, error)
+    return false
   }
 }
 
@@ -725,232 +784,12 @@ function clearRuntimeFlushTimer(runtime: ActiveLlmRunRuntime) {
   runtime.flushTimer = null
 }
 
-function normalizeOpenAiStreamEvent(
-  event: unknown
-): Omit<LlmRunChunkInput, "sequence"> {
-  const eventRecord = asRecord(event)
-  const eventType = getStringProperty(eventRecord, "type")
-  const itemType = getNestedStringProperty(eventRecord, "item", "type")
-  const payload = event ?? {}
-
-  if (eventType === "response.output_text.delta") {
-    const delta = getStringProperty(eventRecord, "delta")
-
-    return createChunk("message_delta", eventType, itemType, {
-      outputDelta: delta,
-      payload,
-    })
-  }
-
-  if (eventType === "response.reasoning_summary_text.delta") {
-    const delta = getStringProperty(eventRecord, "delta")
-
-    return createChunk("reasoning_delta", eventType, itemType, {
-      reasoningDelta: delta,
-      payload,
-    })
-  }
-
-  if (eventType === "response.completed") {
-    return createChunk("completed", eventType, itemType, {
-      payload,
-    })
-  }
-
-  if (
-    eventType === "response.output_item.added" &&
-    itemType === "mcp_call"
-  ) {
-    const mcpFunctionName = getNestedStringProperty(eventRecord, "item", "name")
-
-    return createChunk("mcp_call_start", eventType, itemType, {
-      mcpFunctionName,
-      payload,
-    })
-  }
-
-  if (
-    eventType === "response.output_item.done" &&
-    itemType === "mcp_call"
-  ) {
-    const mcpFunctionName = getNestedStringProperty(eventRecord, "item", "name")
-    const mcpFunctionOutput = getNestedStringProperty(
-      eventRecord,
-      "item",
-      "output"
-    )
-
-    return createChunk("mcp_call_complete", eventType, itemType, {
-      mcpFunctionName,
-      mcpFunctionOutput:
-        mcpFunctionOutput === null ? null : JSON.parse(mcpFunctionOutput),
-      payload,
-    })
-  }
-
-  if (
-    eventType === "response.failed" ||
-    eventType === "response.incomplete" ||
-    eventType?.endsWith(".failed")
-  ) {
-    return createChunk("error", eventType, itemType, {
-      payload,
-    })
-  }
-
-  return createChunk("raw_event", eventType ?? null, itemType, {
-    payload,
-  })
-}
-
-function createErrorChunk(error: unknown): Omit<LlmRunChunkInput, "sequence"> {
-  return createChunk("error", "server.error", null, {
-    payload: {
-      message: getErrorMessage(error),
-      name: error instanceof Error ? error.name : null,
-    },
-  })
-}
-
-function createChunk(
-  kind: LlmChunkKind,
-  providerEventType: string | null,
-  itemType: string | null,
-  values: {
-    mcpFunctionName?: string | null
-    mcpFunctionOutput?: unknown | null
-    reasoningDelta?: string | null
-    outputDelta?: string | null
-    payload: unknown
-  }
-): Omit<LlmRunChunkInput, "sequence"> {
-  return {
-    kind,
-    providerEventType,
-    itemType,
-    mcpFunctionName: values.mcpFunctionName ?? null,
-    mcpFunctionOutput: values.mcpFunctionOutput ?? null,
-    reasoningDelta: values.reasoningDelta ?? null,
-    outputDelta: values.outputDelta ?? null,
-    payload: values.payload,
-  }
-}
-
-function parseOpeningHandFromResponseText(responseText: string) {
-  const parsedResponse = JSON.parse(responseText) as unknown
-  const responseRecord = asRecord(parsedResponse)
-  const keptHand = responseRecord.keptHand
-
-  if (
-    !Array.isArray(keptHand) ||
-    keptHand.some((card) => typeof card !== "string")
-  ) {
-    throw new Error("Opening-hand LLM response did not include keptHand.")
-  }
-
-  return {
-    keptHand,
-  }
-}
-
-function getCompletedResponseOutputText(response: unknown) {
-  const responseRecord = asRecord(response)
-  const topLevelOutputText = getStringProperty(responseRecord, "output_text")
-
-  if (topLevelOutputText) {
-    return topLevelOutputText
-  }
-
-  const output = responseRecord.output
-
-  if (!Array.isArray(output)) {
-    return ""
-  }
-
-  const finalAnswerTextParts = output.flatMap((item) => {
-    const itemRecord = asRecord(item)
-
-    if (
-      itemRecord.type !== "message" ||
-      itemRecord.phase !== "final_answer" ||
-      !Array.isArray(itemRecord.content)
-    ) {
-      return []
-    }
-
-    return getOutputTextParts(itemRecord.content)
-  })
-
-  if (finalAnswerTextParts.length > 0) {
-    return finalAnswerTextParts.join("")
-  }
-
-  return output
-    .flatMap((item) => {
-      const itemRecord = asRecord(item)
-
-      if (itemRecord.type !== "message" || !Array.isArray(itemRecord.content)) {
-        return []
-      }
-
-      return getOutputTextParts(itemRecord.content)
-    })
-    .join("")
-}
-
-function getOutputTextParts(content: unknown[]) {
-  return content.flatMap((part) => {
-    const partRecord = asRecord(part)
-
-    if (partRecord.type !== "output_text") {
-      return []
-    }
-
-    const text = getStringProperty(partRecord, "text")
-
-    return text === null ? [] : [text]
-  })
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function getStringProperty(
-  record: Record<string, unknown>,
-  property: string
-) {
-  const value = record[property]
-
-  return typeof value === "string" ? value : null
-}
-
-function getNestedStringProperty(
-  record: Record<string, unknown>,
-  parentProperty: string,
-  childProperty: string
-) {
-  return getStringProperty(asRecord(record[parentProperty]), childProperty)
-}
-
-function isAbortError(error: unknown) {
-  return (
-    error instanceof Error &&
-    (error.name === "APIUserAbortError" || error.name === "AbortError")
-  )
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
 async function main() {
   registerShutdownHandlers()
   await verifyDatabaseConnection()
   await ensureFreshScryfallOracleCards()
   await ensureDecksSchema()
+  await ensureStartingHandsSchema()
   await ensureSimulationsSchema()
 
   const host = DEFAULT_HOST
@@ -975,7 +814,16 @@ async function main() {
       return
     }
 
-    express.json()(req, res, next)
+    express.json()(req, res, (error: unknown) => {
+      if (error) {
+        res.status(400).json({
+          error: "Request body must be valid JSON.",
+        })
+        return
+      }
+
+      next()
+    })
   })
 
   app.get("/health", (_req: Request, res: Response) => {
@@ -1166,6 +1014,14 @@ async function main() {
             runtime.abortController.abort()
             stoppedRunIds.push(run.llmRunId)
           } else {
+            const cancellationMessage =
+              "Opening-hand LLM run was cancelled before its active runtime could be found."
+
+            await appendLlmRunChunkAtNextSequence(
+              run.llmRunId,
+              createCancellationChunk(cancellationMessage)
+            )
+            await cancelLlmRun(run.llmRunId, cancellationMessage)
             cancelRequestedRunIds.push(run.llmRunId)
           }
         }

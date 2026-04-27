@@ -13,6 +13,7 @@
     "server:dev": "tsx mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
     "server:watch": "tsx watch --include \"mtg-auto-goldfish-server/**/*.ts\" mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
     "server:start": "node dist-server/mtg-auto-goldfish-server.js",
+    "test": "npm run server:build && node dist-server/llm-run-events.test.js",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"
   },

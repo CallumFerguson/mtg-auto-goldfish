@@ -21,6 +21,7 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { API_BASE_URL } from "@/lib/api"
+import { readApiError } from "@/lib/api-error"
 import type {
   CreateOpeningHandLlmRunResponse,
   CreateSimulationResponse,
@@ -164,7 +165,10 @@ export function DeckSimulation({
       )
 
       if (!response.ok) {
-        throw new Error(`Simulation request failed with ${response.status}`)
+        setSimulationLoadError(
+          await readApiError(response, "Simulations could not be loaded.")
+        )
+        return []
       }
 
       const data = (await response.json()) as SimulationsResponse
@@ -188,7 +192,10 @@ export function DeckSimulation({
       )
 
       if (!response.ok) {
-        throw new Error(`Starting hand request failed with ${response.status}`)
+        setStartingHandLoadError(
+          await readApiError(response, "Starting hands could not be loaded.")
+        )
+        return
       }
 
       const data = (await response.json()) as StartingHandsResponse
@@ -291,7 +298,9 @@ export function DeckSimulation({
       )
 
       if (!response.ok) {
-        setCreateSimulationError(await readSimulationError(response))
+        setCreateSimulationError(
+          await readApiError(response, "Simulation could not be saved.")
+        )
         return
       }
 
@@ -340,7 +349,10 @@ export function DeckSimulation({
       )
 
       if (!response.ok) {
-        throw new Error(`Simulation delete failed with ${response.status}`)
+        setSimulationLoadError(
+          await readApiError(response, "Simulation could not be deleted.")
+        )
+        return
       }
 
       setSimulations((currentSimulations) =>
@@ -828,7 +840,12 @@ function SimulationDetails({
       )
 
       if (!response.ok) {
-        setOpeningHandRunError(await readOpeningHandRunError(response))
+        setOpeningHandRunError(
+          await readApiError(
+            response,
+            "Opening hand run could not be started."
+          )
+        )
         return
       }
 
@@ -860,7 +877,9 @@ function SimulationDetails({
       )
 
       if (!response.ok) {
-        setStopSimulationError(await readStopSimulationError(response))
+        setStopSimulationError(
+          await readApiError(response, "Simulation could not be stopped.")
+        )
         return
       }
 
@@ -889,7 +908,12 @@ function SimulationDetails({
       )
 
       if (!response.ok) {
-        setDebugInfoError(await readSimulationDebugError(response))
+        setDebugInfoError(
+          await readApiError(
+            response,
+            "Simulation debug info could not be loaded."
+          )
+        )
         return
       }
 
@@ -918,7 +942,12 @@ function SimulationDetails({
       )
 
       if (!response.ok) {
-        setResultsError(await readSimulationResultsError(response))
+        setResultsError(
+          await readApiError(
+            response,
+            "Simulation results could not be loaded."
+          )
+        )
         return
       }
 
@@ -1382,6 +1411,14 @@ function SimulationResultEvent({
     )
   }
 
+  if (chunk.kind === "cancelled") {
+    return (
+      <div className="rounded-md border border-slate-500/25 bg-slate-900/25 px-3 py-2 text-sm text-slate-200/85">
+        Simulation cancelled: {getPayloadMessage(chunk.payload)}
+      </div>
+    )
+  }
+
   return (
     <details className="rounded-md border border-border bg-black/20">
       <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -1400,6 +1437,22 @@ function formatResultEventPayload(payload: unknown) {
   }
 
   return JSON.stringify(payload, null, 2)
+}
+
+function getPayloadMessage(payload: unknown) {
+  if (typeof payload === "string" && payload.trim()) {
+    return payload
+  }
+
+  if (typeof payload === "object" && payload !== null && "message" in payload) {
+    const message = payload.message
+
+    if (typeof message === "string" && message.trim()) {
+      return message
+    }
+  }
+
+  return "The run was cancelled."
 }
 
 function SimulationDebugPanel({
@@ -1756,7 +1809,9 @@ function CreateStartingHandModal({
       )
 
       if (!response.ok) {
-        setError(await readStartingHandError(response))
+        setError(
+          await readApiError(response, "Starting hand could not be saved.")
+        )
         return
       }
 
@@ -1911,100 +1966,4 @@ function CreateStartingHandModal({
       </section>
     </div>
   )
-}
-
-async function readStartingHandError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Starting hand could not be saved. Server responded with ${response.status}.`
-}
-
-async function readSimulationError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Simulation could not be saved. Server responded with ${response.status}.`
-}
-
-async function readOpeningHandRunError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Opening hand run could not be started. Server responded with ${response.status}.`
-}
-
-async function readStopSimulationError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Simulation could not be stopped. Server responded with ${response.status}.`
-}
-
-async function readSimulationDebugError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Simulation debug info could not be loaded. Server responded with ${response.status}.`
-}
-
-async function readSimulationResultsError(response: Response) {
-  try {
-    const data = (await response.json()) as {
-      error?: unknown
-    }
-
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error
-    }
-  } catch {
-    // Fall through to the generic HTTP error.
-  }
-
-  return `Simulation results could not be loaded. Server responded with ${response.status}.`
 }
