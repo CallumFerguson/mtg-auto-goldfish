@@ -1574,7 +1574,7 @@ function SimulationResultEvent({
     return (
       <details className="rounded-md border border-emerald-500/25 bg-emerald-950/15">
         <summary className="cursor-pointer px-3 py-2 text-sm text-emerald-100/85 transition-colors hover:text-emerald-50">
-          Tool completed: {chunk.mcpFunctionName ?? "unknown tool"}
+          {getMcpCallCompleteTitle(chunk)}
         </summary>
         <pre className="debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-emerald-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-emerald-50/80">
           {formatResultEventPayload(chunk.mcpFunctionOutput)}
@@ -1622,6 +1622,63 @@ function formatResultEventPayload(payload: unknown) {
   }
 
   return JSON.stringify(payload, null, 2)
+}
+
+function getMcpCallCompleteTitle(chunk: SimulationDebugLlmRunChunk) {
+  const toolName = chunk.mcpFunctionName ?? "unknown tool"
+
+  if (chunk.mcpFunctionName === "log_turn_action") {
+    const lastLoggedAction = getLastLoggedTurnAction(chunk.mcpFunctionOutput)
+
+    if (lastLoggedAction) {
+      return `Tool completed: ${toolName} - ${lastLoggedAction}`
+    }
+  }
+
+  return `Tool completed: ${toolName}`
+}
+
+function getLastLoggedTurnAction(payload: unknown) {
+  const resolvedPayload = parseJsonObjectPayload(payload)
+  const loggedActions = resolvedPayload?.data?.loggedActions
+
+  if (!Array.isArray(loggedActions)) {
+    return null
+  }
+
+  const lastLoggedAction = loggedActions.at(-1)
+
+  return typeof lastLoggedAction === "string" && lastLoggedAction.trim()
+    ? lastLoggedAction
+    : null
+}
+
+function parseJsonObjectPayload(payload: unknown) {
+  if (typeof payload === "object" && payload !== null) {
+    return payload as {
+      data?: {
+        loggedActions?: unknown
+      }
+    }
+  }
+
+  if (typeof payload !== "string") {
+    return null
+  }
+
+  try {
+    const parsedPayload = JSON.parse(payload) as unknown
+
+    return typeof parsedPayload === "object" && parsedPayload !== null
+      ? (parsedPayload as {
+        data?: {
+          loggedActions?: unknown
+        }
+      })
+      : null
+  } catch {
+    return null
+  }
 }
 
 function getPayloadMessage(payload: unknown) {
