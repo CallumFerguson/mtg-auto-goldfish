@@ -1306,6 +1306,7 @@ function SimulationResultsPanel({
               </h5>
               <p className="mt-1 text-xs text-muted-foreground">
                 {run.status} / {run.model}
+                {run.outdated ? " / outdated" : ""}
               </p>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1538,6 +1539,14 @@ function SimulationDebugRunGroup({
                 <p className="text-muted-foreground">
                   Turn:{" "}
                   <span className="text-foreground">{run.turnNumber}</span>
+                </p>
+              ) : null}
+              {run.outdated !== undefined ? (
+                <p className="text-muted-foreground">
+                  Outdated:{" "}
+                  <span className="text-foreground">
+                    {run.outdated ? "Yes" : "No"}
+                  </span>
                 </p>
               ) : null}
               <p className="text-muted-foreground">

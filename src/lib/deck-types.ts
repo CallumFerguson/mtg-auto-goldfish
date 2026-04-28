@@ -92,6 +92,7 @@ export type SimulationDebugLlmRun = {
   attemptNumber: number
   turnNumber?: number
   gameState?: string
+  outdated?: boolean
   openingHandIsValid?: boolean
   chunks: SimulationDebugLlmRunChunk[]
 }
