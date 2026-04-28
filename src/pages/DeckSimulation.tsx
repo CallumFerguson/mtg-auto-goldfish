@@ -127,6 +127,8 @@ export function DeckSimulation({
   const [deletingSimulationId, setDeletingSimulationId] = useState<
     string | null
   >(null)
+  const [isSimulationListScrolled, setIsSimulationListScrolled] =
+    useState(false)
   const openingHandCardOptions = useMemo(
     () => getOpeningHandCardOptions(cards),
     [cards]
@@ -382,10 +384,13 @@ export function DeckSimulation({
           <nav
             className="simulation-scrollbar h-full overflow-y-auto"
             aria-label="Simulations"
+            onScroll={(event) =>
+              setIsSimulationListScrolled(event.currentTarget.scrollTop > 0)
+            }
           >
-            <div className="simulation-sidebar-surface sticky top-0 z-10 border-b border-border p-2">
+            <div className="simulation-sidebar-surface sticky top-0 z-10 px-2 pt-2 pb-1">
               <button
-                className={`flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm font-medium transition-colors ${
+                className={`flex h-11 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium transition-colors ${
                   isNewSimulationSelected
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
@@ -398,12 +403,17 @@ export function DeckSimulation({
                   navigateTo(getDeckSimulationPath(deckId))
                 }}
               >
-                <Plus data-icon="inline-start" />
+                <Plus className="size-4" data-icon="inline-start" />
                 New simulation
               </button>
+              <div
+                className={`absolute right-0 bottom-0 left-0 border-b border-border transition-opacity ${
+                  isSimulationListScrolled ? "opacity-100" : "opacity-0"
+                }`}
+              />
             </div>
 
-            <div className="p-2">
+            <div className="px-2 pb-2">
               {isLoadingSimulations ? (
                 <div className="rounded-md px-3 py-3 text-sm text-muted-foreground">
                   Loading simulations...
@@ -427,7 +437,7 @@ export function DeckSimulation({
                   {simulations.map((simulation) => (
                     <li key={simulation.id} className="group relative">
                       <button
-                        className={`w-full rounded-md py-3 pr-11 pl-3 text-left text-sm font-medium transition-colors ${
+                        className={`h-11 w-full rounded-md pr-11 pl-3 text-left text-sm font-medium transition-colors ${
                           !isNewSimulationSelected &&
                           selectedSimulationId === simulation.id
                             ? "bg-accent text-accent-foreground"
