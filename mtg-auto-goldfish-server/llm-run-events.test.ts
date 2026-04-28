@@ -12,6 +12,10 @@ import {
   STALE_IN_FLIGHT_LLM_RUN_CANCELLATION_MESSAGE,
   isValidCompletedOpeningHand,
 } from "./simulations-postgres.js"
+import {
+  SimulationStopTimeoutError,
+  waitForSimulationStopCompletions,
+} from "./simulation-stop.js"
 
 test("normalizes valid MCP output JSON", () => {
   const chunk = normalizeOpenAiStreamEvent({
@@ -192,4 +196,26 @@ test("rejects completed opening hands with wrong hand or deck totals", () => {
     }),
     false
   )
+})
+
+test("simulation stop wait resolves after all runtime completions resolve", async () => {
+  let resolveCompletion: () => void = () => {}
+  const completionPromise = new Promise<void>((resolve) => {
+    resolveCompletion = resolve
+  })
+
+  setTimeout(resolveCompletion, 1)
+
+  await waitForSimulationStopCompletions([completionPromise], 50)
+})
+
+test("simulation stop wait times out if a runtime completion does not resolve", async () => {
+  await assert.rejects(
+    waitForSimulationStopCompletions([new Promise<void>(() => {})], 1),
+    SimulationStopTimeoutError
+  )
+})
+
+test("simulation stop wait returns immediately with no runtime completions", async () => {
+  await waitForSimulationStopCompletions([], 1)
 })

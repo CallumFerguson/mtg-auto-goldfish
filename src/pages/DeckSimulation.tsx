@@ -854,7 +854,12 @@ function SimulationDetails({
   }, [simulation.id])
 
   async function handleStartOpeningHandRun() {
-    if (!shouldSimulateOpeningHand) {
+    if (
+      !shouldSimulateOpeningHand ||
+      isStartingOpeningHandRun ||
+      isStartingTurnRun ||
+      isStoppingSimulation
+    ) {
       return
     }
 
@@ -889,7 +894,7 @@ function SimulationDetails({
   }
 
   async function handleStartTurnRun() {
-    if (isStartingTurnRun) {
+    if (isStartingTurnRun || isStartingOpeningHandRun || isStoppingSimulation) {
       return
     }
 
@@ -1188,10 +1193,17 @@ function SimulationDetails({
               </div>
               <Button
                 type="button"
+                disabled={
+                  isStartingOpeningHandRun ||
+                  isStartingTurnRun ||
+                  isStoppingSimulation
+                }
                 onClick={() => void handleStartOpeningHandRun()}
               >
                 <Sparkles data-icon="inline-start" />
-                Start opening hand run
+                {isStartingOpeningHandRun
+                  ? "Starting..."
+                  : "Start opening hand run"}
               </Button>
             </div>
           ) : null}
@@ -1208,7 +1220,11 @@ function SimulationDetails({
                 id="turn-run-number"
                 className="h-9 w-28 rounded-md border border-input bg-background px-3 text-sm text-foreground transition-colors outline-none focus:border-ring focus:ring-3 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
                 value={selectedTurnNumber}
-                disabled={isStartingTurnRun}
+                disabled={
+                  isStartingTurnRun ||
+                  isStartingOpeningHandRun ||
+                  isStoppingSimulation
+                }
                 onChange={(event) => {
                   setSelectedTurnNumber(event.target.value)
                   setTurnRunError(null)
@@ -1228,7 +1244,11 @@ function SimulationDetails({
 
             <Button
               type="button"
-              disabled={isStartingTurnRun || isStoppingSimulation}
+              disabled={
+                isStartingTurnRun ||
+                isStartingOpeningHandRun ||
+                isStoppingSimulation
+              }
               onClick={() => void handleStartTurnRun()}
             >
               <Dices data-icon="inline-start" />

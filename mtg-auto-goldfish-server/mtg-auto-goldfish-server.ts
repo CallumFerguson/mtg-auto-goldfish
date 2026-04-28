@@ -41,6 +41,7 @@ import {
   getSimulationResultsInfo,
   getStartingHandSimulationPromptData,
   getTurnSimulationPromptData,
+  listActiveSimulationLlmRuns,
   listSimulationsForDeck,
   logTurnAction,
   markLlmRunStreaming,
@@ -81,6 +82,10 @@ import {
   parseOpeningHandFromResponseText,
   parseTurnSimulationFromResponseText,
 } from "./llm-run-events.js"
+import {
+  SimulationStopTimeoutError,
+  waitForSimulationStopCompletions,
+} from "./simulation-stop.js"
 import {
   createExactScryfallOracleCardMatchMap,
   normalizeScryfallCardNameForExactMatch,
@@ -176,13 +181,27 @@ type TurnSimulationOpenAiRunConfig = OpenAiRunConfig & {
 type ActiveLlmRunRuntime = {
   abortController: AbortController
   chunkBuffer: LlmRunChunkInput[]
+  completionPromise: Promise<void>
   flushTimer: NodeJS.Timeout | null
   flushPromise: Promise<void> | null
   llmRunId: string
   nextSequence: number
+  resolveCompletion: () => void
 }
 
 const activeLlmRunRuntimes = new Map<string, ActiveLlmRunRuntime>()
+
+function createRuntimeCompletion() {
+  let resolveCompletion: () => void = () => {}
+  const completionPromise = new Promise<void>((resolve) => {
+    resolveCompletion = resolve
+  })
+
+  return {
+    completionPromise,
+    resolveCompletion,
+  }
+}
 
 function logOpenAiApiCallStarted({
   llmRunId,
@@ -793,13 +812,16 @@ async function runOpeningHandLlmRun({
   requestPayload: ReturnType<typeof buildOpeningHandOpenAiRequestPayload>
   runtimeStreamKey: string
 }) {
+  const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
     abortController: new AbortController(),
     chunkBuffer: [],
+    completionPromise: completion.completionPromise,
     flushTimer: null,
     flushPromise: null,
     llmRunId,
     nextSequence: 1,
+    resolveCompletion: completion.resolveCompletion,
   }
   let outputText = ""
   let responseMetadata: unknown = {}
@@ -892,6 +914,7 @@ async function runOpeningHandLlmRun({
   } finally {
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
+    runtime.resolveCompletion()
   }
 }
 
@@ -929,13 +952,16 @@ async function runTurnLlmRun({
   requestPayload: ReturnType<typeof buildTurnSimulationOpenAiRequestPayload>
   runtimeStreamKey: string
 }) {
+  const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
     abortController: new AbortController(),
     chunkBuffer: [],
+    completionPromise: completion.completionPromise,
     flushTimer: null,
     flushPromise: null,
     llmRunId,
     nextSequence: 1,
+    resolveCompletion: completion.resolveCompletion,
   }
   let outputText = ""
   let responseMetadata: unknown = {}
@@ -1031,6 +1057,7 @@ async function runTurnLlmRun({
   } finally {
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
+    runtime.resolveCompletion()
   }
 }
 
@@ -1041,12 +1068,14 @@ async function stopActiveSimulationLlmRuns(
   const activeRuns = await requestCancelSimulationLlmRuns(deckId, simulationId)
   const stoppedRunIds: string[] = []
   const cancelRequestedRunIds: string[] = []
+  const runtimeCompletionPromises: Promise<void>[] = []
 
   for (const run of activeRuns) {
     const runtime = activeLlmRunRuntimes.get(run.runtimeStreamKey)
 
     if (runtime) {
       runtime.abortController.abort()
+      runtimeCompletionPromises.push(runtime.completionPromise)
       stoppedRunIds.push(run.llmRunId)
     } else {
       const cancellationMessage =
@@ -1059,6 +1088,17 @@ async function stopActiveSimulationLlmRuns(
       await cancelLlmRun(run.llmRunId, cancellationMessage)
       cancelRequestedRunIds.push(run.llmRunId)
     }
+  }
+
+  await waitForSimulationStopCompletions(runtimeCompletionPromises)
+
+  const remainingActiveRuns = await listActiveSimulationLlmRuns(
+    deckId,
+    simulationId
+  )
+
+  if (remainingActiveRuns.length > 0) {
+    throw new SimulationStopTimeoutError()
   }
 
   return {
@@ -1473,6 +1513,13 @@ async function main() {
           .status(200)
           .json(await stopActiveSimulationLlmRuns(deckId, simulationId))
       } catch (error) {
+        if (error instanceof SimulationStopTimeoutError) {
+          res.status(504).json({
+            error: error.message,
+          })
+          return
+        }
+
         if (error instanceof SimulationValidationError) {
           const status = error.message === "Simulation not found." ? 404 : 400
 
@@ -1566,6 +1613,13 @@ async function main() {
 
         res.status(204).send()
       } catch (error) {
+        if (error instanceof SimulationStopTimeoutError) {
+          res.status(504).json({
+            error: error.message,
+          })
+          return
+        }
+
         if (error instanceof SimulationValidationError) {
           const status = error.message === "Simulation not found." ? 404 : 400
 

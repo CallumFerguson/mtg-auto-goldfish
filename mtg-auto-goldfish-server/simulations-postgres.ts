@@ -1895,6 +1895,68 @@ export async function requestCancelSimulationLlmRuns(
   })
 }
 
+export async function listActiveSimulationLlmRuns(
+  deckId: string,
+  simulationId: string
+): Promise<ActiveSimulationLlmRun[]> {
+  const simulationResult = await queryDatabase(
+    `
+      SELECT id
+      FROM simulations
+      WHERE id = $1
+        AND deck_id = $2
+    `,
+    [simulationId, deckId]
+  )
+
+  if (simulationResult.rowCount === 0) {
+    throw new SimulationValidationError("Simulation not found.")
+  }
+
+  const activeRunsResult = await queryDatabase<{
+    simulation_id: string
+    llm_run_id: string
+    phase: LlmRunPhase
+    runtime_stream_key: string
+    status: LlmRunStatus
+  }>(
+    `
+      SELECT
+        opening_run.simulation_id,
+        llm_run.id AS llm_run_id,
+        llm_run.phase,
+        llm_run.runtime_stream_key,
+        llm_run.status
+      FROM simulation_opening_hand_llm_runs opening_run
+      JOIN llm_runs llm_run
+        ON llm_run.id = opening_run.llm_run_id
+      WHERE opening_run.simulation_id = $1
+        AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+      UNION ALL
+      SELECT
+        turn_run.simulation_id,
+        llm_run.id AS llm_run_id,
+        llm_run.phase,
+        llm_run.runtime_stream_key,
+        llm_run.status
+      FROM simulation_turn_llm_runs turn_run
+      JOIN llm_runs llm_run
+        ON llm_run.id = turn_run.llm_run_id
+      WHERE turn_run.simulation_id = $1
+        AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+    `,
+    [simulationId]
+  )
+
+  return activeRunsResult.rows.map((run) => ({
+    simulationId: run.simulation_id,
+    llmRunId: run.llm_run_id,
+    phase: run.phase,
+    runtimeStreamKey: run.runtime_stream_key,
+    status: run.status,
+  }))
+}
+
 export async function getSimulationDebugInfo(
   deckId: string,
   simulationId: string
