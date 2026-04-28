@@ -854,7 +854,7 @@ function SimulationDetails({
   }, [simulation.id])
 
   async function handleStartOpeningHandRun() {
-    if (!shouldSimulateOpeningHand || isStartingOpeningHandRun) {
+    if (!shouldSimulateOpeningHand) {
       return
     }
 
@@ -1188,19 +1188,10 @@ function SimulationDetails({
               </div>
               <Button
                 type="button"
-                disabled={
-                  isStartingOpeningHandRun ||
-                  isStoppingSimulation ||
-                  Boolean(openingHandRun)
-                }
                 onClick={() => void handleStartOpeningHandRun()}
               >
                 <Sparkles data-icon="inline-start" />
-                {openingHandRun
-                  ? "Run started"
-                  : isStartingOpeningHandRun
-                    ? "Starting..."
-                    : "Start opening hand run"}
+                Start opening hand run
               </Button>
             </div>
           ) : null}
