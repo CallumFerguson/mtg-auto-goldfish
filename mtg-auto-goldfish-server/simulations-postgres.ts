@@ -209,6 +209,15 @@ export type StartingHandSimulationPromptData = {
   library: SimulationPromptCard[]
 }
 
+export type TurnSimulationPromptData = {
+  simulationId: string
+  deckId: string
+  commanders: SimulationPromptCard[]
+  libraryCards: SimulationPromptCard[]
+  library: string[]
+  startingHand: string[]
+}
+
 export class SimulationValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -1602,6 +1611,80 @@ export async function getStartingHandSimulationPromptData(
   }
 }
 
+export async function getTurnSimulationPromptData(
+  simulationId: string
+): Promise<TurnSimulationPromptData | null> {
+  const simulationResult = await queryDatabase<{
+    simulation_id: string
+    deck_id: string
+    starting_hand_id: string | null
+    library: unknown
+  }>(
+    `
+      SELECT
+        id AS simulation_id,
+        deck_id,
+        starting_hand_id,
+        library
+      FROM simulations
+      WHERE id = $1
+    `,
+    [simulationId]
+  )
+  const simulation = simulationResult.rows[0]
+
+  if (!simulation) {
+    return null
+  }
+
+  const cardsResult = await queryDatabase<SimulationPromptCardRow>(
+    `
+      SELECT
+        simulation.id AS simulation_id,
+        simulation.deck_id,
+        deck_card.id AS deck_card_id,
+        deck_card.oracle_id,
+        deck_card.quantity,
+        deck_card.zone,
+        card.name,
+        card.mana_cost,
+        card.cmc,
+        card.type_line,
+        card.oracle_text,
+        card.power,
+        card.toughness,
+        card.loyalty,
+        card.card_faces
+      FROM simulations simulation
+      JOIN deck_cards deck_card
+        ON deck_card.deck_id = simulation.deck_id
+      JOIN scryfall_oracle_cards card
+        ON card.oracle_id = deck_card.oracle_id
+      WHERE simulation.id = $1
+      ORDER BY
+        CASE deck_card.zone
+          WHEN 'commander' THEN 0
+          ELSE 1
+        END,
+        card.name ASC
+    `,
+    [simulationId]
+  )
+  const cards = cardsResult.rows.map(mapSimulationPromptCard)
+
+  return {
+    simulationId: simulation.simulation_id,
+    deckId: simulation.deck_id,
+    commanders: cards.filter((card) => card.zone === "commander"),
+    libraryCards: cards.filter((card) => card.zone === "library"),
+    library: parseStringArray(simulation.library),
+    startingHand: await getTurnSimulationStartingHand({
+      simulationId,
+      startingHandId: simulation.starting_hand_id,
+    }),
+  }
+}
+
 type SimulationDebugLlmRunRow = {
   llm_run_id: string
   phase: LlmRunPhase
@@ -1747,6 +1830,72 @@ type LibrarySimulationRow = {
   library: unknown
   mulligan_count: number
   has_drawn_starting_hand: boolean
+}
+
+async function getTurnSimulationStartingHand({
+  simulationId,
+  startingHandId,
+}: {
+  simulationId: string
+  startingHandId: string | null
+}) {
+  if (startingHandId !== null) {
+    const startingHandResult = await queryDatabase<{
+      quantity: number
+      name: string
+    }>(
+      `
+        SELECT
+          hand_card.quantity,
+          card.name
+        FROM starting_hand_cards hand_card
+        JOIN deck_cards deck_card
+          ON deck_card.id = hand_card.deck_card_id
+        JOIN scryfall_oracle_cards card
+          ON card.oracle_id = deck_card.oracle_id
+        WHERE hand_card.starting_hand_id = $1
+        ORDER BY card.name ASC, deck_card.id ASC
+      `,
+      [startingHandId]
+    )
+
+    return startingHandResult.rows.flatMap((card) =>
+      Array.from({ length: card.quantity }, () => card.name)
+    )
+  }
+
+  const openingHandResult = await queryDatabase<{
+    opening_hand: unknown
+    opening_hand_is_valid: boolean
+  }>(
+    `
+      SELECT
+        opening_hand,
+        opening_hand_is_valid
+      FROM simulation_opening_hand_llm_runs
+      WHERE simulation_id = $1
+      ORDER BY attempt_number DESC
+      LIMIT 1
+    `,
+    [simulationId]
+  )
+  const latestOpeningHand = openingHandResult.rows[0]
+
+  if (!latestOpeningHand) {
+    throw new SimulationValidationError(
+      "No opening-hand LLM run exists for this simulation."
+    )
+  }
+
+  const openingHand = parseStringArray(latestOpeningHand.opening_hand)
+
+  if (!latestOpeningHand.opening_hand_is_valid || openingHand.length === 0) {
+    throw new SimulationValidationError(
+      "The most recent opening-hand LLM run does not have a valid starting hand."
+    )
+  }
+
+  return openingHand
 }
 
 function mapSimulationPromptCard(

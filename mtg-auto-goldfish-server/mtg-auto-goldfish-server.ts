@@ -7,7 +7,11 @@ import { randomUUID } from "node:crypto"
 import OpenAI from "openai"
 import { z } from "zod/v4"
 import { closeDatabasePool, verifyDatabaseConnection } from "./db.js"
-import { DRAW_STARTING_HAND_PROMPT } from "./llm/prompt-constants.js"
+import {
+  DRAW_STARTING_HAND_PROMPT,
+  GENERIC_GAME_RULES_REFERENCE,
+  SIMULATE_TURN_PROMPT,
+} from "./llm/prompt-constants.js"
 import {
   createDeck,
   deleteDeck,
@@ -33,6 +37,7 @@ import {
   getSimulationDebugInfo,
   getSimulationResultsInfo,
   getStartingHandSimulationPromptData,
+  getTurnSimulationPromptData,
   listSimulationsForDeck,
   markLlmRunStreaming,
   mulliganSimulation,
@@ -48,6 +53,7 @@ import type {
   LlmRunChunkInput,
   SimulationPromptCard,
   StartingHandSimulationPromptData,
+  TurnSimulationPromptData,
 } from "./simulations-postgres.js"
 import {
   createStartingHand,
@@ -1633,28 +1639,72 @@ function formatPowerToughness({
     : null
 }
 
-/*
-Future prompt-builder reference. This is intentionally commented out because
-the old GameCard type and game-store model have been removed.
-
-function buildTurnSimulationPrompt(
+export async function buildTurnSimulationPrompt(
   simulationId: string,
-  currentTurn: number,
-  startingHand: readonly string[],
-  commanders: readonly GameCard[],
-  currentLibrary: readonly string[],
-  initialLibrary: readonly GameCard[],
-  currentGameState?: string
+  gameState?: string
 ) {
-  const commanderNames = commanders.map((card) => card.name)
-  const cardNames = currentLibrary
+  const promptData = await getTurnSimulationPromptData(simulationId)
+
+  if (!promptData) {
+    throw new Error("Simulation not found.")
+  }
+
+  return buildTurnSimulationPromptFromData(promptData, gameState)
+}
+
+function buildTurnSimulationPromptFromData(
+  {
+    commanders,
+    library,
+    libraryCards,
+    simulationId,
+    startingHand,
+  }: TurnSimulationPromptData,
+  gameState?: string
+) {
+  const commanderNames = expandCardNames(commanders)
+  const cardNames = [...library].sort((left, right) =>
+    left.localeCompare(right)
+  )
   const uniqueCards = dedupeCardsByNameAndText([
     ...commanders,
-    ...initialLibrary,
+    ...libraryCards,
   ])
-  const resolvedGameState = currentGameState?.trim()
-    ? currentGameState.trim()
-    : `
+  const resolvedGameState = gameState?.trim()
+    ? gameState.trim()
+    : buildInitialTurnGameState({
+        commanderNames,
+        startingHand,
+      })
+
+  return `${SIMULATE_TURN_PROMPT}
+
+Simulation ID: ${simulationId}
+
+===Start Game State===
+
+${resolvedGameState}
+
+===End Game State===
+
+Cards in library. Not actual order of library. Use tools to interact with library:
+${cardNames.join("\n")}
+
+Card reference:
+${uniqueCards.map((card) => `${card.name}\n${formatCardText(card)}\n`).join("\n")}
+
+${GENERIC_GAME_RULES_REFERENCE}
+`.trim()
+}
+
+function buildInitialTurnGameState({
+  commanderNames,
+  startingHand,
+}: {
+  commanderNames: readonly string[]
+  startingHand: readonly string[]
+}) {
+  return `
 Hand:
 ${startingHand.join("\n")}
 
@@ -1674,29 +1724,8 @@ Your Life: 40
 Opponent A Life: 40
 Opponent B Life: 40
 Opponent C Life: 40
-`
-
-  return `${SIMULATE_TURN_PROMPT}
-
-Simulation ID: ${simulationId}
-Current Turn: ${currentTurn}
-
-===Start Game State===
-
-${resolvedGameState}
-
-===End Game State===
-
-Cards in library. Not actual order of library. Use tools to interact with library:
-${cardNames.join("\n")}
-
-Card reference:
-${uniqueCards.map((card) => `${card.name}\n${card.cardText}\n`).join("\n")} // todo: also show converted mana cost
-
-${GENERIC_GAME_RULES_REFERENCE}
 `.trim()
 }
-*/
 
 main().catch(async (error: unknown) => {
   console.error(error)
