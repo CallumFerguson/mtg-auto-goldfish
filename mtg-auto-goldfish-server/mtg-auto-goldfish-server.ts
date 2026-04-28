@@ -220,6 +220,15 @@ function createToolResultContent(message: string, data: unknown) {
   ]
 }
 
+function createCompactToolResultContent(data: unknown) {
+  return [
+    {
+      type: "text" as const,
+      text: JSON.stringify(data),
+    },
+  ]
+}
+
 function createOpeningHandServer() {
   return createServer(OPENING_HAND_SERVER_NAME, (server) => {
     registerDrawStartingHandTool(server)
@@ -509,9 +518,15 @@ function registerLogTurnActionTool(server: McpServer) {
       const response = await logTurnAction(simulationId, action)
 
       return {
-        content: createToolResultContent(
-          `Logged turn action ${response.latestAction.sequence}.`,
-          response
+        content: createCompactToolResultContent(
+          {
+            data: {
+              loggedActions: response.actions.map(
+                (loggedAction) => loggedAction.action
+              ),
+            },
+            message: `Logged action: ${response.latestAction.action}`,
+          }
         ),
       }
     }
