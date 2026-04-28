@@ -1430,14 +1430,16 @@ function SimulationResultsPanel({
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
       ...run,
       resultLabel: `Opening hand attempt ${run.attemptNumber}`,
+      resultChunks: getSimulationResultChunks(run.chunks),
     })),
     ...resultsInfo.turnLlmRuns.map((run) => ({
       ...run,
       resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${run.attemptNumber}`,
+      resultChunks: getSimulationResultChunks(run.chunks),
     })),
   ]
   const runsWithResults = runs.filter(
-    (run) => run.chunks.length > 0 || run.gameState
+    (run) => run.resultChunks.length > 0 || run.gameState
   )
 
   if (runsWithResults.length === 0) {
@@ -1466,7 +1468,8 @@ function SimulationResultsPanel({
               </p>
             </div>
             <p className="text-xs text-muted-foreground">
-              {run.chunks.length} chunk{run.chunks.length === 1 ? "" : "s"}
+              {run.resultChunks.length} chunk
+              {run.resultChunks.length === 1 ? "" : "s"}
             </p>
           </div>
 
@@ -1481,8 +1484,8 @@ function SimulationResultsPanel({
             </details>
           ) : null}
 
-          {run.chunks.length > 0 ? (
-            <SimulationResultChunkCards chunks={run.chunks} />
+          {run.resultChunks.length > 0 ? (
+            <SimulationResultChunkCards chunks={run.resultChunks} />
           ) : null}
         </section>
       ))}
@@ -1537,6 +1540,21 @@ function SimulationResultChunkCards({
       })}
     </div>
   )
+}
+
+function getSimulationResultChunks(
+  chunks: readonly SimulationDebugLlmRunChunk[]
+) {
+  return chunks.filter((chunk, index) => {
+    const nextChunk = chunks[index + 1]
+
+    return !(
+      chunk.kind === "mcp_call_start" &&
+      nextChunk?.kind === "mcp_call_complete" &&
+      chunk.mcpFunctionName !== null &&
+      chunk.mcpFunctionName === nextChunk.mcpFunctionName
+    )
+  })
 }
 
 function SimulationResultEvent({
