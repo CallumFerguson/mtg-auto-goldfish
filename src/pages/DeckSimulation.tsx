@@ -1631,6 +1631,14 @@ function SimulationResultEvent({
   chunk: SimulationDebugLlmRunChunk
 }) {
   if (chunk.kind === "mcp_call_start") {
+    if (isLogTurnActionToolCall(chunk)) {
+      return (
+        <div className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+          Tool started: {chunk.mcpFunctionName ?? "unknown tool"}
+        </div>
+      )
+    }
+
     return (
       <div className="rounded-md border border-amber-500/25 bg-amber-950/15 px-3 py-2 text-sm text-amber-100/85">
         Tool started: {chunk.mcpFunctionName ?? "unknown tool"}
@@ -1640,12 +1648,15 @@ function SimulationResultEvent({
 
   if (chunk.kind === "mcp_call_complete") {
     const isToolFailure = isMcpCallFailure(chunk)
+    const isNeutralToolCall = !isToolFailure && isLogTurnActionToolCall(chunk)
 
     return (
       <details
         className={
           isToolFailure
             ? "rounded-md border border-destructive/35 bg-destructive/10"
+            : isNeutralToolCall
+              ? "rounded-md border border-border bg-black/20"
             : "rounded-md border border-emerald-500/25 bg-emerald-950/15"
         }
       >
@@ -1653,6 +1664,8 @@ function SimulationResultEvent({
           className={
             isToolFailure
               ? "cursor-pointer px-3 py-2 text-sm text-destructive transition-colors hover:text-destructive/90"
+              : isNeutralToolCall
+                ? "cursor-pointer px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
               : "cursor-pointer px-3 py-2 text-sm text-emerald-100/85 transition-colors hover:text-emerald-50"
           }
         >
@@ -1662,6 +1675,8 @@ function SimulationResultEvent({
           className={
             isToolFailure
               ? "debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-destructive/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-destructive"
+              : isNeutralToolCall
+                ? "debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-border p-3 text-xs leading-5 break-words whitespace-pre-wrap text-muted-foreground"
               : "debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-emerald-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-emerald-50/80"
           }
         >
@@ -1710,6 +1725,10 @@ function formatResultEventPayload(payload: unknown) {
   }
 
   return JSON.stringify(payload, null, 2)
+}
+
+function isLogTurnActionToolCall(chunk: SimulationDebugLlmRunChunk) {
+  return chunk.mcpFunctionName === "log_turn_action"
 }
 
 function getMcpCallCompleteTitle(chunk: SimulationDebugLlmRunChunk) {
