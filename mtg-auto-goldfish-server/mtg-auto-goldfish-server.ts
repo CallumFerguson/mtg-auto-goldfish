@@ -462,9 +462,6 @@ function registerDrawStartingHandTool(server: McpServer) {
         llmRunId,
         simulationId,
       })
-      console.log(
-        `MCP draw_starting_hand called: simulationId=${resolvedSimulationId}`
-      )
       const response = await drawStartingHand(resolvedSimulationId)
 
       return {
