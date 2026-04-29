@@ -95,6 +95,7 @@ import {
   SimulationStopTimeoutError,
   waitForSimulationStopCompletions,
 } from "./simulation-stop.js"
+import { estimateOpenAiTokenPriceCents } from "./openai-pricing.js"
 import {
   createExactScryfallOracleCardMatchMap,
   normalizeScryfallCardNameForExactMatch,
@@ -231,17 +232,23 @@ function logOpenAiApiCallStarted({
 
 function logOpenAiApiCallFinished({
   llmRunId,
+  model,
   phase,
   usage,
 }: {
   llmRunId: string
+  model: string
   phase: LlmRunPhase
   usage: unknown
 }) {
   const tokenUsage = getOpenAiTokenUsageSummary(usage)
+  const priceEstimate = estimateOpenAiTokenPriceCents({ model, usage })
+  const priceEstimateText = priceEstimate
+    ? `${priceEstimate.formattedCents}c`
+    : "unsupported"
 
   console.log(
-    `OpenAI API call finished: phase=${phase} llmRunId=${llmRunId} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output}`
+    `OpenAI API call finished: phase=${phase} llmRunId=${llmRunId} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output} estimatedPrice=${priceEstimateText}`
   )
 }
 
@@ -1146,6 +1153,7 @@ async function runOpeningHandLlmRun({
 
     logOpenAiApiCallFinished({
       llmRunId,
+      model: requestPayload.model,
       phase: "opening_hand",
       usage,
     })
@@ -1296,6 +1304,7 @@ async function runTurnLlmRun({
 
     logOpenAiApiCallFinished({
       llmRunId,
+      model: requestPayload.model,
       phase: "turn",
       usage,
     })

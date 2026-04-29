@@ -1,4 +1,5 @@
 import { queryDatabase, withDatabaseTransaction } from "./db.js"
+import { estimateOpenAiTokenPriceCents } from "./openai-pricing.js"
 
 type DatabaseTransactionClient = Parameters<
   Parameters<typeof withDatabaseTransaction>[0]
@@ -118,6 +119,7 @@ export type SimulationDebugLlmRun = {
   phase: LlmRunPhase
   provider: string
   model: string
+  estimatedPriceCents: string | null
   reasoningEffort: string
   status: LlmRunStatus
   runtimeStreamKey: string | null
@@ -2148,9 +2150,7 @@ export async function cancelLlmRun(llmRunId: string, failureMessage?: string) {
   })
 }
 
-export async function cancelStaleInFlightLlmRuns(): Promise<
-  StaleInFlightLlmRunCleanupResult
-> {
+export async function cancelStaleInFlightLlmRuns(): Promise<StaleInFlightLlmRunCleanupResult> {
   return withDatabaseTransaction(async (client) => {
     const activeRunsResult = await client.query<{
       id: string
@@ -2643,7 +2643,9 @@ export async function resolveSimulationIdentifier({
     return trimmedSimulationId
   }
 
-  throw new SimulationValidationError("Provide either simulationId or llmRunId.")
+  throw new SimulationValidationError(
+    "Provide either simulationId or llmRunId."
+  )
 }
 
 export async function getStartingHandSimulationPromptData(
@@ -2778,6 +2780,7 @@ type SimulationDebugLlmRunRow = {
   phase: LlmRunPhase
   provider: string
   model: string
+  usage: unknown
   reasoning_effort: string
   status: LlmRunStatus
   runtime_stream_key: string | null
@@ -2821,6 +2824,7 @@ async function getSimulationDebugLlmRuns({
         llm_run.phase,
         llm_run.provider,
         llm_run.model,
+        llm_run.usage,
         llm_run.reasoning_effort,
         llm_run.status,
         llm_run.runtime_stream_key,
@@ -2862,6 +2866,11 @@ async function getSimulationDebugLlmRuns({
         phase: row.phase,
         provider: row.provider,
         model: row.model,
+        estimatedPriceCents:
+          estimateOpenAiTokenPriceCents({
+            model: row.model,
+            usage: row.usage,
+          })?.formattedCents ?? null,
         reasoningEffort: row.reasoning_effort,
         status: row.status,
         runtimeStreamKey: row.runtime_stream_key,
@@ -3108,8 +3117,7 @@ async function resetSimulationForTurnLlmRun(
     previousTurnNumber < turnNumber;
     previousTurnNumber += 1
   ) {
-    const previousTurnRun =
-      latestPreviousTurnRunsByTurn.get(previousTurnNumber)
+    const previousTurnRun = latestPreviousTurnRunsByTurn.get(previousTurnNumber)
 
     if (!previousTurnRun) {
       throw new SimulationValidationError(
@@ -3130,9 +3138,7 @@ async function resetSimulationForTurnLlmRun(
     }
   }
 
-  const immediatePreviousTurn = latestPreviousTurnRunsByTurn.get(
-    turnNumber - 1
-  )
+  const immediatePreviousTurn = latestPreviousTurnRunsByTurn.get(turnNumber - 1)
 
   if (!immediatePreviousTurn) {
     throw new SimulationValidationError(
@@ -3329,10 +3335,7 @@ async function updateSimulationLibraryAndRandomState(
 }
 
 function parseRequiredStringArray(value: unknown, errorMessage: string) {
-  if (
-    !Array.isArray(value) ||
-    value.some((item) => typeof item !== "string")
-  ) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new SimulationValidationError(errorMessage)
   }
 

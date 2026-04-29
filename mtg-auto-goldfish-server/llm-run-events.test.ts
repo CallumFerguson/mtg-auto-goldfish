@@ -21,6 +21,7 @@ import {
   SimulationStopTimeoutError,
   waitForSimulationStopCompletions,
 } from "./simulation-stop.js"
+import { estimateOpenAiTokenPriceCents } from "./openai-pricing.js"
 
 test("normalizes valid MCP output JSON", () => {
   const chunk = normalizeOpenAiStreamEvent({
@@ -51,6 +52,45 @@ test("keeps malformed MCP output as raw text instead of throwing", () => {
 
   assert.equal(chunk.kind, "mcp_call_complete")
   assert.equal(chunk.mcpFunctionOutput, '{"cards":')
+})
+
+test("estimates supported OpenAI model price in cents", () => {
+  const estimate = estimateOpenAiTokenPriceCents({
+    model: "gpt-5.4-mini",
+    usage: {
+      input_tokens: 100_000,
+      input_tokens_details: {
+        cached_tokens: 20_000,
+      },
+      output_tokens: 10_000,
+    },
+  })
+
+  assert.equal(estimate?.formattedCents, "10.7")
+})
+
+test("formats tiny OpenAI model price estimates below one tenth of a cent", () => {
+  const estimate = estimateOpenAiTokenPriceCents({
+    model: "gpt-5.4-nano",
+    usage: {
+      input_tokens: 100,
+      output_tokens: 100,
+    },
+  })
+
+  assert.equal(estimate?.formattedCents, "<0.1")
+})
+
+test("does not estimate unsupported OpenAI model prices", () => {
+  const estimate = estimateOpenAiTokenPriceCents({
+    model: "gpt-5",
+    usage: {
+      input_tokens: 100_000,
+      output_tokens: 10_000,
+    },
+  })
+
+  assert.equal(estimate, null)
 })
 
 test("normalizes MCP tool errors from completed output items", () => {

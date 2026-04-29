@@ -1512,6 +1512,9 @@ function SimulationResultsPanel({
               </h5>
               <p className="mt-1 text-xs text-muted-foreground">
                 {run.status} / {run.model}
+                {run.estimatedPriceCents
+                  ? ` / ${run.estimatedPriceCents} cents`
+                  : ""}
                 {run.outdated ? " / outdated" : ""}
               </p>
             </div>
@@ -1817,10 +1820,10 @@ function parseJsonObjectPayload(payload: unknown) {
 
     return typeof parsedPayload === "object" && parsedPayload !== null
       ? (parsedPayload as {
-        data?: {
-          loggedActions?: unknown
-        }
-      })
+          data?: {
+            loggedActions?: unknown
+          }
+        })
       : null
   } catch {
     return null
@@ -1929,6 +1932,14 @@ function SimulationDebugRunGroup({
               <p className="text-muted-foreground">
                 Model: <span className="text-foreground">{run.model}</span>
               </p>
+              {run.estimatedPriceCents ? (
+                <p className="text-muted-foreground">
+                  Estimated price:{" "}
+                  <span className="text-foreground">
+                    {run.estimatedPriceCents} cents
+                  </span>
+                </p>
+              ) : null}
               <p className="text-muted-foreground">
                 Reasoning effort:{" "}
                 <span className="text-foreground">{run.reasoningEffort}</span>
