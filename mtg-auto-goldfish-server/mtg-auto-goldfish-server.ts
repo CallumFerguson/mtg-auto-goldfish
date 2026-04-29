@@ -122,15 +122,19 @@ const simulationIdSchema = z
   .string()
   .trim()
   .min(1)
-  .describe("The simulation ID returned by the regular HTTP API.")
+  .describe(
+    "Fallback identifier only. Do not provide this when you have an llmRunId."
+  )
 const llmRunIdSchema = z
   .string()
   .trim()
   .min(1)
-  .describe("The LLM run ID returned when this simulation run was started.")
+  .describe(
+    "Preferred identifier for this tool call. Use the LLM Run ID from the prompt."
+  )
 const simulationIdentifierSchema = {
-  simulationId: simulationIdSchema.optional(),
   llmRunId: llmRunIdSchema.optional(),
+  simulationId: simulationIdSchema.optional(),
 }
 const createDeckSchema = z.object({
   name: z.string().trim().min(1),
@@ -2160,26 +2164,25 @@ function isMcpPath(path: string) {
   return path === OPENING_HAND_MCP_PATH || path === TURN_SIMULATION_MCP_PATH
 }
 
-type SimulationPromptIdentifier = string | SimulationIdentifier
-
 async function resolveSimulationPromptIdentifier(
-  identifier: SimulationPromptIdentifier
+  identifier: SimulationIdentifier
 ) {
-  if (typeof identifier === "string") {
-    return {
-      llmRunId: null,
-      simulationId: identifier,
-    }
+  const llmRunId = identifier.llmRunId?.trim()
+
+  if (!llmRunId) {
+    throw new SimulationValidationError(
+      "Prompt construction requires an LLM run ID."
+    )
   }
 
   return {
-    llmRunId: identifier.llmRunId?.trim() || null,
+    llmRunId,
     simulationId: await resolveSimulationIdentifier(identifier),
   }
 }
 
 export async function buildStartingHandSimulationPrompt(
-  identifier: SimulationPromptIdentifier
+  identifier: SimulationIdentifier
 ) {
   const { llmRunId, simulationId } =
     await resolveSimulationPromptIdentifier(identifier)
@@ -2193,19 +2196,18 @@ export async function buildStartingHandSimulationPrompt(
 }
 
 function buildStartingHandSimulationPromptFromData(
-  { commanders, library, simulationId }: StartingHandSimulationPromptData,
-  llmRunId: string | null
+  { commanders, library }: StartingHandSimulationPromptData,
+  llmRunId: string
 ) {
   const commanderLabel = commanders.length === 1 ? "Commander" : "Commanders"
   const commanderNames = expandCardNames(commanders)
   const cardNames = expandCardNames(library)
   const uniqueCards = dedupeCardsByNameAndText([...commanders, ...library])
-  const runIdLine = llmRunId ? `\nLLM Run ID: ${llmRunId}` : ""
 
   return `${DRAW_STARTING_HAND_PROMPT}
 
-Simulation ID: ${simulationId}${runIdLine}
-When calling tools, provide either llmRunId or simulationId, not both. Prefer llmRunId when it is available.
+LLM Run ID: ${llmRunId}
+Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
 
 ${commanderLabel}:
 ${commanderNames.join("\n")}
@@ -2284,7 +2286,7 @@ function formatPowerToughness({
 }
 
 export async function buildTurnSimulationPrompt(
-  identifier: SimulationPromptIdentifier,
+  identifier: SimulationIdentifier,
   gameState?: string
 ) {
   const { llmRunId, simulationId } =
@@ -2295,7 +2297,7 @@ export async function buildTurnSimulationPrompt(
     throw new Error("Simulation not found.")
   }
 
-  return buildTurnSimulationPromptFromData(promptData, gameState, llmRunId)
+  return buildTurnSimulationPromptFromData(promptData, llmRunId, gameState)
 }
 
 function buildTurnSimulationPromptFromData(
@@ -2303,11 +2305,10 @@ function buildTurnSimulationPromptFromData(
     commanders,
     library,
     libraryCards,
-    simulationId,
     startingHand,
   }: TurnSimulationPromptData,
-  gameState?: string,
-  llmRunId: string | null = null
+  llmRunId: string,
+  gameState?: string
 ) {
   const commanderNames = expandCardNames(commanders)
   const cardNames = [...library].sort((left, right) =>
@@ -2323,12 +2324,11 @@ function buildTurnSimulationPromptFromData(
         commanderNames,
         startingHand,
       })
-  const runIdLine = llmRunId ? `\nLLM Run ID: ${llmRunId}` : ""
 
   return `${SIMULATE_TURN_PROMPT}
 
-Simulation ID: ${simulationId}${runIdLine}
-When calling tools, provide either llmRunId or simulationId, not both. Prefer llmRunId when it is available.
+LLM Run ID: ${llmRunId}
+Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
 
 ===Start Game State===
 
