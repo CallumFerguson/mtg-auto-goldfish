@@ -53,6 +53,34 @@ test("keeps malformed MCP output as raw text instead of throwing", () => {
   assert.equal(chunk.mcpFunctionOutput, '{"cards":')
 })
 
+test("normalizes MCP tool errors from completed output items", () => {
+  const chunk = normalizeOpenAiStreamEvent({
+    type: "response.output_item.done",
+    item: {
+      type: "mcp_call",
+      name: "draw_card_from_top",
+      output: null,
+      status: "failed",
+      error: {
+        type: "mcp_tool_execution_error",
+        content: [
+          {
+            text: "Provided simulationId does not match the simulation associated with llmRunId.",
+            type: "text",
+          },
+        ],
+      },
+    },
+  })
+
+  assert.equal(chunk.kind, "mcp_call_complete")
+  assert.equal(chunk.mcpFunctionName, "draw_card_from_top")
+  assert.equal(
+    chunk.mcpFunctionOutput,
+    "Provided simulationId does not match the simulation associated with llmRunId."
+  )
+})
+
 test("creates a first-class cancellation chunk", () => {
   const chunk = createCancellationChunk("Stopped by user.")
 

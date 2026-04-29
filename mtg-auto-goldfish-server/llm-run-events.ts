@@ -55,15 +55,11 @@ export function normalizeOpenAiStreamEvent(
 
   if (eventType === "response.output_item.done" && itemType === "mcp_call") {
     const mcpFunctionName = getNestedStringProperty(eventRecord, "item", "name")
-    const mcpFunctionOutput = getNestedStringProperty(
-      eventRecord,
-      "item",
-      "output"
-    )
+    const mcpFunctionOutput = getMcpFunctionOutput(eventRecord)
 
     return createChunk("mcp_call_complete", eventType, itemType, {
       mcpFunctionName,
-      mcpFunctionOutput: parseMcpFunctionOutput(mcpFunctionOutput),
+      mcpFunctionOutput,
       payload,
     })
   }
@@ -295,6 +291,38 @@ function parseMcpFunctionOutput(output: string | null) {
   } catch {
     return output
   }
+}
+
+function getMcpFunctionOutput(eventRecord: Record<string, unknown>) {
+  const rawOutput = getNestedStringProperty(eventRecord, "item", "output")
+
+  if (rawOutput !== null && rawOutput.trim()) {
+    return parseMcpFunctionOutput(rawOutput)
+  }
+
+  return getMcpFunctionErrorOutput(asRecord(eventRecord.item)) ?? rawOutput
+}
+
+function getMcpFunctionErrorOutput(itemRecord: Record<string, unknown>) {
+  const errorRecord = asRecord(itemRecord.error)
+  const content = errorRecord.content
+
+  if (!Array.isArray(content)) {
+    return Object.keys(errorRecord).length > 0 ? errorRecord : null
+  }
+
+  const textParts = content.flatMap((part) => {
+    const partRecord = asRecord(part)
+    const text = getStringProperty(partRecord, "text")
+
+    return text === null ? [] : [text]
+  })
+
+  if (textParts.length === 0) {
+    return errorRecord
+  }
+
+  return textParts.join("\n")
 }
 
 function getProviderTerminalFailureMessage(

@@ -1593,8 +1593,12 @@ function SimulationResultChunkCards({
 function getSimulationResultChunks(
   chunks: readonly SimulationDebugLlmRunChunk[]
 ) {
-  return chunks.filter((chunk, index) => {
-    const nextChunk = chunks[index + 1]
+  const visibleChunks = chunks.filter(
+    (chunk, index) => !isRedundantMcpCallFailedEvent(chunk, chunks[index + 1])
+  )
+
+  return visibleChunks.filter((chunk, index) => {
+    const nextChunk = visibleChunks[index + 1]
 
     return !(
       chunk.kind === "mcp_call_start" &&
@@ -1603,6 +1607,19 @@ function getSimulationResultChunks(
       chunk.mcpFunctionName === nextChunk.mcpFunctionName
     )
   })
+}
+
+function isRedundantMcpCallFailedEvent(
+  chunk: SimulationDebugLlmRunChunk,
+  nextChunk: SimulationDebugLlmRunChunk | undefined
+) {
+  return (
+    chunk.kind === "error" &&
+    chunk.providerEventType === "response.mcp_call.failed" &&
+    nextChunk?.kind === "mcp_call_complete" &&
+    getPayloadString(chunk.payload, "item_id") !== null &&
+    getPayloadString(chunk.payload, "item_id") === getMcpCallItemId(nextChunk)
+  )
 }
 
 function SimulationResultEvent({
@@ -1619,13 +1636,33 @@ function SimulationResultEvent({
   }
 
   if (chunk.kind === "mcp_call_complete") {
+    const isToolFailure = isMcpCallFailure(chunk)
+
     return (
-      <details className="rounded-md border border-emerald-500/25 bg-emerald-950/15">
-        <summary className="cursor-pointer px-3 py-2 text-sm text-emerald-100/85 transition-colors hover:text-emerald-50">
+      <details
+        className={
+          isToolFailure
+            ? "rounded-md border border-destructive/35 bg-destructive/10"
+            : "rounded-md border border-emerald-500/25 bg-emerald-950/15"
+        }
+      >
+        <summary
+          className={
+            isToolFailure
+              ? "cursor-pointer px-3 py-2 text-sm text-destructive transition-colors hover:text-destructive/90"
+              : "cursor-pointer px-3 py-2 text-sm text-emerald-100/85 transition-colors hover:text-emerald-50"
+          }
+        >
           {getMcpCallCompleteTitle(chunk)}
         </summary>
-        <pre className="debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-emerald-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-emerald-50/80">
-          {formatResultEventPayload(chunk.mcpFunctionOutput)}
+        <pre
+          className={
+            isToolFailure
+              ? "debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-destructive/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-destructive"
+              : "debug-scrollbar-neutral max-h-64 max-w-full overflow-y-auto border-t border-emerald-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-emerald-50/80"
+          }
+        >
+          {formatResultEventPayload(getMcpCallResultPayload(chunk))}
         </pre>
       </details>
     )
@@ -1675,6 +1712,10 @@ function formatResultEventPayload(payload: unknown) {
 function getMcpCallCompleteTitle(chunk: SimulationDebugLlmRunChunk) {
   const toolName = chunk.mcpFunctionName ?? "unknown tool"
 
+  if (isMcpCallFailure(chunk)) {
+    return `Tool failed: ${toolName}`
+  }
+
   if (chunk.mcpFunctionName === "log_turn_action") {
     const lastLoggedAction = getLastLoggedTurnAction(chunk.mcpFunctionOutput)
 
@@ -1684,6 +1725,63 @@ function getMcpCallCompleteTitle(chunk: SimulationDebugLlmRunChunk) {
   }
 
   return `Tool completed: ${toolName}`
+}
+
+function getMcpCallResultPayload(chunk: SimulationDebugLlmRunChunk) {
+  if (isMcpCallFailure(chunk)) {
+    return chunk.mcpFunctionOutput ?? getMcpCallErrorPayload(chunk)
+  }
+
+  return chunk.mcpFunctionOutput
+}
+
+function isMcpCallFailure(chunk: SimulationDebugLlmRunChunk) {
+  if (chunk.kind !== "mcp_call_complete") {
+    return false
+  }
+
+  return (
+    getPayloadString(asPayloadRecord(chunk.payload).item, "status") ===
+      "failed" || getMcpCallErrorPayload(chunk) !== null
+  )
+}
+
+function getMcpCallErrorPayload(chunk: SimulationDebugLlmRunChunk) {
+  const itemRecord = asPayloadRecord(asPayloadRecord(chunk.payload).item)
+  const errorRecord = asPayloadRecord(itemRecord.error)
+  const content = errorRecord.content
+
+  if (!Array.isArray(content)) {
+    return Object.keys(errorRecord).length > 0 ? errorRecord : null
+  }
+
+  const textParts = content.flatMap((part) => {
+    const text = getPayloadString(part, "text")
+
+    return text === null ? [] : [text]
+  })
+
+  if (textParts.length === 0) {
+    return errorRecord
+  }
+
+  return textParts.join("\n")
+}
+
+function getMcpCallItemId(chunk: SimulationDebugLlmRunChunk) {
+  return getPayloadString(asPayloadRecord(chunk.payload).item, "id")
+}
+
+function asPayloadRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function getPayloadString(value: unknown, property: string) {
+  const propertyValue = asPayloadRecord(value)[property]
+
+  return typeof propertyValue === "string" ? propertyValue : null
 }
 
 function getLastLoggedTurnAction(payload: unknown) {
