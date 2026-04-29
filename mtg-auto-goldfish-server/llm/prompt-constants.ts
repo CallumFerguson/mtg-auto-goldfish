@@ -50,9 +50,8 @@ RESPONSE TIMING
 - The only visible output for this step should be the final JSON response after all tool usage is finished.
 
 TOOL USAGE RULES
-- Every tool call must identify this run with the provided llmRunId.
-- Do not pass simulationId when llmRunId is provided.
-- Do not pass both llmRunId and simulationId in the same tool call.
+- Every tool call must identify this run with the provided llmRunId and simulationId.
+- Use the exact llmRunId and simulationId values from this prompt.
 - Call draw_starting_hand exactly once to get the very first opening hand.
 - Do not call draw_starting_hand again after that.
 - If you decide a hand is not keepable, and only then, call mulligan.
@@ -458,9 +457,8 @@ Interpret mana costs exactly using normal MTG rules.
 
 LIBRARY AND TOOL RULES
 - The library is a hidden zone and must be manipulated only through tools.
-- Every tool call must identify this run with the provided llmRunId.
-- Do not pass simulationId when llmRunId is provided.
-- Do not pass both llmRunId and simulationId in the same tool call.
+- Every tool call must identify this run with the provided llmRunId and simulationId.
+- Use the exact llmRunId and simulationId values from this prompt.
 - Use the correct tool for the correct job:
   - draw_card_from_top: normal draws, reveal-from-top effects, and taking known cards from the top
   - draw_card_from_bottom: only when an effect explicitly takes cards from the bottom

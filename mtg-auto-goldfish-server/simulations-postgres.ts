@@ -2159,18 +2159,21 @@ export async function resolveSimulationIdentifier({
   const trimmedSimulationId = simulationId?.trim()
   const trimmedLlmRunId = llmRunId?.trim()
 
-  if (trimmedSimulationId && trimmedLlmRunId) {
-    throw new SimulationValidationError(
-      "Provide either simulationId or llmRunId, not both."
-    )
+  if (trimmedLlmRunId) {
+    const runSimulationId =
+      await resolveSimulationIdForActiveLlmRun(trimmedLlmRunId)
+
+    if (trimmedSimulationId && trimmedSimulationId !== runSimulationId) {
+      throw new SimulationValidationError(
+        "Provided simulationId does not match the simulation associated with llmRunId."
+      )
+    }
+
+    return runSimulationId
   }
 
   if (trimmedSimulationId) {
     return trimmedSimulationId
-  }
-
-  if (trimmedLlmRunId) {
-    return resolveSimulationIdForActiveLlmRun(trimmedLlmRunId)
   }
 
   throw new SimulationValidationError("Provide either simulationId or llmRunId.")

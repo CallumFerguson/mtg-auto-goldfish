@@ -123,7 +123,7 @@ const simulationIdSchema = z
   .trim()
   .min(1)
   .describe(
-    "Fallback identifier only. Do not provide this when you have an llmRunId."
+    "Optional simulation identifier. When also providing llmRunId, this must match the simulation associated with that run."
   )
 const llmRunIdSchema = z
   .string()
@@ -2189,12 +2189,17 @@ export async function buildStartingHandSimulationPrompt(
     throw new Error("Simulation not found.")
   }
 
-  return buildStartingHandSimulationPromptFromData(promptData, llmRunId)
+  return buildStartingHandSimulationPromptFromData(
+    promptData,
+    llmRunId,
+    simulationId
+  )
 }
 
 function buildStartingHandSimulationPromptFromData(
   { commanders, library }: StartingHandSimulationPromptData,
-  llmRunId: string
+  llmRunId: string,
+  simulationId: string
 ) {
   const commanderLabel = commanders.length === 1 ? "Commander" : "Commanders"
   const commanderNames = expandCardNames(commanders)
@@ -2204,7 +2209,8 @@ function buildStartingHandSimulationPromptFromData(
   return `${DRAW_STARTING_HAND_PROMPT}
 
 LLM Run ID: ${llmRunId}
-Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
+Simulation ID: ${simulationId}
+Use this exact tool identifier shape: { "llmRunId": "${llmRunId}", "simulationId": "${simulationId}" }
 
 ${commanderLabel}:
 ${commanderNames.join("\n")}
@@ -2294,7 +2300,12 @@ export async function buildTurnSimulationPrompt(
     throw new Error("Simulation not found.")
   }
 
-  return buildTurnSimulationPromptFromData(promptData, llmRunId, gameState)
+  return buildTurnSimulationPromptFromData(
+    promptData,
+    llmRunId,
+    simulationId,
+    gameState
+  )
 }
 
 function buildTurnSimulationPromptFromData(
@@ -2305,6 +2316,7 @@ function buildTurnSimulationPromptFromData(
     startingHand,
   }: TurnSimulationPromptData,
   llmRunId: string,
+  simulationId: string,
   gameState?: string
 ) {
   const commanderNames = expandCardNames(commanders)
@@ -2325,7 +2337,8 @@ function buildTurnSimulationPromptFromData(
   return `${SIMULATE_TURN_PROMPT}
 
 LLM Run ID: ${llmRunId}
-Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
+Simulation ID: ${simulationId}
+Use this exact tool identifier shape: { "llmRunId": "${llmRunId}", "simulationId": "${simulationId}" }
 
 ===Start Game State===
 
