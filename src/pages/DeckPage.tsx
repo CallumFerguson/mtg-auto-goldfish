@@ -219,7 +219,7 @@ export function DeckPage({
               </Button>
             </div>
           ) : deck ? (
-            <div className="min-h-0 min-w-0 flex-1">
+            <div className="simulation-scrollbar min-h-0 min-w-0 flex-1 overflow-x-auto">
               <DeckSimulation
                 cards={deck.cards}
                 deckId={deck.id}

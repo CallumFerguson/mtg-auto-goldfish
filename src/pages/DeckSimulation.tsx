@@ -396,8 +396,8 @@ export function DeckSimulation({
 
   return (
     <>
-      <div className="grid h-full min-h-0 grid-rows-[minmax(11rem,16rem)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1">
-        <aside className="simulation-sidebar-surface min-h-0 min-w-0 border-b border-border lg:border-r lg:border-b-0">
+      <div className="grid h-full min-h-0 min-w-[78rem] grid-cols-[18rem_minmax(0,1fr)] overflow-hidden">
+        <aside className="simulation-sidebar-surface min-h-0 min-w-0 border-r border-border">
           <nav
             className="simulation-scrollbar h-full overflow-y-auto"
             aria-label="Simulations"
@@ -1167,8 +1167,8 @@ function SimulationDetails({
   }, [handleRefreshDebugInfo, isDebugModalOpen])
 
   return (
-    <div className="grid min-h-full lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_24rem] lg:overflow-hidden">
-      <main className="min-w-0 px-5 py-6 lg:min-h-0 lg:overflow-y-auto">
+    <div className="grid h-full min-h-0 grid-cols-[minmax(36rem,1fr)_24rem] overflow-hidden">
+      <main className="min-h-0 min-w-0 overflow-y-auto px-5 py-6">
         <section className="grid gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1206,7 +1206,7 @@ function SimulationDetails({
         </section>
       </main>
 
-      <aside className="simulation-scrollbar simulation-sidebar-surface flex flex-col gap-5 border-t border-border px-5 py-6 lg:min-h-0 lg:overflow-y-auto lg:border-t-0 lg:border-l">
+      <aside className="simulation-scrollbar simulation-sidebar-surface flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border px-5 py-6">
         <header className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-sky-300">Simulation</p>
