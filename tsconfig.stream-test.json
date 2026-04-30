@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "outDir": "./node_modules/.tmp/stream-test",
+    "rootDir": "."
+  },
+  "include": [
+    "src/lib/deck-types.ts",
+    "src/lib/simulation-results-stream.ts",
+    "tests/simulation-results-stream.test.ts"
+  ]
+}

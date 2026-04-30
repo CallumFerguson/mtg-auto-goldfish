@@ -33,6 +33,7 @@ import type {
   SimulationDebugLlmRunChunk,
   SimulationResultsInfo,
   SimulationResultsResponse,
+  SimulationResultsStreamEvent,
   SimulationsResponse,
   SimulationDebugResponse,
   StartingHand,
@@ -40,6 +41,7 @@ import type {
   StopSimulationResponse,
 } from "@/lib/deck-types"
 import { getDeckSimulationPath, navigateTo } from "@/lib/navigation"
+import { applySimulationResultsStreamEvent } from "@/lib/simulation-results-stream"
 
 type OpeningHandCardOption = {
   id: string
@@ -184,6 +186,22 @@ export function DeckSimulation({
       setIsLoadingSimulations(false)
     }
   }, [deckId])
+
+  const updateSimulation = useCallback((updatedSimulation: Simulation) => {
+    setSimulations((currentSimulations) => {
+      const hasSimulation = currentSimulations.some(
+        (simulation) => simulation.id === updatedSimulation.id
+      )
+
+      if (!hasSimulation) {
+        return [updatedSimulation, ...currentSimulations]
+      }
+
+      return currentSimulations.map((simulation) =>
+        simulation.id === updatedSimulation.id ? updatedSimulation : simulation
+      )
+    })
+  }, [])
 
   const loadStartingHands = useCallback(async () => {
     setIsLoadingStartingHands(true)
@@ -748,6 +766,7 @@ export function DeckSimulation({
           ) : selectedSimulation ? (
             <SimulationDetails
               deckId={deckId}
+              onSimulationUpdated={updateSimulation}
               simulation={selectedSimulation}
               startingHand={selectedSimulationStartingHand}
             />
@@ -791,10 +810,12 @@ function SimulationMenuButton({
 
 function SimulationDetails({
   deckId,
+  onSimulationUpdated,
   simulation,
   startingHand,
 }: {
   deckId: string
+  onSimulationUpdated: (simulation: Simulation) => void
   simulation: Simulation
   startingHand: StartingHand | null
 }) {
@@ -827,6 +848,9 @@ function SimulationDetails({
   )
   const isLoadingResultsRef = useRef(false)
   const resultsAbortControllerRef = useRef<AbortController | null>(null)
+  const resultsEventSourceRef = useRef<EventSource | null>(null)
+  const resultsStreamErrorTimeoutRef = useRef<number | null>(null)
+  const [resultsStreamRestartKey, setResultsStreamRestartKey] = useState(0)
   const shouldSimulateOpeningHand = simulation.startingHandId === null
 
   useEffect(() => {
@@ -847,10 +871,19 @@ function SimulationDetails({
     setIsDebugModalOpen(false)
     resultsAbortControllerRef.current?.abort()
     resultsAbortControllerRef.current = null
+    resultsEventSourceRef.current?.close()
+    resultsEventSourceRef.current = null
+
+    if (resultsStreamErrorTimeoutRef.current !== null) {
+      window.clearTimeout(resultsStreamErrorTimeoutRef.current)
+      resultsStreamErrorTimeoutRef.current = null
+    }
+
     isLoadingResultsRef.current = false
     setIsLoadingResults(false)
     setResultsError(null)
     setResultsInfo(null)
+    setResultsStreamRestartKey(0)
   }, [simulation.id])
 
   async function handleStartOpeningHandRun() {
@@ -890,6 +923,7 @@ function SimulationDetails({
 
       const data = (await response.json()) as CreateOpeningHandLlmRunResponse
       setOpeningHandRun(data)
+      setResultsStreamRestartKey((currentKey) => currentKey + 1)
     } catch {
       setOpeningHandRunError(
         "Opening hand run could not be sent to the server."
@@ -945,6 +979,7 @@ function SimulationDetails({
 
       const data = (await response.json()) as CreateTurnLlmRunResponse
       setTurnRun(data)
+      setResultsStreamRestartKey((currentKey) => currentKey + 1)
     } catch {
       setTurnRunError("Turn run could not be sent to the server.")
     } finally {
@@ -1073,19 +1108,113 @@ function SimulationDetails({
   }, [deckId, simulation.id])
 
   useEffect(() => {
-    void handleReloadResults()
+    const eventSource = new EventSource(
+      `${API_BASE_URL}/decks/${deckId}/simulations/${simulation.id}/results/stream`
+    )
+    let isStreamClosed = false
 
-    const intervalId = window.setInterval(() => {
-      void handleReloadResults()
-    }, 1000)
+    resultsEventSourceRef.current?.close()
+    resultsEventSourceRef.current = eventSource
+    isLoadingResultsRef.current = true
+    setIsLoadingResults(true)
+    setResultsError(null)
+
+    function clearStreamErrorTimeout() {
+      if (resultsStreamErrorTimeoutRef.current === null) {
+        return
+      }
+
+      window.clearTimeout(resultsStreamErrorTimeoutRef.current)
+      resultsStreamErrorTimeoutRef.current = null
+    }
+
+    function markStreamLoaded() {
+      isLoadingResultsRef.current = false
+      setIsLoadingResults(false)
+    }
+
+    function closeStream() {
+      if (isStreamClosed) {
+        return
+      }
+
+      isStreamClosed = true
+      clearStreamErrorTimeout()
+      eventSource.close()
+
+      if (resultsEventSourceRef.current === eventSource) {
+        resultsEventSourceRef.current = null
+      }
+
+      markStreamLoaded()
+    }
+
+    eventSource.onmessage = (messageEvent) => {
+      clearStreamErrorTimeout()
+
+      try {
+        const streamEvent = JSON.parse(
+          messageEvent.data
+        ) as SimulationResultsStreamEvent
+
+        if (streamEvent.type === "error") {
+          setResultsError(streamEvent.message)
+          markStreamLoaded()
+          return
+        }
+
+        setResultsInfo((currentResultsInfo) =>
+          applySimulationResultsStreamEvent(currentResultsInfo, streamEvent)
+        )
+
+        if (
+          streamEvent.type === "snapshot" ||
+          streamEvent.type === "simulation_updated" ||
+          streamEvent.type === "done"
+        ) {
+          onSimulationUpdated(streamEvent.simulation)
+        }
+
+        markStreamLoaded()
+
+        if (streamEvent.type === "done") {
+          closeStream()
+        }
+      } catch {
+        setResultsError("Simulation results stream sent an invalid event.")
+        markStreamLoaded()
+      }
+    }
+
+    eventSource.onerror = () => {
+      if (eventSource.readyState === EventSource.CLOSED) {
+        setResultsError("Simulation results stream disconnected.")
+        closeStream()
+        return
+      }
+
+      if (resultsStreamErrorTimeoutRef.current !== null) {
+        return
+      }
+
+      resultsStreamErrorTimeoutRef.current = window.setTimeout(() => {
+        if (isStreamClosed) {
+          return
+        }
+
+        setResultsError(
+          "Simulation results stream is reconnecting. Reload results if it does not recover."
+        )
+        markStreamLoaded()
+      }, 10000)
+    }
 
     return () => {
-      window.clearInterval(intervalId)
       resultsAbortControllerRef.current?.abort()
       resultsAbortControllerRef.current = null
-      isLoadingResultsRef.current = false
+      closeStream()
     }
-  }, [handleReloadResults])
+  }, [deckId, onSimulationUpdated, resultsStreamRestartKey, simulation.id])
 
   useEffect(() => {
     if (!isDebugModalOpen) {
@@ -2077,10 +2206,11 @@ function formatDebugChunkBlocks(
 
   for (const chunk of chunks) {
     const deltaType = getDebugChunkDeltaType(chunk)
+    const chunkBlockId = getDebugChunkBlockId(chunk)
 
     if (!deltaType) {
       blocks.push({
-        id: `event-${chunk.id}`,
+        id: `event-${chunkBlockId}`,
         type: "event",
         chunk,
       })
@@ -2097,7 +2227,7 @@ function formatDebugChunkBlocks(
     }
 
     blocks.push({
-      id: `${deltaType}-${chunk.id}`,
+      id: `${deltaType}-${chunkBlockId}`,
       type: deltaType,
       text: deltaText,
       chunks: [chunk],
@@ -2105,6 +2235,10 @@ function formatDebugChunkBlocks(
   }
 
   return blocks
+}
+
+function getDebugChunkBlockId(chunk: SimulationDebugLlmRunChunk) {
+  return chunk.id === null ? `live-${chunk.sequence}` : String(chunk.id)
 }
 
 function getDebugChunkDeltaType(chunk: SimulationDebugLlmRunChunk) {

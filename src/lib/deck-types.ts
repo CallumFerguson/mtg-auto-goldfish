@@ -73,7 +73,7 @@ export type StopSimulationResponse = {
 }
 
 export type SimulationDebugLlmRunChunk = {
-  id: number
+  id: number | null
   sequence: number
   kind: string
   providerEventType: string | null
@@ -120,6 +120,39 @@ export type SimulationResultsInfo = SimulationDebugInfo
 export type SimulationResultsResponse = {
   results: SimulationResultsInfo
 }
+
+export type SimulationResultsStreamEvent =
+  | {
+      type: "snapshot"
+      simulation: Simulation
+      results: SimulationResultsInfo
+    }
+  | {
+      type: "llm_run_started"
+      run: SimulationDebugLlmRun
+    }
+  | {
+      type: "chunk"
+      llmRunId: string
+      chunk: SimulationDebugLlmRunChunk
+    }
+  | {
+      type: "llm_run_updated"
+      run: SimulationDebugLlmRun
+    }
+  | {
+      type: "simulation_updated"
+      simulation: Simulation
+    }
+  | {
+      type: "done"
+      simulation: Simulation
+      results: SimulationResultsInfo
+    }
+  | {
+      type: "error"
+      message: string
+    }
 
 export type StartingHandCard = {
   deckCardId: number

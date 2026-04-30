@@ -1,0 +1,207 @@
+import type {
+  SimulationDebugLlmRun,
+  SimulationDebugLlmRunChunk,
+  SimulationResultsInfo,
+  SimulationResultsStreamEvent,
+} from "./deck-types"
+
+export function applySimulationResultsStreamEvent(
+  currentResults: SimulationResultsInfo | null,
+  streamEvent: SimulationResultsStreamEvent
+) {
+  if (streamEvent.type === "snapshot" || streamEvent.type === "done") {
+    return streamEvent.results
+  }
+
+  if (streamEvent.type === "llm_run_started") {
+    return upsertSimulationResultsRun(currentResults, streamEvent.run)
+  }
+
+  if (streamEvent.type === "llm_run_updated") {
+    return upsertSimulationResultsRun(currentResults, streamEvent.run)
+  }
+
+  if (streamEvent.type === "chunk") {
+    return appendSimulationResultsRunChunk(
+      currentResults,
+      streamEvent.llmRunId,
+      streamEvent.chunk
+    )
+  }
+
+  return currentResults
+}
+
+export function upsertSimulationResultsRun(
+  currentResults: SimulationResultsInfo | null,
+  incomingRun: SimulationDebugLlmRun
+) {
+  if (!currentResults) {
+    return currentResults
+  }
+
+  if (incomingRun.phase === "opening_hand") {
+    const openingHandLlmRuns = upsertRun(
+      currentResults.openingHandLlmRuns,
+      incomingRun
+    ).sort(compareOpeningHandRuns)
+
+    return {
+      ...currentResults,
+      openingHandLlmRunCount: openingHandLlmRuns.length,
+      openingHandLlmRuns,
+    }
+  }
+
+  if (incomingRun.phase === "turn") {
+    const turnLlmRuns = upsertRun(
+      currentResults.turnLlmRuns,
+      incomingRun
+    ).sort(compareTurnRuns)
+
+    return {
+      ...currentResults,
+      turnLlmRunCount: turnLlmRuns.length,
+      turnLlmRuns,
+    }
+  }
+
+  return currentResults
+}
+
+export function appendSimulationResultsRunChunk(
+  currentResults: SimulationResultsInfo | null,
+  llmRunId: string,
+  chunk: SimulationDebugLlmRunChunk
+) {
+  if (!currentResults) {
+    return currentResults
+  }
+
+  const openingHandLlmRuns = appendChunkToRuns(
+    currentResults.openingHandLlmRuns,
+    llmRunId,
+    chunk
+  )
+  const turnLlmRuns = appendChunkToRuns(
+    currentResults.turnLlmRuns,
+    llmRunId,
+    chunk
+  )
+
+  if (
+    openingHandLlmRuns === currentResults.openingHandLlmRuns &&
+    turnLlmRuns === currentResults.turnLlmRuns
+  ) {
+    return currentResults
+  }
+
+  return {
+    ...currentResults,
+    openingHandLlmRuns,
+    turnLlmRuns,
+  }
+}
+
+function upsertRun(
+  currentRuns: SimulationDebugLlmRun[],
+  incomingRun: SimulationDebugLlmRun
+) {
+  const existingRun = currentRuns.find(
+    (run) => run.llmRunId === incomingRun.llmRunId
+  )
+
+  if (!existingRun) {
+    return [...currentRuns, sortRunChunks(incomingRun)]
+  }
+
+  const mergedRun = {
+    ...existingRun,
+    ...incomingRun,
+    chunks: mergeChunks(existingRun.chunks, incomingRun.chunks),
+  }
+
+  return currentRuns.map((run) =>
+    run.llmRunId === incomingRun.llmRunId ? mergedRun : run
+  )
+}
+
+function appendChunkToRuns(
+  currentRuns: SimulationDebugLlmRun[],
+  llmRunId: string,
+  chunk: SimulationDebugLlmRunChunk
+) {
+  const runIndex = currentRuns.findIndex((run) => run.llmRunId === llmRunId)
+
+  if (runIndex === -1) {
+    return currentRuns
+  }
+
+  return currentRuns.map((run, index) =>
+    index === runIndex
+      ? {
+          ...run,
+          chunks: mergeChunks(run.chunks, [chunk]),
+        }
+      : run
+  )
+}
+
+function mergeChunks(
+  currentChunks: readonly SimulationDebugLlmRunChunk[],
+  incomingChunks: readonly SimulationDebugLlmRunChunk[]
+) {
+  const chunksBySequence = new Map<number, SimulationDebugLlmRunChunk>()
+
+  for (const chunk of currentChunks) {
+    chunksBySequence.set(chunk.sequence, chunk)
+  }
+
+  for (const chunk of incomingChunks) {
+    const existingChunk = chunksBySequence.get(chunk.sequence)
+
+    if (!existingChunk || shouldReplaceChunk(existingChunk, chunk)) {
+      chunksBySequence.set(chunk.sequence, chunk)
+    }
+  }
+
+  return Array.from(chunksBySequence.values()).sort(compareChunks)
+}
+
+function shouldReplaceChunk(
+  existingChunk: SimulationDebugLlmRunChunk,
+  incomingChunk: SimulationDebugLlmRunChunk
+) {
+  return existingChunk.id === null || incomingChunk.id !== null
+}
+
+function sortRunChunks(run: SimulationDebugLlmRun) {
+  return {
+    ...run,
+    chunks: [...run.chunks].sort(compareChunks),
+  }
+}
+
+function compareChunks(
+  firstChunk: SimulationDebugLlmRunChunk,
+  secondChunk: SimulationDebugLlmRunChunk
+) {
+  return firstChunk.sequence - secondChunk.sequence
+}
+
+function compareOpeningHandRuns(
+  firstRun: SimulationDebugLlmRun,
+  secondRun: SimulationDebugLlmRun
+) {
+  return firstRun.attemptNumber - secondRun.attemptNumber
+}
+
+function compareTurnRuns(
+  firstRun: SimulationDebugLlmRun,
+  secondRun: SimulationDebugLlmRun
+) {
+  return (
+    (firstRun.turnNumber ?? 0) - (secondRun.turnNumber ?? 0) ||
+    firstRun.attemptNumber - secondRun.attemptNumber
+  )
+}

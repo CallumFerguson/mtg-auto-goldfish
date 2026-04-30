@@ -59,6 +59,7 @@ import {
   shuffleSimulationLibrary,
   SIMULATION_AUTO_ADVANCE_DISABLED_MESSAGE,
   SIMULATION_AUTO_ADVANCE_NOT_RUNNING_MESSAGE,
+  SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
   SimulationValidationError,
   takeCardsFromSimulationLibrary,
   updateLlmRunRequestData,
@@ -66,8 +67,12 @@ import {
 import type {
   LlmRunChunkInput,
   LlmRunPhase,
+  LlmRunStatus,
+  SimulationDebugLlmRun,
   SimulationLlmCompletionResult,
   SimulationPromptCard,
+  SimulationResultsInfo,
+  SimulationSummary,
   StartingHandSimulationPromptData,
   TurnSimulationPromptData,
 } from "./simulations-postgres.js"
@@ -95,6 +100,15 @@ import {
   SimulationStopTimeoutError,
   waitForSimulationStopCompletions,
 } from "./simulation-stop.js"
+import {
+  SimulationResultsBroadcaster,
+  formatSseComment,
+  formatSseEvent,
+  type SimulationResultsStreamChunk,
+  type SimulationResultsStreamEvent,
+  type SimulationResultsStreamInfo,
+  type SimulationResultsStreamRun,
+} from "./simulation-results-stream.js"
 import { estimateOpenAiTokenPriceCents } from "./openai-pricing.js"
 import {
   createExactScryfallOracleCardMatchMap,
@@ -113,6 +127,8 @@ const OPENING_HAND_MCP_SERVER_LABEL = "opening_hand"
 const TURN_SIMULATION_MCP_SERVER_LABEL = "turn_simulation"
 const OPENAI_PROVIDER = "openai"
 const STREAM_FLUSH_INTERVAL_MS = 1000
+const STREAM_RECENT_CHUNK_LIMIT = 500
+const SSE_KEEPALIVE_INTERVAL_MS = 15000
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -193,16 +209,28 @@ type TurnSimulationOpenAiRunConfig = OpenAiRunConfig & {
 
 type ActiveLlmRunRuntime = {
   abortController: AbortController
+  attemptNumber: number
   chunkBuffer: LlmRunChunkInput[]
   completionPromise: Promise<void>
+  deckId: string
   flushTimer: NodeJS.Timeout | null
   flushPromise: Promise<void> | null
   llmRunId: string
+  model: string
   nextSequence: number
+  phase: LlmRunPhase
+  provider: string
+  reasoningEffort: string
+  recentChunks: SimulationResultsStreamChunk[]
   resolveCompletion: () => void
+  runtimeStreamKey: string
+  simulationId: string
+  status: LlmRunStatus
+  turnNumber?: number
 }
 
 const activeLlmRunRuntimes = new Map<string, ActiveLlmRunRuntime>()
+const simulationResultsBroadcaster = new SimulationResultsBroadcaster()
 
 function createRuntimeCompletion() {
   let resolveCompletion: () => void = () => {}
@@ -213,6 +241,320 @@ function createRuntimeCompletion() {
   return {
     completionPromise,
     resolveCompletion,
+  }
+}
+
+function isTerminalSimulationStatus(status: SimulationSummary["status"]) {
+  return status === "completed" || status === "failed" || status === "cancelled"
+}
+
+function shouldStreamSimulationResultsChunk(chunk: LlmRunChunkInput) {
+  return !SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS.includes(chunk.kind)
+}
+
+function createRuntimeStreamChunk(
+  chunk: LlmRunChunkInput
+): SimulationResultsStreamChunk {
+  return {
+    id: null,
+    sequence: chunk.sequence,
+    kind: chunk.kind,
+    providerEventType: chunk.providerEventType,
+    itemType: chunk.itemType,
+    mcpFunctionName: chunk.mcpFunctionName,
+    mcpFunctionOutput: chunk.mcpFunctionOutput,
+    reasoningDelta: chunk.reasoningDelta,
+    outputDelta: chunk.outputDelta,
+    payload: chunk.payload,
+    receivedAt: new Date().toISOString(),
+  }
+}
+
+function rememberRuntimeStreamChunk(
+  runtime: ActiveLlmRunRuntime,
+  chunk: SimulationResultsStreamChunk
+) {
+  runtime.recentChunks.push(chunk)
+
+  if (runtime.recentChunks.length > STREAM_RECENT_CHUNK_LIMIT) {
+    runtime.recentChunks.splice(
+      0,
+      runtime.recentChunks.length - STREAM_RECENT_CHUNK_LIMIT
+    )
+  }
+}
+
+function createStreamRunFromRuntime(
+  runtime: ActiveLlmRunRuntime,
+  chunks = runtime.recentChunks
+): SimulationResultsStreamRun {
+  return {
+    llmRunId: runtime.llmRunId,
+    phase: runtime.phase,
+    provider: runtime.provider,
+    model: runtime.model,
+    estimatedPriceCents: null,
+    reasoningEffort: runtime.reasoningEffort,
+    status: runtime.status,
+    runtimeStreamKey: runtime.runtimeStreamKey,
+    attemptNumber: runtime.attemptNumber,
+    turnNumber: runtime.turnNumber,
+    chunks,
+  }
+}
+
+function createStreamRunFromPersistedRun(
+  run: SimulationDebugLlmRun
+): SimulationResultsStreamRun {
+  return {
+    ...run,
+    chunks: run.chunks.map((chunk) => ({
+      ...chunk,
+      id: chunk.id,
+    })),
+  }
+}
+
+function createStreamResultsInfo(
+  results: SimulationResultsInfo
+): SimulationResultsStreamInfo {
+  return {
+    ...results,
+    openingHandLlmRuns: results.openingHandLlmRuns.map(
+      createStreamRunFromPersistedRun
+    ),
+    turnLlmRuns: results.turnLlmRuns.map(createStreamRunFromPersistedRun),
+  }
+}
+
+function mergeActiveRuntimeChunksIntoResults(
+  results: SimulationResultsStreamInfo,
+  simulationId: string
+): SimulationResultsStreamInfo {
+  let mergedResults = results
+
+  for (const runtime of activeLlmRunRuntimes.values()) {
+    if (runtime.simulationId !== simulationId) {
+      continue
+    }
+
+    mergedResults = upsertStreamRun(
+      mergedResults,
+      createStreamRunFromRuntime(runtime)
+    )
+  }
+
+  return mergedResults
+}
+
+function upsertStreamRun(
+  results: SimulationResultsStreamInfo,
+  incomingRun: SimulationResultsStreamRun
+): SimulationResultsStreamInfo {
+  if (incomingRun.phase === "opening_hand") {
+    const openingHandLlmRuns = upsertStreamRunInList(
+      results.openingHandLlmRuns,
+      incomingRun
+    ).sort(compareOpeningHandStreamRuns)
+
+    return {
+      ...results,
+      openingHandLlmRunCount: openingHandLlmRuns.length,
+      openingHandLlmRuns,
+    }
+  }
+
+  if (incomingRun.phase === "turn") {
+    const turnLlmRuns = upsertStreamRunInList(
+      results.turnLlmRuns,
+      incomingRun
+    ).sort(compareTurnStreamRuns)
+
+    return {
+      ...results,
+      turnLlmRunCount: turnLlmRuns.length,
+      turnLlmRuns,
+    }
+  }
+
+  return results
+}
+
+function upsertStreamRunInList(
+  runs: readonly SimulationResultsStreamRun[],
+  incomingRun: SimulationResultsStreamRun
+) {
+  const existingRun = runs.find((run) => run.llmRunId === incomingRun.llmRunId)
+
+  if (!existingRun) {
+    return [
+      ...runs,
+      {
+        ...incomingRun,
+        chunks: [...incomingRun.chunks].sort(compareStreamChunks),
+      },
+    ]
+  }
+
+  const mergedRun = {
+    ...incomingRun,
+    ...existingRun,
+    status: incomingRun.status,
+    chunks: mergeStreamChunks(existingRun.chunks, incomingRun.chunks),
+  }
+
+  return runs.map((run) =>
+    run.llmRunId === incomingRun.llmRunId ? mergedRun : run
+  )
+}
+
+function mergeStreamChunks(
+  existingChunks: readonly SimulationResultsStreamChunk[],
+  incomingChunks: readonly SimulationResultsStreamChunk[]
+) {
+  const chunksBySequence = new Map<number, SimulationResultsStreamChunk>()
+
+  for (const chunk of existingChunks) {
+    chunksBySequence.set(chunk.sequence, chunk)
+  }
+
+  for (const chunk of incomingChunks) {
+    const existingChunk = chunksBySequence.get(chunk.sequence)
+
+    if (
+      !existingChunk ||
+      existingChunk.id === null ||
+      chunk.id !== null
+    ) {
+      chunksBySequence.set(chunk.sequence, chunk)
+    }
+  }
+
+  return Array.from(chunksBySequence.values()).sort(compareStreamChunks)
+}
+
+function compareStreamChunks(
+  firstChunk: SimulationResultsStreamChunk,
+  secondChunk: SimulationResultsStreamChunk
+) {
+  return firstChunk.sequence - secondChunk.sequence
+}
+
+function compareOpeningHandStreamRuns(
+  firstRun: SimulationResultsStreamRun,
+  secondRun: SimulationResultsStreamRun
+) {
+  return firstRun.attemptNumber - secondRun.attemptNumber
+}
+
+function compareTurnStreamRuns(
+  firstRun: SimulationResultsStreamRun,
+  secondRun: SimulationResultsStreamRun
+) {
+  return (
+    (firstRun.turnNumber ?? 0) - (secondRun.turnNumber ?? 0) ||
+    firstRun.attemptNumber - secondRun.attemptNumber
+  )
+}
+
+function findStreamRun(
+  results: SimulationResultsStreamInfo,
+  llmRunId: string
+) {
+  return (
+    results.openingHandLlmRuns.find((run) => run.llmRunId === llmRunId) ??
+    results.turnLlmRuns.find((run) => run.llmRunId === llmRunId) ??
+    null
+  )
+}
+
+async function getSimulationResultsStreamSnapshot(
+  deckId: string,
+  simulationId: string
+) {
+  const simulation = await getSimulationSummary(deckId, simulationId)
+
+  if (!simulation) {
+    throw new SimulationValidationError("Simulation not found.")
+  }
+
+  const results = mergeActiveRuntimeChunksIntoResults(
+    createStreamResultsInfo(await getSimulationResultsInfo(deckId, simulationId)),
+    simulationId
+  )
+
+  return {
+    simulation,
+    results,
+  }
+}
+
+function publishRuntimeStarted(runtime: ActiveLlmRunRuntime) {
+  simulationResultsBroadcaster.publish(runtime.simulationId, {
+    type: "llm_run_started",
+    run: createStreamRunFromRuntime(runtime, []),
+  })
+}
+
+function publishRuntimeChunk(
+  runtime: ActiveLlmRunRuntime,
+  chunk: LlmRunChunkInput
+) {
+  if (!shouldStreamSimulationResultsChunk(chunk)) {
+    return
+  }
+
+  const streamChunk = createRuntimeStreamChunk(chunk)
+
+  rememberRuntimeStreamChunk(runtime, streamChunk)
+  simulationResultsBroadcaster.publish(runtime.simulationId, {
+    type: "chunk",
+    llmRunId: runtime.llmRunId,
+    chunk: streamChunk,
+  })
+}
+
+async function publishSimulationResultsState({
+  deckId,
+  llmRunId,
+  simulationId,
+}: {
+  deckId: string
+  simulationId: string
+  llmRunId?: string
+}) {
+  try {
+    const snapshot = await getSimulationResultsStreamSnapshot(
+      deckId,
+      simulationId
+    )
+
+    if (llmRunId) {
+      const run = findStreamRun(snapshot.results, llmRunId)
+
+      if (run) {
+        simulationResultsBroadcaster.publish(simulationId, {
+          type: "llm_run_updated",
+          run,
+        })
+      }
+    }
+
+    simulationResultsBroadcaster.publish(simulationId, {
+      type: "simulation_updated",
+      simulation: snapshot.simulation,
+    })
+
+    if (isTerminalSimulationStatus(snapshot.simulation.status)) {
+      simulationResultsBroadcaster.publish(simulationId, {
+        type: "done",
+        simulation: snapshot.simulation,
+        results: snapshot.results,
+      })
+      simulationResultsBroadcaster.closeSimulation(simulationId)
+    }
+  } catch (error) {
+    console.error("Failed to publish simulation results stream state:", error)
   }
 }
 
@@ -885,10 +1227,13 @@ async function prepareAndStartOpeningHandLlmRun({
 
     startOpeningHandLlmRun({
       config: openAiConfig,
+      deckId,
       fullPrompt,
+      attemptNumber: openingHandRun.attemptNumber,
       llmRunId: openingHandRun.llmRunId,
       requestPayload,
       runtimeStreamKey: openingHandRun.runtimeStreamKey,
+      simulationId,
     })
 
     return openingHandRun
@@ -956,10 +1301,14 @@ async function prepareAndStartTurnLlmRun({
 
     startTurnLlmRun({
       config: openAiConfig,
+      deckId,
       fullPrompt,
+      attemptNumber: turnRun.attemptNumber,
       llmRunId: turnRun.llmRunId,
       requestPayload,
       runtimeStreamKey: turnRun.runtimeStreamKey,
+      simulationId,
+      turnNumber: turnRun.turnNumber,
     })
 
     return turnRun
@@ -1036,6 +1385,10 @@ async function handleSimulationCompletionNextStep(
 
     console.error("Failed to auto-start next simulation step:", error)
     await markSimulationFailed(completion.simulationId, getErrorMessage(error))
+    await publishSimulationResultsState({
+      deckId: completion.deckId,
+      simulationId: completion.simulationId,
+    })
   }
 }
 
@@ -1048,49 +1401,74 @@ function isBenignAutoAdvanceAbortError(error: unknown) {
 }
 
 function startOpeningHandLlmRun({
+  attemptNumber,
   config,
+  deckId,
   fullPrompt,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
+  simulationId,
 }: {
+  attemptNumber: number
   config: OpenAiRunConfig
+  deckId: string
   fullPrompt: string
   llmRunId: string
   requestPayload: ReturnType<typeof buildOpeningHandOpenAiRequestPayload>
   runtimeStreamKey: string
+  simulationId: string
 }) {
   void runOpeningHandLlmRun({
+    attemptNumber,
     config,
+    deckId,
     fullPrompt,
     llmRunId,
     requestPayload,
     runtimeStreamKey,
+    simulationId,
   })
 }
 
 async function runOpeningHandLlmRun({
+  attemptNumber,
   config,
+  deckId,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
+  simulationId,
 }: {
+  attemptNumber: number
   config: OpenAiRunConfig
+  deckId: string
   fullPrompt: string
   llmRunId: string
   requestPayload: ReturnType<typeof buildOpeningHandOpenAiRequestPayload>
   runtimeStreamKey: string
+  simulationId: string
 }) {
   const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
     abortController: new AbortController(),
+    attemptNumber,
     chunkBuffer: [],
     completionPromise: completion.completionPromise,
+    deckId,
     flushTimer: null,
     flushPromise: null,
     llmRunId,
+    model: config.model,
     nextSequence: 1,
+    phase: "opening_hand",
+    provider: OPENAI_PROVIDER,
+    reasoningEffort: config.reasoningEffort,
+    recentChunks: [],
     resolveCompletion: completion.resolveCompletion,
+    runtimeStreamKey,
+    simulationId,
+    status: "streaming",
   }
   let outputText = ""
   let responseMetadata: unknown = {}
@@ -1099,6 +1477,7 @@ async function runOpeningHandLlmRun({
   let providerTerminalEventError: ProviderTerminalEventError | null = null
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
+  publishRuntimeStarted(runtime)
 
   try {
     await markLlmRunStreaming(llmRunId)
@@ -1166,6 +1545,12 @@ async function runOpeningHandLlmRun({
       responseMetadata,
       usage,
     })
+    runtime.status = "completed"
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
     await handleSimulationCompletionNextStep(completion)
   } catch (error) {
     if (isAbortError(error) || runtime.abortController.signal.aborted) {
@@ -1176,6 +1561,12 @@ async function runOpeningHandLlmRun({
       appendRuntimeChunk(runtime, createCancellationChunk())
       await tryForceFlushRuntimeChunks(runtime, "cancelled opening-hand run")
       await cancelLlmRun(llmRunId, "Opening-hand LLM run was cancelled.")
+      runtime.status = "cancelled"
+      await publishSimulationResultsState({
+        deckId,
+        llmRunId,
+        simulationId,
+      })
       return
     }
 
@@ -1193,6 +1584,12 @@ async function runOpeningHandLlmRun({
     })
     console.error("Opening-hand LLM run failed:", effectiveError)
     await failLlmRun(llmRunId, getErrorMessage(effectiveError))
+    runtime.status = "failed"
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
   } finally {
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
@@ -1201,49 +1598,80 @@ async function runOpeningHandLlmRun({
 }
 
 function startTurnLlmRun({
+  attemptNumber,
   config,
+  deckId,
   fullPrompt,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
+  simulationId,
+  turnNumber,
 }: {
+  attemptNumber: number
   config: OpenAiRunConfig
+  deckId: string
   fullPrompt: string
   llmRunId: string
   requestPayload: ReturnType<typeof buildTurnSimulationOpenAiRequestPayload>
   runtimeStreamKey: string
+  simulationId: string
+  turnNumber: number
 }) {
   void runTurnLlmRun({
+    attemptNumber,
     config,
+    deckId,
     fullPrompt,
     llmRunId,
     requestPayload,
     runtimeStreamKey,
+    simulationId,
+    turnNumber,
   })
 }
 
 async function runTurnLlmRun({
+  attemptNumber,
   config,
+  deckId,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
+  simulationId,
+  turnNumber,
 }: {
+  attemptNumber: number
   config: OpenAiRunConfig
+  deckId: string
   fullPrompt: string
   llmRunId: string
   requestPayload: ReturnType<typeof buildTurnSimulationOpenAiRequestPayload>
   runtimeStreamKey: string
+  simulationId: string
+  turnNumber: number
 }) {
   const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
     abortController: new AbortController(),
+    attemptNumber,
     chunkBuffer: [],
     completionPromise: completion.completionPromise,
+    deckId,
     flushTimer: null,
     flushPromise: null,
     llmRunId,
+    model: config.model,
     nextSequence: 1,
+    phase: "turn",
+    provider: OPENAI_PROVIDER,
+    reasoningEffort: config.reasoningEffort,
+    recentChunks: [],
     resolveCompletion: completion.resolveCompletion,
+    runtimeStreamKey,
+    simulationId,
+    status: "streaming",
+    turnNumber,
   }
   let outputText = ""
   let responseMetadata: unknown = {}
@@ -1252,6 +1680,7 @@ async function runTurnLlmRun({
   let providerTerminalEventError: ProviderTerminalEventError | null = null
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
+  publishRuntimeStarted(runtime)
 
   try {
     await markLlmRunStreaming(llmRunId)
@@ -1317,6 +1746,12 @@ async function runTurnLlmRun({
       responseMetadata,
       usage,
     })
+    runtime.status = "completed"
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
     await handleSimulationCompletionNextStep(completion)
   } catch (error) {
     if (isAbortError(error) || runtime.abortController.signal.aborted) {
@@ -1330,6 +1765,12 @@ async function runTurnLlmRun({
       )
       await tryForceFlushRuntimeChunks(runtime, "cancelled turn run")
       await cancelLlmRun(llmRunId, "Turn LLM run was cancelled.")
+      runtime.status = "cancelled"
+      await publishSimulationResultsState({
+        deckId,
+        llmRunId,
+        simulationId,
+      })
       return
     }
 
@@ -1347,6 +1788,12 @@ async function runTurnLlmRun({
     })
     console.error("Turn LLM run failed:", effectiveError)
     await failLlmRun(llmRunId, getErrorMessage(effectiveError))
+    runtime.status = "failed"
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
   } finally {
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
@@ -1394,6 +1841,10 @@ async function stopActiveSimulationLlmRuns(
   }
 
   await markSimulationCancelled(simulationId, "Simulation was stopped.")
+  await publishSimulationResultsState({
+    deckId,
+    simulationId,
+  })
 
   return {
     simulationId,
@@ -1406,11 +1857,14 @@ function appendRuntimeChunk(
   runtime: ActiveLlmRunRuntime,
   chunk: Omit<LlmRunChunkInput, "sequence">
 ) {
-  runtime.chunkBuffer.push({
+  const sequencedChunk = {
     ...chunk,
     sequence: runtime.nextSequence,
-  })
+  }
+
+  runtime.chunkBuffer.push(sequencedChunk)
   runtime.nextSequence += 1
+  publishRuntimeChunk(runtime, sequencedChunk)
   scheduleRuntimeFlush(runtime)
 }
 
@@ -1848,6 +2302,156 @@ async function main() {
         console.error("Failed to load simulation results:", error)
         res.status(500).json({
           error: "Failed to load simulation results.",
+        })
+      }
+    }
+  )
+
+  app.get(
+    "/decks/:deckId/simulations/:simulationId/results/stream",
+    async (req: Request, res: Response) => {
+      const deckId = String(req.params.deckId)
+      const simulationId = String(req.params.simulationId)
+      let streamCleanup: (() => void) | null = null
+
+      try {
+        const initialSimulation = await getSimulationSummary(
+          deckId,
+          simulationId
+        )
+
+        if (!initialSimulation) {
+          res.status(404).json({
+            error: "Simulation not found.",
+          })
+          return
+        }
+
+        res.status(200)
+        res.setHeader("Content-Type", "text/event-stream")
+        res.setHeader("Cache-Control", "no-cache, no-transform")
+        res.setHeader("Connection", "keep-alive")
+        res.flushHeaders()
+        res.write(formatSseComment("connected"))
+
+        const queuedWrites: string[] = []
+        let hasSentSnapshot = false
+        let shouldEndAfterSnapshot = false
+        let isStreamOpen = true
+        let unsubscribe = () => {}
+        const keepaliveIntervalId = setInterval(() => {
+          if (isStreamOpen) {
+            res.write(formatSseComment("keepalive"))
+          }
+        }, SSE_KEEPALIVE_INTERVAL_MS)
+        const cleanup = () => {
+          if (!isStreamOpen) {
+            return
+          }
+
+          isStreamOpen = false
+          clearInterval(keepaliveIntervalId)
+          unsubscribe()
+        }
+        streamCleanup = cleanup
+        const streamWriter = {
+          write(chunk: string) {
+            if (!isStreamOpen) {
+              return
+            }
+
+            if (hasSentSnapshot) {
+              res.write(chunk)
+              return
+            }
+
+            queuedWrites.push(chunk)
+          },
+          end() {
+            if (!isStreamOpen) {
+              return
+            }
+
+            if (hasSentSnapshot) {
+              cleanup()
+              res.end()
+              return
+            }
+
+            shouldEndAfterSnapshot = true
+          },
+        }
+
+        req.on("close", cleanup)
+
+        if (!isTerminalSimulationStatus(initialSimulation.status)) {
+          unsubscribe = simulationResultsBroadcaster.subscribe(
+            simulationId,
+            streamWriter
+          )
+        }
+
+        const snapshot = await getSimulationResultsStreamSnapshot(
+          deckId,
+          simulationId
+        )
+        const snapshotEvent: SimulationResultsStreamEvent = {
+          type: "snapshot",
+          simulation: snapshot.simulation,
+          results: snapshot.results,
+        }
+
+        res.write(formatSseEvent(snapshotEvent))
+        hasSentSnapshot = true
+
+        for (const queuedWrite of queuedWrites) {
+          res.write(queuedWrite)
+        }
+
+        queuedWrites.length = 0
+
+        if (shouldEndAfterSnapshot) {
+          cleanup()
+          res.end()
+          return
+        }
+
+        if (isTerminalSimulationStatus(snapshot.simulation.status)) {
+          const doneEvent: SimulationResultsStreamEvent = {
+            type: "done",
+            simulation: snapshot.simulation,
+            results: snapshot.results,
+          }
+
+          res.write(formatSseEvent(doneEvent))
+          cleanup()
+          res.end()
+        }
+      } catch (error) {
+        if (res.headersSent) {
+          streamCleanup?.()
+          const errorEvent: SimulationResultsStreamEvent = {
+            type: "error",
+            message: "Simulation results stream could not be opened.",
+          }
+
+          res.write(formatSseEvent(errorEvent))
+          res.end()
+          return
+        }
+
+        if (error instanceof SimulationValidationError) {
+          const status = error.message === "Simulation not found." ? 404 : 400
+
+          res.status(status).json({
+            error: error.message,
+          })
+          return
+        }
+
+        console.error("Failed to open simulation results stream:", error)
+        res.status(500).json({
+          error: "Failed to open simulation results stream.",
         })
       }
     }
