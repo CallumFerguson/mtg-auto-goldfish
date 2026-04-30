@@ -1550,21 +1550,17 @@ function SimulationResultsPanel({
       resultChunks: getSimulationResultChunks(run.chunks),
     })),
   ]
-  const runsWithResults = runs.filter(
-    (run) => run.resultChunks.length > 0 || run.gameState
-  )
-
-  if (runsWithResults.length === 0) {
+  if (runs.length === 0) {
     return (
       <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
-        No user-facing result chunks have been saved for this simulation yet.
+        No opening hand or turn runs have been saved for this simulation yet.
       </p>
     )
   }
 
   return (
     <div className="grid gap-3">
-      {runsWithResults.map((run) => (
+      {runs.map((run) => (
         <section
           key={run.llmRunId}
           className="grid gap-3 rounded-md border border-border bg-background/35 p-3"
@@ -1601,6 +1597,10 @@ function SimulationResultsPanel({
 
           {run.resultChunks.length > 0 ? (
             <SimulationResultChunkCards chunks={run.resultChunks} />
+          ) : !run.gameState ? (
+            <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+              No user-facing events have been saved for this run yet.
+            </p>
           ) : null}
         </section>
       ))}
