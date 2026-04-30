@@ -847,10 +847,12 @@ function SimulationDetails({
   )
   const resultsEventSourceRef = useRef<EventSource | null>(null)
   const resultsStreamErrorTimeoutRef = useRef<number | null>(null)
+  const simulationPanelRef = useRef<HTMLElement | null>(null)
   const [resultsStreamRestartKey, setResultsStreamRestartKey] = useState(0)
   const shouldSimulateOpeningHand = simulation.startingHandId === null
 
   useEffect(() => {
+    simulationPanelRef.current?.scrollTo({ top: 0 })
     setIsStartingOpeningHandRun(false)
     setOpeningHandRunError(null)
     setOpeningHandRun(null)
@@ -1206,7 +1208,10 @@ function SimulationDetails({
         </section>
       </main>
 
-      <aside className="simulation-scrollbar simulation-sidebar-surface flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border px-5 py-6">
+      <aside
+        ref={simulationPanelRef}
+        className="simulation-scrollbar simulation-sidebar-surface flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-border px-5 py-6"
+      >
         <header className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-sky-300">Simulation</p>
