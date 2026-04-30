@@ -3020,9 +3020,6 @@ function buildStartingHandSimulationPromptFromData(
 
   return `${DRAW_STARTING_HAND_PROMPT}
 
-LLM Run ID: ${llmRunId}
-Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
-
 ${commanderLabel}:
 ${commanderNames.join("\n")}
 
@@ -3031,6 +3028,9 @@ ${cardNames.join("\n")}
 
 Card reference:
 ${uniqueCards.map((card) => `${card.name}\n${formatCardText(card)}\n`).join("\n")}
+
+LLM Run ID: ${llmRunId}
+Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
 `.trim()
 }
 
@@ -3133,6 +3133,14 @@ function buildTurnSimulationPromptFromData(
 
   return `${SIMULATE_TURN_PROMPT}
 
+Cards in library. Not actual order of library. Use tools to interact with library:
+${cardNames.join("\n")}
+
+Card reference:
+${uniqueCards.map((card) => `${card.name}\n${formatCardText(card)}\n`).join("\n")}
+
+${GENERIC_GAME_RULES_REFERENCE}
+
 LLM Run ID: ${llmRunId}
 Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
 
@@ -3141,14 +3149,6 @@ Use this exact tool identifier shape: { "llmRunId": "${llmRunId}" }
 ${resolvedGameState}
 
 ===End Game State===
-
-Cards in library. Not actual order of library. Use tools to interact with library:
-${cardNames.join("\n")}
-
-Card reference:
-${uniqueCards.map((card) => `${card.name}\n${formatCardText(card)}\n`).join("\n")}
-
-${GENERIC_GAME_RULES_REFERENCE}
 `.trim()
 }
 
