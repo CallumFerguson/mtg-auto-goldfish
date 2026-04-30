@@ -1,19 +1,11 @@
 # MTG Auto Goldfish
 
-## Example .env File
+## Setup
 
-```env
-# postgres database connection info
-PGHOST=localhost
-PGPORT=5432
-PGDATABASE=
-PGUSER=postgres
-PGPASSWORD=
+1. Copy the example environment file:
 
-# OpenAI opening-hand simulation runs
-OPENAI_API_KEY=
-OPENAI_MODEL=
-OPENAI_REASONING_EFFORT=medium
-OPENING_HAND_MCP_PUBLIC_URL=
-TURN_SIMULATION_MCP_PUBLIC_URL=
-```
+   ```sh
+   cp .env.example .env
+   ```
+
+2. Fill in the variables in `.env`.
