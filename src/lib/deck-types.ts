@@ -182,3 +182,20 @@ export type StartingHandsResponse = {
 export type CreateStartingHandResponse = {
   startingHand: StartingHand
 }
+
+export type SavedSeed = {
+  id: string
+  deckId: string
+  name: string
+  seed: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type SavedSeedsResponse = {
+  savedSeeds: SavedSeed[]
+}
+
+export type CreateSavedSeedResponse = {
+  savedSeed: SavedSeed
+}

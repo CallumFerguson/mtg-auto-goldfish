@@ -83,6 +83,12 @@ import {
   StartingHandValidationError,
 } from "./starting-hands-postgres.js"
 import {
+  createSavedSeed,
+  ensureSavedSeedsSchema,
+  listSavedSeedsForDeck,
+  SavedSeedValidationError,
+} from "./saved-seeds-postgres.js"
+import {
   ProviderTerminalEventError,
   asRecord,
   createCancellationChunk,
@@ -175,6 +181,10 @@ const createStartingHandSchema = z.object({
       })
     )
     .min(1),
+})
+const createSavedSeedSchema = z.object({
+  name: z.string().trim().min(1),
+  seed: z.string().trim().min(1),
 })
 const createSimulationSchema = z.object({
   seed: z.string().trim().min(1),
@@ -421,11 +431,7 @@ function mergeStreamChunks(
   for (const chunk of incomingChunks) {
     const existingChunk = chunksBySequence.get(chunk.sequence)
 
-    if (
-      !existingChunk ||
-      existingChunk.id === null ||
-      chunk.id !== null
-    ) {
+    if (!existingChunk || existingChunk.id === null || chunk.id !== null) {
       chunksBySequence.set(chunk.sequence, chunk)
     }
   }
@@ -457,10 +463,7 @@ function compareTurnStreamRuns(
   )
 }
 
-function findStreamRun(
-  results: SimulationResultsStreamInfo,
-  llmRunId: string
-) {
+function findStreamRun(results: SimulationResultsStreamInfo, llmRunId: string) {
   return (
     results.openingHandLlmRuns.find((run) => run.llmRunId === llmRunId) ??
     results.turnLlmRuns.find((run) => run.llmRunId === llmRunId) ??
@@ -479,7 +482,9 @@ async function getSimulationResultsStreamSnapshot(
   }
 
   const results = mergeActiveRuntimeChunksIntoResults(
-    createStreamResultsInfo(await getSimulationResultsInfo(deckId, simulationId)),
+    createStreamResultsInfo(
+      await getSimulationResultsInfo(deckId, simulationId)
+    ),
     simulationId
   )
 
@@ -1943,6 +1948,7 @@ async function main() {
   await ensureFreshScryfallOracleCards()
   await ensureDecksSchema()
   await ensureStartingHandsSchema()
+  await ensureSavedSeedsSchema()
   await ensureSimulationsSchema()
   const staleLlmRunCleanup = await cancelStaleInFlightLlmRuns()
 
@@ -2563,6 +2569,67 @@ async function main() {
         console.error("Failed to create starting hand:", error)
         res.status(500).json({
           error: "Failed to create starting hand.",
+        })
+      }
+    }
+  )
+
+  app.get("/decks/:deckId/saved-seeds", async (req: Request, res: Response) => {
+    const deckId = String(req.params.deckId)
+
+    try {
+      const deck = await getDeck(deckId)
+
+      if (!deck) {
+        res.status(404).json({
+          error: "Deck not found.",
+        })
+        return
+      }
+
+      res.status(200).json({
+        savedSeeds: await listSavedSeedsForDeck(deckId),
+      })
+    } catch (error) {
+      console.error("Failed to list saved seeds:", error)
+      res.status(500).json({
+        error: "Failed to list saved seeds.",
+      })
+    }
+  })
+
+  app.post(
+    "/decks/:deckId/saved-seeds",
+    async (req: Request, res: Response) => {
+      const deckId = String(req.params.deckId)
+      const parsedSavedSeed = createSavedSeedSchema.safeParse(req.body)
+
+      if (!parsedSavedSeed.success) {
+        res.status(400).json({
+          error: "Saved seed payload is not in the expected format.",
+        })
+        return
+      }
+
+      try {
+        const savedSeed = await createSavedSeed(deckId, parsedSavedSeed.data)
+
+        res.status(201).json({
+          savedSeed,
+        })
+      } catch (error) {
+        if (error instanceof SavedSeedValidationError) {
+          const status = error.message === "Deck not found." ? 404 : 400
+
+          res.status(status).json({
+            error: error.message,
+          })
+          return
+        }
+
+        console.error("Failed to create saved seed:", error)
+        res.status(500).json({
+          error: "Failed to create saved seed.",
         })
       }
     }

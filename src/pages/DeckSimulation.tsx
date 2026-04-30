@@ -27,10 +27,13 @@ import { API_BASE_URL } from "@/lib/api"
 import { readApiError } from "@/lib/api-error"
 import type {
   CreateOpeningHandLlmRunResponse,
+  CreateSavedSeedResponse,
   CreateSimulationResponse,
   CreateStartingHandResponse,
   CreateTurnLlmRunResponse,
   DeckCard,
+  SavedSeed,
+  SavedSeedsResponse,
   Simulation,
   SimulationDebugInfo,
   SimulationDebugLlmRunChunk,
@@ -63,10 +66,9 @@ function getSimulationRunCountFromResults(resultsInfo: SimulationResultsInfo) {
 }
 
 function getActiveLlmRunCountFromResults(resultsInfo: SimulationResultsInfo) {
-  return [
-    ...resultsInfo.openingHandLlmRuns,
-    ...resultsInfo.turnLlmRuns,
-  ].filter((run) => isActiveLlmRunStatus(run.status)).length
+  return [...resultsInfo.openingHandLlmRuns, ...resultsInfo.turnLlmRuns].filter(
+    (run) => isActiveLlmRunStatus(run.status)
+  ).length
 }
 
 function isActiveLlmRunStatus(status: string) {
@@ -100,9 +102,7 @@ function isCountedOpeningHandRun(
   )
 }
 
-function isCountedTurnRun(
-  run: SimulationResultsInfo["turnLlmRuns"][number]
-) {
+function isCountedTurnRun(run: SimulationResultsInfo["turnLlmRuns"][number]) {
   return (
     run.outdated !== true &&
     (isActiveLlmRunStatus(run.status) ||
@@ -165,19 +165,25 @@ export function DeckSimulation({
   const [startingHandLoadError, setStartingHandLoadError] = useState<
     string | null
   >(null)
+  const [savedSeeds, setSavedSeeds] = useState<SavedSeed[]>([])
+  const [isLoadingSavedSeeds, setIsLoadingSavedSeeds] = useState(true)
+  const [savedSeedLoadError, setSavedSeedLoadError] = useState<string | null>(
+    null
+  )
   const [simulationLoadError, setSimulationLoadError] = useState<string | null>(
     null
   )
   const [isNewSimulationSelected, setIsNewSimulationSelected] = useState(true)
   const [selectedSimulationId, setSelectedSimulationId] = useState("")
-  const [simulationSeed, setSimulationSeed] = useState("")
-  const [useRandomSeed, setUseRandomSeed] = useState(true)
+  const [seedMode, setSeedMode] = useState<"random" | "set">("random")
+  const [selectedSavedSeedId, setSelectedSavedSeedId] = useState("")
   const [turnsToSimulate, setTurnsToSimulate] = useState("5")
   const [openingHandMode, setOpeningHandMode] = useState<
     "simulate" | "provide"
   >("simulate")
   const [selectedOpeningHandId, setSelectedOpeningHandId] = useState("")
   const [isCreateHandModalOpen, setIsCreateHandModalOpen] = useState(false)
+  const [isCreateSeedModalOpen, setIsCreateSeedModalOpen] = useState(false)
   const [createSimulationError, setCreateSimulationError] = useState<
     string | null
   >(null)
@@ -199,6 +205,10 @@ export function DeckSimulation({
       startingHands.find((hand) => hand.id === selectedOpeningHandId) ?? null,
     [startingHands, selectedOpeningHandId]
   )
+  const selectedSavedSeed = useMemo(
+    () => savedSeeds.find((seed) => seed.id === selectedSavedSeedId) ?? null,
+    [savedSeeds, selectedSavedSeedId]
+  )
   const selectedSimulation = useMemo(
     () =>
       simulations.find(
@@ -213,44 +223,46 @@ export function DeckSimulation({
       ) ?? null,
     [selectedSimulation?.startingHandId, startingHands]
   )
-  const trimmedSimulationSeed = simulationSeed.trim()
   const canStartSimulation =
-    (useRandomSeed || trimmedSimulationSeed.length > 0) &&
+    (seedMode === "random" || Boolean(selectedSavedSeed)) &&
     turnsToSimulate.length > 0 &&
     (openingHandMode !== "provide" || Boolean(selectedOpeningHand))
 
-  const loadSimulations = useCallback(async (options?: { silent?: boolean }) => {
-    const isSilent = options?.silent ?? false
+  const loadSimulations = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const isSilent = options?.silent ?? false
 
-    if (!isSilent) {
-      setIsLoadingSimulations(true)
-      setSimulationLoadError(null)
-    }
-
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/decks/${deckId}/simulations`
-      )
-
-      if (!response.ok) {
-        setSimulationLoadError(
-          await readApiError(response, "Simulations could not be loaded.")
-        )
-        return []
-      }
-
-      const data = (await response.json()) as SimulationsResponse
-      setSimulations(data.simulations)
-      return data.simulations
-    } catch {
-      setSimulationLoadError("Simulations could not be loaded.")
-      return []
-    } finally {
       if (!isSilent) {
-        setIsLoadingSimulations(false)
+        setIsLoadingSimulations(true)
+        setSimulationLoadError(null)
       }
-    }
-  }, [deckId])
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/decks/${deckId}/simulations`
+        )
+
+        if (!response.ok) {
+          setSimulationLoadError(
+            await readApiError(response, "Simulations could not be loaded.")
+          )
+          return []
+        }
+
+        const data = (await response.json()) as SimulationsResponse
+        setSimulations(data.simulations)
+        return data.simulations
+      } catch {
+        setSimulationLoadError("Simulations could not be loaded.")
+        return []
+      } finally {
+        if (!isSilent) {
+          setIsLoadingSimulations(false)
+        }
+      }
+    },
+    [deckId]
+  )
 
   const updateSimulation = useCallback((updatedSimulation: Simulation) => {
     setSimulations((currentSimulations) => {
@@ -303,6 +315,41 @@ export function DeckSimulation({
     }
   }, [deckId])
 
+  const loadSavedSeeds = useCallback(async () => {
+    setIsLoadingSavedSeeds(true)
+    setSavedSeedLoadError(null)
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/decks/${deckId}/saved-seeds`
+      )
+
+      if (!response.ok) {
+        setSavedSeedLoadError(
+          await readApiError(response, "Saved seeds could not be loaded.")
+        )
+        return
+      }
+
+      const data = (await response.json()) as SavedSeedsResponse
+      setSavedSeeds(data.savedSeeds)
+      setSelectedSavedSeedId((currentSavedSeedId) => {
+        if (
+          currentSavedSeedId &&
+          data.savedSeeds.some((seed) => seed.id === currentSavedSeedId)
+        ) {
+          return currentSavedSeedId
+        }
+
+        return data.savedSeeds[0]?.id ?? ""
+      })
+    } catch {
+      setSavedSeedLoadError("Saved seeds could not be loaded.")
+    } finally {
+      setIsLoadingSavedSeeds(false)
+    }
+  }, [deckId])
+
   useEffect(() => {
     void loadSimulations()
   }, [loadSimulations])
@@ -346,6 +393,10 @@ export function DeckSimulation({
   }, [loadStartingHands])
 
   useEffect(() => {
+    void loadSavedSeeds()
+  }, [loadSavedSeeds])
+
+  useEffect(() => {
     if (selectedSimulationIdFromUrl) {
       setSelectedSimulationId(selectedSimulationIdFromUrl)
       setIsNewSimulationSelected(false)
@@ -363,17 +414,16 @@ export function DeckSimulation({
     setIsCreateHandModalOpen(false)
   }
 
-  function handleRandomSeedChange(isChecked: boolean) {
-    setUseRandomSeed(isChecked)
-
-    if (isChecked) {
-      setSimulationSeed("")
-    }
+  function selectCreatedSavedSeed(seed: SavedSeed) {
+    setSavedSeeds((currentSavedSeeds) => [seed, ...currentSavedSeeds])
+    setSelectedSavedSeedId(seed.id)
+    setSeedMode("set")
+    setIsCreateSeedModalOpen(false)
   }
 
   function resetCreateSimulationForm() {
-    setSimulationSeed("")
-    setUseRandomSeed(true)
+    setSeedMode("random")
+    setSelectedSavedSeedId(savedSeeds[0]?.id ?? "")
     setTurnsToSimulate("5")
     setOpeningHandMode("simulate")
     setSelectedOpeningHandId(startingHands[0]?.id ?? "")
@@ -405,9 +455,10 @@ export function DeckSimulation({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            seed: useRandomSeed
-              ? createRandomSimulationSeed()
-              : trimmedSimulationSeed,
+            seed:
+              seedMode === "random"
+                ? createRandomSimulationSeed()
+                : selectedSavedSeed?.seed,
             turnsToSimulate: parsedTurnsToSimulate,
             startingHandId:
               openingHandMode === "provide" && selectedOpeningHand
@@ -660,38 +711,122 @@ export function DeckSimulation({
                 </h3>
                 <div className="flex flex-col gap-6 rounded-lg border border-border bg-card/70 p-6 shadow-sm">
                   <div className="grid gap-6">
-                    <div className="grid gap-3">
-                      <label
-                        className="text-sm font-medium text-foreground"
-                        htmlFor="simulation-seed"
-                      >
+                    <fieldset className="grid gap-3">
+                      <legend className="text-sm font-medium text-foreground">
                         Simulation seed
-                      </label>
-                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                        <input
-                          id="simulation-seed"
-                          className="h-9 rounded-md border border-input bg-background/60 px-3 text-sm text-foreground transition-colors outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
-                          type="text"
-                          value={simulationSeed}
-                          placeholder="Seed"
-                          disabled={useRandomSeed}
-                          onChange={(event) =>
-                            setSimulationSeed(event.target.value)
-                          }
-                        />
-                        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      </legend>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            seedMode === "random"
+                              ? "border-ring bg-accent text-accent-foreground"
+                              : "border-border bg-background/35 text-muted-foreground"
+                          }`}
+                        >
                           <input
                             className="size-4 accent-sky-300"
-                            type="checkbox"
-                            checked={useRandomSeed}
-                            onChange={(event) =>
-                              handleRandomSeedChange(event.target.checked)
-                            }
+                            type="radio"
+                            name="seed-mode"
+                            checked={seedMode === "random"}
+                            onChange={() => setSeedMode("random")}
                           />
-                          Use random seed
+                          Random seed
+                        </label>
+                        <label
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            seedMode === "set"
+                              ? "border-ring bg-accent text-accent-foreground"
+                              : "border-border bg-background/35 text-muted-foreground"
+                          }`}
+                        >
+                          <input
+                            className="size-4 accent-sky-300"
+                            type="radio"
+                            name="seed-mode"
+                            checked={seedMode === "set"}
+                            onChange={() => setSeedMode("set")}
+                          />
+                          Set seed
                         </label>
                       </div>
-                    </div>
+
+                      {seedMode === "set" ? (
+                        <div className="grid gap-3 rounded-md border border-border bg-background/35 p-3">
+                          {savedSeedLoadError ? (
+                            <div className="grid gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+                              <p className="text-sm text-destructive">
+                                {savedSeedLoadError}
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => void loadSavedSeeds()}
+                              >
+                                <RefreshCw data-icon="inline-start" />
+                                Try again
+                              </Button>
+                            </div>
+                          ) : null}
+
+                          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                            <label
+                              className="grid gap-2 text-sm font-medium"
+                              htmlFor="saved-seed"
+                            >
+                              <span>Saved seed</span>
+                              <select
+                                id="saved-seed"
+                                className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground transition-colors outline-none focus:border-ring focus:ring-3 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
+                                value={selectedSavedSeedId}
+                                disabled={
+                                  isLoadingSavedSeeds || savedSeeds.length === 0
+                                }
+                                onChange={(event) =>
+                                  setSelectedSavedSeedId(event.target.value)
+                                }
+                              >
+                                {isLoadingSavedSeeds ? (
+                                  <option value="">
+                                    Loading saved seeds...
+                                  </option>
+                                ) : savedSeeds.length === 0 ? (
+                                  <option value="">No saved seeds yet</option>
+                                ) : null}
+                                {savedSeeds.map((seed) => (
+                                  <option key={seed.id} value={seed.id}>
+                                    {seed.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setIsCreateSeedModalOpen(true)}
+                            >
+                              <Plus data-icon="inline-start" />
+                              New seed
+                            </Button>
+                          </div>
+
+                          {selectedSavedSeed ? (
+                            <dl className="grid gap-1 text-sm">
+                              <dt className="text-muted-foreground">
+                                Seed value
+                              </dt>
+                              <dd className="rounded-md bg-muted/30 px-3 py-2 font-medium break-all text-foreground">
+                                {selectedSavedSeed.seed}
+                              </dd>
+                            </dl>
+                          ) : !isLoadingSavedSeeds ? (
+                            <p className="text-sm text-muted-foreground">
+                              Choose a saved seed, or make a new one.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </fieldset>
 
                     <div className="grid gap-3">
                       <label
@@ -893,6 +1028,14 @@ export function DeckSimulation({
           deckId={deckId}
           onClose={() => setIsCreateHandModalOpen(false)}
           onSaved={selectCreatedStartingHand}
+        />
+      ) : null}
+
+      {isCreateSeedModalOpen ? (
+        <CreateSavedSeedModal
+          deckId={deckId}
+          onClose={() => setIsCreateSeedModalOpen(false)}
+          onSaved={selectCreatedSavedSeed}
         />
       ) : null}
     </>
@@ -2451,6 +2594,171 @@ function getSelectedStartingHandCards(
   }
 
   return Array.from(cardsByDeckCardId.values())
+}
+
+function CreateSavedSeedModal({
+  deckId,
+  onClose,
+  onSaved,
+}: {
+  deckId: string
+  onClose: () => void
+  onSaved: (seed: SavedSeed) => void
+}) {
+  const [seedName, setSeedName] = useState("")
+  const [seedValue, setSeedValue] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const trimmedSeedName = seedName.trim()
+    const trimmedSeedValue = seedValue.trim()
+
+    if (!trimmedSeedName) {
+      setError("Seed name is required.")
+      return
+    }
+
+    if (!trimmedSeedValue) {
+      setError("Seed value is required.")
+      return
+    }
+
+    setError(null)
+    setIsSaving(true)
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/decks/${deckId}/saved-seeds`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: trimmedSeedName,
+            seed: trimmedSeedValue,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        setError(await readApiError(response, "Seed could not be saved."))
+        return
+      }
+
+      const data = (await response.json()) as CreateSavedSeedResponse
+      onSaved(data.savedSeed)
+    } catch {
+      setError("Seed could not be sent to the server.")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-6 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={isSaving ? undefined : onClose}
+    >
+      <section
+        aria-labelledby="create-saved-seed-title"
+        className="flex max-h-[calc(100svh-3rem)] w-full max-w-lg flex-col rounded-lg border border-border bg-card shadow-2xl shadow-black/40"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="space-y-1">
+            <h2 id="create-saved-seed-title" className="text-xl font-semibold">
+              New seed
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Name this seed so it can be reused with this deck.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+            disabled={isSaving}
+          >
+            <X />
+          </Button>
+        </header>
+
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
+          <div className="grid min-h-0 gap-4 overflow-y-auto px-5 py-5">
+            <label
+              className="grid gap-2 text-sm font-medium"
+              htmlFor="saved-seed-name"
+            >
+              <span>Name</span>
+              <input
+                id="saved-seed-name"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-50"
+                type="text"
+                value={seedName}
+                disabled={isSaving}
+                onChange={(event) => {
+                  setSeedName(event.target.value)
+                  setError(null)
+                }}
+              />
+            </label>
+
+            <label
+              className="grid gap-2 text-sm font-medium"
+              htmlFor="saved-seed-value"
+            >
+              <span>Seed</span>
+              <input
+                id="saved-seed-value"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-50"
+                type="text"
+                value={seedValue}
+                disabled={isSaving}
+                onChange={(event) => {
+                  setSeedValue(event.target.value)
+                  setError(null)
+                }}
+              />
+            </label>
+
+            {error ? (
+              <p
+                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                role="alert"
+              >
+                {error}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSaving}>
+              <Save data-icon="inline-start" />
+              {isSaving ? "Saving..." : "Save seed"}
+            </Button>
+          </div>
+        </form>
+      </section>
+    </div>
+  )
 }
 
 function CreateStartingHandModal({
