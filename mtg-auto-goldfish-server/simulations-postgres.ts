@@ -190,6 +190,8 @@ export type SimulationSummary = {
   seed: string
   library: string[]
   turnsToSimulate: number
+  completedLlmRunCount: number
+  activeLlmRunCount: number
   status: SimulationStatus
   createdAt: string
   updatedAt: string
@@ -658,6 +660,8 @@ export async function listSimulationsForDeck(
     seed: string
     library: unknown
     turns_to_simulate: number
+    completed_llm_run_count: number
+    active_llm_run_count: number
     status: SimulationStatus
     created_at: Date
     updated_at: Date
@@ -670,6 +674,58 @@ export async function listSimulationsForDeck(
         seed,
         library,
         turns_to_simulate,
+        (
+          SELECT COUNT(*)::integer
+          FROM simulation_opening_hand_llm_runs opening_run
+          JOIN llm_runs llm_run
+            ON llm_run.id = opening_run.llm_run_id
+          WHERE opening_run.simulation_id = simulations.id
+            AND opening_run.attempt_number = (
+              SELECT MAX(latest_run.attempt_number)
+              FROM simulation_opening_hand_llm_runs latest_run
+              WHERE latest_run.simulation_id = opening_run.simulation_id
+            )
+            AND (
+              llm_run.status IN ('pending', 'streaming', 'cancel_requested', 'failed', 'cancelled')
+              OR (
+                llm_run.status = 'completed'
+                AND opening_run.opening_hand_is_valid = true
+              )
+            )
+        ) + (
+          SELECT COUNT(*)::integer
+          FROM simulation_turn_llm_runs turn_run
+          JOIN llm_runs llm_run
+            ON llm_run.id = turn_run.llm_run_id
+          WHERE turn_run.simulation_id = simulations.id
+            AND turn_run.outdated = false
+            AND (
+              llm_run.status IN ('pending', 'streaming', 'cancel_requested', 'failed', 'cancelled')
+              OR (
+                llm_run.status = 'completed'
+                AND turn_run.game_state IS NOT NULL
+                AND btrim(turn_run.game_state) <> ''
+              )
+            )
+        ) AS completed_llm_run_count,
+        (
+          SELECT COUNT(*)::integer
+          FROM (
+            SELECT opening_run.llm_run_id
+            FROM simulation_opening_hand_llm_runs opening_run
+            JOIN llm_runs llm_run
+              ON llm_run.id = opening_run.llm_run_id
+            WHERE opening_run.simulation_id = simulations.id
+              AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+            UNION ALL
+            SELECT turn_run.llm_run_id
+            FROM simulation_turn_llm_runs turn_run
+            JOIN llm_runs llm_run
+              ON llm_run.id = turn_run.llm_run_id
+            WHERE turn_run.simulation_id = simulations.id
+              AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+          ) active_run
+        ) AS active_llm_run_count,
         status,
         created_at,
         updated_at
@@ -687,6 +743,8 @@ export async function listSimulationsForDeck(
     seed: simulation.seed,
     library: parseStringArray(simulation.library),
     turnsToSimulate: simulation.turns_to_simulate,
+    completedLlmRunCount: simulation.completed_llm_run_count,
+    activeLlmRunCount: simulation.active_llm_run_count,
     status: simulation.status,
     createdAt: simulation.created_at.toISOString(),
     updatedAt: simulation.updated_at.toISOString(),
@@ -748,6 +806,8 @@ export async function createSimulation(
     seed: string
     library: unknown
     turns_to_simulate: number
+    completed_llm_run_count: number
+    active_llm_run_count: number
     status: SimulationStatus
     created_at: Date
     updated_at: Date
@@ -770,6 +830,8 @@ export async function createSimulation(
         seed,
         library,
         turns_to_simulate,
+        0::integer AS completed_llm_run_count,
+        0::integer AS active_llm_run_count,
         status,
         created_at,
         updated_at
@@ -793,6 +855,8 @@ export async function createSimulation(
     seed: simulation.seed,
     library: parseStringArray(simulation.library),
     turnsToSimulate: simulation.turns_to_simulate,
+    completedLlmRunCount: simulation.completed_llm_run_count,
+    activeLlmRunCount: simulation.active_llm_run_count,
     status: simulation.status,
     createdAt: simulation.created_at.toISOString(),
     updatedAt: simulation.updated_at.toISOString(),
@@ -810,6 +874,8 @@ export async function getSimulationSummary(
     seed: string
     library: unknown
     turns_to_simulate: number
+    completed_llm_run_count: number
+    active_llm_run_count: number
     status: SimulationStatus
     created_at: Date
     updated_at: Date
@@ -822,6 +888,58 @@ export async function getSimulationSummary(
         seed,
         library,
         turns_to_simulate,
+        (
+          SELECT COUNT(*)::integer
+          FROM simulation_opening_hand_llm_runs opening_run
+          JOIN llm_runs llm_run
+            ON llm_run.id = opening_run.llm_run_id
+          WHERE opening_run.simulation_id = simulations.id
+            AND opening_run.attempt_number = (
+              SELECT MAX(latest_run.attempt_number)
+              FROM simulation_opening_hand_llm_runs latest_run
+              WHERE latest_run.simulation_id = opening_run.simulation_id
+            )
+            AND (
+              llm_run.status IN ('pending', 'streaming', 'cancel_requested', 'failed', 'cancelled')
+              OR (
+                llm_run.status = 'completed'
+                AND opening_run.opening_hand_is_valid = true
+              )
+            )
+        ) + (
+          SELECT COUNT(*)::integer
+          FROM simulation_turn_llm_runs turn_run
+          JOIN llm_runs llm_run
+            ON llm_run.id = turn_run.llm_run_id
+          WHERE turn_run.simulation_id = simulations.id
+            AND turn_run.outdated = false
+            AND (
+              llm_run.status IN ('pending', 'streaming', 'cancel_requested', 'failed', 'cancelled')
+              OR (
+                llm_run.status = 'completed'
+                AND turn_run.game_state IS NOT NULL
+                AND btrim(turn_run.game_state) <> ''
+              )
+            )
+        ) AS completed_llm_run_count,
+        (
+          SELECT COUNT(*)::integer
+          FROM (
+            SELECT opening_run.llm_run_id
+            FROM simulation_opening_hand_llm_runs opening_run
+            JOIN llm_runs llm_run
+              ON llm_run.id = opening_run.llm_run_id
+            WHERE opening_run.simulation_id = simulations.id
+              AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+            UNION ALL
+            SELECT turn_run.llm_run_id
+            FROM simulation_turn_llm_runs turn_run
+            JOIN llm_runs llm_run
+              ON llm_run.id = turn_run.llm_run_id
+            WHERE turn_run.simulation_id = simulations.id
+              AND llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+          ) active_run
+        ) AS active_llm_run_count,
         status,
         created_at,
         updated_at
@@ -844,6 +962,8 @@ export async function getSimulationSummary(
     seed: simulation.seed,
     library: parseStringArray(simulation.library),
     turnsToSimulate: simulation.turns_to_simulate,
+    completedLlmRunCount: simulation.completed_llm_run_count,
+    activeLlmRunCount: simulation.active_llm_run_count,
     status: simulation.status,
     createdAt: simulation.created_at.toISOString(),
     updatedAt: simulation.updated_at.toISOString(),

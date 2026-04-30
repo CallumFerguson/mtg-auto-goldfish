@@ -41,6 +41,8 @@ export type Simulation = {
   seed: string
   library: string[]
   turnsToSimulate: number
+  completedLlmRunCount: number
+  activeLlmRunCount: number
   status: SimulationStatus
   createdAt: string
   updatedAt: string

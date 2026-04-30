@@ -12,6 +12,7 @@ import {
 import {
   Bug,
   Dices,
+  LoaderCircle,
   MoreVertical,
   Plus,
   RefreshCw,
@@ -51,7 +52,7 @@ type OpeningHandCardOption = {
 }
 
 function getSimulationLabel(simulation: Simulation) {
-  return simulation.id.slice(0, 8)
+  return `${simulation.id.slice(0, 8)} - ${simulation.completedLlmRunCount} runs`
 }
 
 function getRandomDigit(maxExclusive: number) {
@@ -161,9 +162,13 @@ export function DeckSimulation({
     turnsToSimulate.length > 0 &&
     (openingHandMode !== "provide" || Boolean(selectedOpeningHand))
 
-  const loadSimulations = useCallback(async () => {
-    setIsLoadingSimulations(true)
-    setSimulationLoadError(null)
+  const loadSimulations = useCallback(async (options?: { silent?: boolean }) => {
+    const isSilent = options?.silent ?? false
+
+    if (!isSilent) {
+      setIsLoadingSimulations(true)
+      setSimulationLoadError(null)
+    }
 
     try {
       const response = await fetch(
@@ -184,7 +189,9 @@ export function DeckSimulation({
       setSimulationLoadError("Simulations could not be loaded.")
       return []
     } finally {
-      setIsLoadingSimulations(false)
+      if (!isSilent) {
+        setIsLoadingSimulations(false)
+      }
     }
   }, [deckId])
 
@@ -242,6 +249,40 @@ export function DeckSimulation({
   useEffect(() => {
     void loadSimulations()
   }, [loadSimulations])
+
+  useEffect(() => {
+    if (!simulations.some((simulation) => simulation.activeLlmRunCount > 0)) {
+      return
+    }
+
+    let isCancelled = false
+    let timeoutId: number | undefined
+
+    async function refreshActiveSimulations() {
+      const refreshedSimulations = await loadSimulations({ silent: true })
+
+      if (
+        isCancelled ||
+        !refreshedSimulations.some(
+          (simulation) => simulation.activeLlmRunCount > 0
+        )
+      ) {
+        return
+      }
+
+      timeoutId = window.setTimeout(refreshActiveSimulations, 1000)
+    }
+
+    timeoutId = window.setTimeout(refreshActiveSimulations, 1000)
+
+    return () => {
+      isCancelled = true
+
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId)
+      }
+    }
+  }, [loadSimulations, simulations])
 
   useEffect(() => {
     void loadStartingHands()
@@ -477,6 +518,18 @@ export function DeckSimulation({
                       >
                         {getSimulationLabel(simulation)}
                       </button>
+                      {simulation.activeLlmRunCount > 0 ? (
+                        <div
+                          className={`pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-muted-foreground transition-opacity group-hover:opacity-0 ${
+                            openSimulationMenuId === simulation.id
+                              ? "opacity-0"
+                              : "opacity-100"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          <LoaderCircle className="size-4 animate-spin" />
+                        </div>
+                      ) : null}
                       <div
                         className={`absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${
                           openSimulationMenuId === simulation.id
