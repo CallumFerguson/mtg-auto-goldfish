@@ -595,7 +595,7 @@ function logOpenAiApiCallFinished({
     : "unsupported"
 
   console.log(
-    `OpenAI API call finished: phase=${phase} llmRunId=${llmRunId} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output} estimatedPrice=${priceEstimateText}`
+    `OpenAI API call finished: phase=${phase} llmRunId=${llmRunId} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} cachedInputTokens=${tokenUsage.cachedInput} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output} estimatedPrice=${priceEstimateText}`
   )
 }
 
@@ -626,6 +626,15 @@ function logOpenAiApiCallStoppedWithError({
 
 function getOpenAiTokenUsageSummary(usage: unknown) {
   const usageRecord = asRecord(usage)
+  const inputTokens = getNumberProperty(usageRecord, "input_tokens")
+  const inputDetails = asRecord(usageRecord.input_tokens_details)
+  const cachedInputTokens =
+    inputTokens === null
+      ? null
+      : Math.min(
+          getNumberProperty(inputDetails, "cached_tokens") ?? 0,
+          inputTokens
+        )
   const outputTokens = getNumberProperty(usageRecord, "output_tokens")
   const outputDetails = asRecord(usageRecord.output_tokens_details)
   const reasoningTokens =
@@ -641,7 +650,8 @@ function getOpenAiTokenUsageSummary(usage: unknown) {
     ])
 
   return {
-    input: formatTokenCount(getNumberProperty(usageRecord, "input_tokens")),
+    input: formatTokenCount(inputTokens),
+    cachedInput: formatTokenCount(cachedInputTokens),
     output: formatTokenCount(visibleOutputTokens),
     reasoning: formatTokenCount(reasoningTokens),
     total: formatTokenCount(totalTokens),
