@@ -119,7 +119,6 @@ test("requires LLM_PROVIDER for LLM config", () => {
   assert.throws(
     () =>
       getOpeningHandLlmRunConfig({
-        LLM_STOP_WHEN_STEP_COUNT: "3",
         OPENAI_API_KEY: "key",
         OPENAI_MODEL: "gpt-5.4-mini",
         OPENAI_REASONING_EFFORT: "medium",
@@ -129,18 +128,17 @@ test("requires LLM_PROVIDER for LLM config", () => {
   )
 })
 
-test("requires a shared positive integer LLM stop step count", () => {
+test("requires a positive integer OpenRouter stop step count", () => {
   assert.throws(
     () =>
       getOpeningHandLlmRunConfig({
-        LLM_PROVIDER: "openai",
-        LLM_STOP_WHEN_STEP_COUNT: "0",
-        OPENAI_API_KEY: "key",
-        OPENAI_MODEL: "gpt-5.4-mini",
-        OPENAI_REASONING_EFFORT: "medium",
-        OPENING_HAND_MCP_PUBLIC_URL: "https://example.com/mcp",
+        LLM_PROVIDER: "openrouter",
+        OPENROUTER_STOP_WHEN_STEP_COUNT: "0",
+        OPENROUTER_API_KEY: "key",
+        OPENROUTER_MODEL: "openai/gpt-5-nano",
+        OPENROUTER_REASONING_EFFORT: "medium",
       }),
-    /LLM_STOP_WHEN_STEP_COUNT must be a positive integer\./
+    /OPENROUTER_STOP_WHEN_STEP_COUNT must be a positive integer\./
   )
 })
 
@@ -149,7 +147,6 @@ test("rejects invalid provider and reasoning effort config", () => {
     () =>
       getOpeningHandLlmRunConfig({
         LLM_PROVIDER: "anthropic",
-        LLM_STOP_WHEN_STEP_COUNT: "3",
       }),
     /LLM_PROVIDER must be one of: openai, openrouter\./
   )
@@ -157,7 +154,7 @@ test("rejects invalid provider and reasoning effort config", () => {
     () =>
       getOpeningHandLlmRunConfig({
         LLM_PROVIDER: "openrouter",
-        LLM_STOP_WHEN_STEP_COUNT: "3",
+        OPENROUTER_STOP_WHEN_STEP_COUNT: "3",
         OPENROUTER_API_KEY: "key",
         OPENROUTER_MODEL: "openai/gpt-5-nano",
         OPENROUTER_REASONING_EFFORT: "maximum",
@@ -171,7 +168,6 @@ test("validates provider-specific LLM config requirements", () => {
     () =>
       getTurnSimulationLlmRunConfig({
         LLM_PROVIDER: "openai",
-        LLM_STOP_WHEN_STEP_COUNT: "3",
         OPENAI_API_KEY: "key",
         OPENAI_MODEL: "gpt-5.4-mini",
         OPENAI_REASONING_EFFORT: "medium",
@@ -181,7 +177,7 @@ test("validates provider-specific LLM config requirements", () => {
 
   const config = getOpeningHandLlmRunConfig({
     LLM_PROVIDER: "openrouter",
-    LLM_STOP_WHEN_STEP_COUNT: "7",
+    OPENROUTER_STOP_WHEN_STEP_COUNT: "7",
     OPENROUTER_API_KEY: "key",
     OPENROUTER_MODEL: "openai/gpt-5-nano",
     OPENROUTER_REASONING_EFFORT: "high",

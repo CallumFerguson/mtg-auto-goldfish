@@ -20,7 +20,6 @@ type BaseLlmRunConfig = {
   model: string
   provider: LlmProvider
   reasoningEffort: ReasoningEffort
-  stopWhenStepCount: number
 }
 
 export type OpenAiRunConfig = BaseLlmRunConfig & {
@@ -29,6 +28,7 @@ export type OpenAiRunConfig = BaseLlmRunConfig & {
 
 export type OpenRouterRunConfig = BaseLlmRunConfig & {
   provider: "openrouter"
+  stopWhenStepCount: number
 }
 
 export type OpeningHandOpenAiRunConfig = OpenAiRunConfig & {
@@ -94,10 +94,6 @@ function getLlmRunConfig(
   environment: Environment
 ): OpenAiRunConfig | OpenRouterRunConfig {
   const provider = getLlmProvider(environment)
-  const stopWhenStepCount = getRequiredPositiveIntegerEnvironmentVariable(
-    environment,
-    "LLM_STOP_WHEN_STEP_COUNT"
-  )
 
   if (provider === "openai") {
     return {
@@ -108,7 +104,6 @@ function getLlmRunConfig(
         environment,
         "OPENAI_REASONING_EFFORT"
       ),
-      stopWhenStepCount,
     }
   }
 
@@ -120,7 +115,10 @@ function getLlmRunConfig(
       environment,
       "OPENROUTER_REASONING_EFFORT"
     ),
-    stopWhenStepCount,
+    stopWhenStepCount: getRequiredPositiveIntegerEnvironmentVariable(
+      environment,
+      "OPENROUTER_STOP_WHEN_STEP_COUNT"
+    ),
   }
 }
 
