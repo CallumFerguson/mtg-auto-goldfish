@@ -28,6 +28,7 @@ export type OpenAiRunConfig = BaseLlmRunConfig & {
 
 export type OpenRouterRunConfig = BaseLlmRunConfig & {
   provider: "openrouter"
+  modelProvider: string | null
   stopWhenStepCount: number
 }
 
@@ -110,6 +111,10 @@ function getLlmRunConfig(
   return {
     apiKey: getRequiredEnvironmentVariable(environment, "OPENROUTER_API_KEY"),
     model: getRequiredEnvironmentVariable(environment, "OPENROUTER_MODEL"),
+    modelProvider: getOptionalEnvironmentVariable(
+      environment,
+      "OPENROUTER_MODEL_PROVIDER"
+    ),
     provider,
     reasoningEffort: getRequiredReasoningEffort(
       environment,
@@ -187,4 +192,11 @@ function getRequiredEnvironmentVariable(
   }
 
   return value
+}
+
+function getOptionalEnvironmentVariable(
+  environment: Environment,
+  environmentVariable: string
+) {
+  return environment[environmentVariable]?.trim() || null
 }

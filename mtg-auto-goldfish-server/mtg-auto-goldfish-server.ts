@@ -1410,6 +1410,7 @@ function buildOpeningHandOpenRouterRequestPayload(
       summary: "auto" as const,
     },
     parallelToolCalls: false as const,
+    provider: getOpenRouterProviderPreferences(config.modelProvider),
     stopWhenStepCount: config.stopWhenStepCount,
   }
 }
@@ -1433,7 +1434,19 @@ function buildTurnSimulationOpenRouterRequestPayload(
       summary: "auto" as const,
     },
     parallelToolCalls: false as const,
+    provider: getOpenRouterProviderPreferences(config.modelProvider),
     stopWhenStepCount: config.stopWhenStepCount,
+  }
+}
+
+function getOpenRouterProviderPreferences(modelProvider: string | null) {
+  if (modelProvider === null) {
+    return undefined
+  }
+
+  return {
+    allowFallbacks: false,
+    only: [modelProvider],
   }
 }
 
@@ -1902,6 +1915,7 @@ async function collectOpenRouterLlmStream({
         metadata: requestPayload.metadata,
         reasoning: requestPayload.reasoning,
         parallelToolCalls: requestPayload.parallelToolCalls,
+        provider: requestPayload.provider,
         stopWhen: stepCountIs(requestPayload.stopWhenStepCount),
         tools: createTools(mcpClient),
       },

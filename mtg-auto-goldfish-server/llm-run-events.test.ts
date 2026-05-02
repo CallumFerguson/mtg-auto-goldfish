@@ -185,8 +185,23 @@ test("validates provider-specific LLM config requirements", () => {
 
   assert.equal(config.provider, "openrouter")
   assert.equal(config.model, "openai/gpt-5-nano")
+  assert.equal(config.modelProvider, null)
   assert.equal(config.reasoningEffort, "high")
   assert.equal(config.stopWhenStepCount, 7)
+})
+
+test("reads optional OpenRouter model provider config", () => {
+  const config = getOpeningHandLlmRunConfig({
+    LLM_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "key",
+    OPENROUTER_MODEL: "openai/gpt-5-nano",
+    OPENROUTER_MODEL_PROVIDER: "openai",
+    OPENROUTER_REASONING_EFFORT: "high",
+    OPENROUTER_STOP_WHEN_STEP_COUNT: "7",
+  })
+
+  assert.equal(config.provider, "openrouter")
+  assert.equal(config.modelProvider, "openai")
 })
 
 test("normalizes MCP tool errors from completed output items", () => {
