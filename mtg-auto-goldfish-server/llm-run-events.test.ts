@@ -356,6 +356,23 @@ test("reports invalid completed JSON with an explicit message", () => {
   )
 })
 
+test("parses opening-hand JSON after leading LLM text", () => {
+  assert.deepEqual(
+    parseOpeningHandFromResponseText(
+      [
+        'I inspected the hand and said "keep.',
+        JSON.stringify({
+          keptHand: ["Sol Ring", "Command Tower"],
+          summary: "Kept a fast mana hand.",
+        }),
+      ].join("\n")
+    ),
+    {
+      keptHand: ["Sol Ring", "Command Tower"],
+    }
+  )
+})
+
 test("parses completed turn game state JSON", () => {
   assert.deepEqual(
     parseTurnSimulationFromResponseText(
@@ -366,6 +383,47 @@ test("parses completed turn game state JSON", () => {
     ),
     {
       gameState: "Hand:\nSol Ring\n\nBattlefield:\nCommand Tower",
+    }
+  )
+})
+
+test("parses the last valid turn JSON object from noisy output", () => {
+  assert.deepEqual(
+    parseTurnSimulationFromResponseText(
+      [
+        "Earlier draft:",
+        JSON.stringify({
+          gameState: "Hand:\nIsland",
+          summary: "This should be ignored.",
+        }),
+        "Final answer:",
+        "```json",
+        JSON.stringify({
+          gameState: "Hand:\nSol Ring\n\nBattlefield:\n{Command Tower}",
+          summary: "Played Command Tower.",
+        }),
+        "```",
+      ].join("\n")
+    ),
+    {
+      gameState: "Hand:\nSol Ring\n\nBattlefield:\n{Command Tower}",
+    }
+  )
+})
+
+test("falls back to an earlier valid JSON object when later braces are malformed", () => {
+  assert.deepEqual(
+    parseTurnSimulationFromResponseText(
+      [
+        JSON.stringify({
+          gameState: "Hand:\nSol Ring",
+          summary: "Parsed successfully.",
+        }),
+        "Trailing malformed attempt: {not json}",
+      ].join("\n")
+    ),
+    {
+      gameState: "Hand:\nSol Ring",
     }
   )
 })

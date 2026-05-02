@@ -125,6 +125,35 @@ test("parses completed opening hand final output", () => {
   })
 })
 
+test("parses completed final output after leading LLM text", () => {
+  const parsedOutput = parseSimulationFinalOutput(
+    createRun({
+      llmRunId: "opening-run",
+      phase: "opening_hand",
+      status: "completed",
+      chunks: [
+        createChunk({
+          id: 1,
+          sequence: 1,
+          outputDelta: 'I would "keep this hand.\n',
+        }),
+        createChunk({
+          id: 2,
+          sequence: 2,
+          outputDelta:
+            '{"keptHand":["Forest","Sol Ring"],"summary":"Kept a stable opener."}',
+        }),
+      ],
+    })
+  )
+
+  assert.deepEqual(parsedOutput, {
+    type: "opening_hand",
+    keptHand: ["Forest", "Sol Ring"],
+    summary: "Kept a stable opener.",
+  })
+})
+
 test("parses completed turn final output", () => {
   const parsedOutput = parseSimulationFinalOutput(
     createRun({
