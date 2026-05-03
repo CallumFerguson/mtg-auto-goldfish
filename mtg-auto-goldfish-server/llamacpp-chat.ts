@@ -83,6 +83,26 @@ export function createLlamaCppChatCompletionTools(
   }))
 }
 
+export function getLlamaCppServerModelName(modelListResponse: unknown) {
+  const models = asRecord(modelListResponse).data
+
+  if (!Array.isArray(models)) {
+    throw new Error(
+      "llama.cpp /v1/models response did not include a data array."
+    )
+  }
+
+  const modelNames = models
+    .map((model) => getStringProperty(asRecord(model), "id")?.trim() ?? "")
+    .filter(Boolean)
+
+  if (modelNames.length === 0) {
+    throw new Error("llama.cpp /v1/models did not include a model id.")
+  }
+
+  return modelNames[0]
+}
+
 export async function collectLlamaCppChatCompletion({
   appendChunk,
   callTool,

@@ -17,16 +17,19 @@ type Environment = Record<string, string | undefined>
 
 type BaseLlmRunConfig = {
   apiKey: string
-  model: string
   provider: LlmProvider
   reasoningEffort: ReasoningEffort
 }
 
-export type OpenAiRunConfig = BaseLlmRunConfig & {
+type ConfiguredModelLlmRunConfig = BaseLlmRunConfig & {
+  model: string
+}
+
+export type OpenAiRunConfig = ConfiguredModelLlmRunConfig & {
   provider: "openai"
 }
 
-export type OpenRouterRunConfig = BaseLlmRunConfig & {
+export type OpenRouterRunConfig = ConfiguredModelLlmRunConfig & {
   provider: "openrouter"
   modelProvider: string | null
   stopWhenStepCount: number
@@ -35,7 +38,12 @@ export type OpenRouterRunConfig = BaseLlmRunConfig & {
 export type LlamaCppRunConfig = BaseLlmRunConfig & {
   provider: "llamacpp"
   baseUrl: string
+  model: string | null
   stopWhenStepCount: number
+}
+
+export type ResolvedLlamaCppRunConfig = LlamaCppRunConfig & {
+  model: string
 }
 
 export type OpeningHandOpenAiRunConfig = OpenAiRunConfig & {
@@ -55,6 +63,16 @@ export type TurnSimulationLlmRunConfig =
   | TurnSimulationOpenAiRunConfig
   | OpenRouterRunConfig
   | LlamaCppRunConfig
+
+export type ResolvedOpeningHandLlmRunConfig =
+  | OpeningHandOpenAiRunConfig
+  | OpenRouterRunConfig
+  | ResolvedLlamaCppRunConfig
+
+export type ResolvedTurnSimulationLlmRunConfig =
+  | TurnSimulationOpenAiRunConfig
+  | OpenRouterRunConfig
+  | ResolvedLlamaCppRunConfig
 
 export class LlmConfigurationError extends Error {
   constructor(message: string) {
@@ -122,7 +140,7 @@ function getLlmRunConfig(
         getOptionalEnvironmentVariable(environment, "LLAMACPP_API_KEY") ??
         "not-needed",
       baseUrl: getRequiredEnvironmentVariable(environment, "LLAMACPP_BASE_URL"),
-      model: getRequiredEnvironmentVariable(environment, "LLAMACPP_MODEL"),
+      model: null,
       provider,
       reasoningEffort: getRequiredReasoningEffort(
         environment,

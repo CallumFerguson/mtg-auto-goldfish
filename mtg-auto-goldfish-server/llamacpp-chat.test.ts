@@ -10,6 +10,7 @@ import {
   collectLlamaCppChatCompletion,
   createLlamaCppChatCompletionTools,
   getLlamaCppChatCompletionToolCalls,
+  getLlamaCppServerModelName,
   type LlamaCppChatCompletionRequestPayload,
   type LlamaCppToolDefinition,
 } from "./llamacpp-chat.js"
@@ -357,6 +358,33 @@ test("normalizes OpenAI-style and shorthand llama.cpp tool calls", () => {
         name: "draw_card_from_top",
       },
     ]
+  )
+})
+
+test("reads the llama.cpp model name from the server model list", () => {
+  assert.equal(
+    getLlamaCppServerModelName({
+      data: [
+        {
+          id: "qwen3-8b-q4_k_m.gguf",
+        },
+      ],
+    }),
+    "qwen3-8b-q4_k_m.gguf"
+  )
+})
+
+test("rejects llama.cpp model lists without a model id", () => {
+  assert.throws(
+    () =>
+      getLlamaCppServerModelName({
+        data: [
+          {
+            id: " ",
+          },
+        ],
+      }),
+    /llama\.cpp \/v1\/models did not include a model id\./
   )
 })
 

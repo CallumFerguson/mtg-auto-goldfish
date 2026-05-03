@@ -110,6 +110,7 @@ import {
 import {
   collectLlamaCppChatCompletion,
   createLlamaCppChatCompletionTools,
+  getLlamaCppServerModelName,
   type LlamaCppChatCompletionRequestPayload,
   type LlamaCppToolDefinition,
 } from "./llamacpp-chat.js"
@@ -124,11 +125,13 @@ import {
   LlmConfigurationError,
   getOpeningHandLlmRunConfig,
   getTurnSimulationLlmRunConfig,
-  type LlamaCppRunConfig,
   type OpenAiRunConfig,
   type OpenRouterRunConfig,
   type OpeningHandLlmRunConfig,
   type OpeningHandOpenAiRunConfig,
+  type ResolvedLlamaCppRunConfig,
+  type ResolvedOpeningHandLlmRunConfig,
+  type ResolvedTurnSimulationLlmRunConfig,
   type TurnSimulationLlmRunConfig,
   type TurnSimulationOpenAiRunConfig,
 } from "./llm-config.js"
@@ -1634,7 +1637,7 @@ function buildOpeningHandOpenRouterRequestPayload(
 }
 
 function buildOpeningHandLlamaCppRequestPayload(
-  config: LlamaCppRunConfig,
+  config: ResolvedLlamaCppRunConfig,
   fullPrompt: string,
   simulationId: string
 ): LlamaCppChatCompletionRequestPayload {
@@ -1684,7 +1687,7 @@ function buildTurnSimulationOpenRouterRequestPayload(
 }
 
 function buildTurnSimulationLlamaCppRequestPayload(
-  config: LlamaCppRunConfig,
+  config: ResolvedLlamaCppRunConfig,
   fullPrompt: string,
   simulationId: string,
   turnNumber: number
@@ -1722,7 +1725,7 @@ function getOpenRouterProviderPreferences(modelProvider: string | null) {
 }
 
 function buildOpeningHandLlmRequestPayload(
-  config: OpeningHandLlmRunConfig,
+  config: ResolvedOpeningHandLlmRunConfig,
   fullPrompt: string,
   simulationId: string
 ) {
@@ -1750,7 +1753,7 @@ function buildOpeningHandLlmRequestPayload(
 }
 
 function buildTurnSimulationLlmRequestPayload(
-  config: TurnSimulationLlmRunConfig,
+  config: ResolvedTurnSimulationLlmRunConfig,
   fullPrompt: string,
   simulationId: string,
   turnNumber: number
@@ -1827,6 +1830,33 @@ function formatLlmRunPhase(phase: LlmRunPhase) {
   return "Simulation"
 }
 
+async function resolveLlmRunConfigModel(
+  config: OpeningHandLlmRunConfig
+): Promise<ResolvedOpeningHandLlmRunConfig>
+async function resolveLlmRunConfigModel(
+  config: TurnSimulationLlmRunConfig
+): Promise<ResolvedTurnSimulationLlmRunConfig>
+async function resolveLlmRunConfigModel(
+  config: OpeningHandLlmRunConfig | TurnSimulationLlmRunConfig
+): Promise<
+  ResolvedOpeningHandLlmRunConfig | ResolvedTurnSimulationLlmRunConfig
+> {
+  if (config.provider !== "llamacpp") {
+    return config
+  }
+
+  const client = new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+  })
+  const model = getLlamaCppServerModelName(await client.models.list())
+
+  return {
+    ...config,
+    model,
+  }
+}
+
 async function prepareAndStartOpeningHandLlmRun({
   deckId,
   resetBeforeStart,
@@ -1839,7 +1869,9 @@ async function prepareAndStartOpeningHandLlmRun({
   let createdLlmRunId: string | null = null
 
   try {
-    const llmConfig = getOpeningHandLlmRunConfig()
+    const llmConfig = await resolveLlmRunConfigModel(
+      getOpeningHandLlmRunConfig()
+    )
 
     if (resetBeforeStart) {
       await resetSimulationForOpeningHandLlmRun(deckId, simulationId)
@@ -1912,7 +1944,9 @@ async function prepareAndStartTurnLlmRun({
   let createdLlmRunId: string | null = null
 
   try {
-    const llmConfig = getTurnSimulationLlmRunConfig()
+    const llmConfig = await resolveLlmRunConfigModel(
+      getTurnSimulationLlmRunConfig()
+    )
     const turnRun = await createTurnLlmRun(deckId, {
       simulationId,
       turnNumber,
@@ -2343,7 +2377,7 @@ async function collectLlamaCppLlmStream({
   runtime,
   toolDefinitions,
 }: {
-  config: LlamaCppRunConfig
+  config: ResolvedLlamaCppRunConfig
   llmRunId: string
   mcpPath: string
   phase: LlmRunPhase
@@ -2435,7 +2469,7 @@ function startOpeningHandLlmRun({
   simulationId,
 }: {
   attemptNumber: number
-  config: OpeningHandLlmRunConfig
+  config: ResolvedOpeningHandLlmRunConfig
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2465,7 +2499,7 @@ async function runOpeningHandLlmRun({
   simulationId,
 }: {
   attemptNumber: number
-  config: OpeningHandLlmRunConfig
+  config: ResolvedOpeningHandLlmRunConfig
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2618,7 +2652,7 @@ function startTurnLlmRun({
   turnNumber,
 }: {
   attemptNumber: number
-  config: TurnSimulationLlmRunConfig
+  config: ResolvedTurnSimulationLlmRunConfig
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2651,7 +2685,7 @@ async function runTurnLlmRun({
   turnNumber,
 }: {
   attemptNumber: number
-  config: TurnSimulationLlmRunConfig
+  config: ResolvedTurnSimulationLlmRunConfig
   deckId: string
   fullPrompt: string
   llmRunId: string
