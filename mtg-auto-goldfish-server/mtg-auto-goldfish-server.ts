@@ -108,6 +108,12 @@ import {
   type OpenRouterToolCallNameMap,
 } from "./llm-run-events.js"
 import {
+  collectLlamaCppChatCompletion,
+  createLlamaCppChatCompletionTools,
+  type LlamaCppChatCompletionRequestPayload,
+  type LlamaCppToolDefinition,
+} from "./llamacpp-chat.js"
+import {
   callWithRuntimeAbortSignal,
   createRuntimeAbortError,
   forEachRuntimeAbortableAsync,
@@ -118,6 +124,7 @@ import {
   LlmConfigurationError,
   getOpeningHandLlmRunConfig,
   getTurnSimulationLlmRunConfig,
+  type LlamaCppRunConfig,
   type OpenAiRunConfig,
   type OpenRouterRunConfig,
   type OpeningHandLlmRunConfig,
@@ -650,10 +657,15 @@ function getLlmTokenUsageSummary(usage: unknown) {
   const inputTokens = getNumberProperty(
     usageRecord,
     "input_tokens",
-    "inputTokens"
+    "inputTokens",
+    "prompt_tokens",
+    "promptTokens"
   )
   const inputDetails = asRecord(
-    usageRecord.input_tokens_details ?? usageRecord.inputTokensDetails
+    usageRecord.input_tokens_details ??
+      usageRecord.inputTokensDetails ??
+      usageRecord.prompt_tokens_details ??
+      usageRecord.promptTokensDetails
   )
   const cachedInputTokens =
     inputTokens === null
@@ -665,10 +677,15 @@ function getLlmTokenUsageSummary(usage: unknown) {
   const outputTokens = getNumberProperty(
     usageRecord,
     "output_tokens",
-    "outputTokens"
+    "outputTokens",
+    "completion_tokens",
+    "completionTokens"
   )
   const outputDetails = asRecord(
-    usageRecord.output_tokens_details ?? usageRecord.outputTokensDetails
+    usageRecord.output_tokens_details ??
+      usageRecord.outputTokensDetails ??
+      usageRecord.completion_tokens_details ??
+      usageRecord.completionTokensDetails
   )
   const reasoningTokens =
     getNumberProperty(outputDetails, "reasoning_tokens", "reasoningTokens") ?? 0
@@ -677,7 +694,13 @@ function getLlmTokenUsageSummary(usage: unknown) {
   const totalTokens =
     getNumberProperty(usageRecord, "total_tokens", "totalTokens") ??
     sumTokenCounts([
-      getNumberProperty(usageRecord, "input_tokens", "inputTokens"),
+      getNumberProperty(
+        usageRecord,
+        "input_tokens",
+        "inputTokens",
+        "prompt_tokens",
+        "promptTokens"
+      ),
       reasoningTokens,
       visibleOutputTokens,
     ])
@@ -693,14 +716,17 @@ function getLlmTokenUsageSummary(usage: unknown) {
 
 function getNumberProperty(
   record: Record<string, unknown>,
-  property: string,
-  alternateProperty?: string
+  ...properties: string[]
 ) {
-  const value =
-    record[property] ??
-    (alternateProperty === undefined ? undefined : record[alternateProperty])
+  for (const property of properties) {
+    const value = record[property]
 
-  return typeof value === "number" && Number.isFinite(value) ? value : null
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value
+    }
+  }
+
+  return null
 }
 
 function formatProviderName(provider: string) {
@@ -710,6 +736,10 @@ function formatProviderName(provider: string) {
 
   if (provider === "openrouter") {
     return "OpenRouter"
+  }
+
+  if (provider === "llamacpp") {
+    return "llama.cpp"
   }
 
   return provider
@@ -1217,224 +1247,198 @@ function registerLogTurnActionTool(
   )
 }
 
+const openingHandLlmToolDefinitions: LlamaCppToolDefinition[] = [
+  {
+    name: "draw_starting_hand",
+    description:
+      "Draw the very first opening seven-card hand from the stored library for an existing simulation. Call this exactly once per simulation, before any mulligans. Never call this after mulligan, because mulligan already shuffles and draws the replacement seven-card hand.",
+    inputSchema: z.object(llmRunIdentifierSchema),
+  },
+  {
+    name: "mulligan",
+    description:
+      "Return the current opening hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn. Important: this tool already draws and returns the replacement hand, so do not call draw_starting_hand after using this tool.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      reason: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("A short explanation of why this hand is being mulliganed."),
+    }),
+  },
+  {
+    name: "return_cards_to_library",
+    description:
+      "Return multiple cards to the top or bottom of the library for an existing simulation, optionally randomizing the order they are returned in.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      cards: z
+        .array(z.string().trim().min(1))
+        .min(1)
+        .describe(
+          "The cards to put back into the library. If randomizeOrder is false, they are inserted in list order, so the last card becomes the outermost card on the chosen side."
+        ),
+      side: z
+        .enum(["top", "bottom"])
+        .describe("Which end of the library to return the cards to."),
+      randomizeOrder: z
+        .boolean()
+        .describe("Whether to shuffle the returned cards before putting them back."),
+    }),
+  },
+]
+
+const turnSimulationLlmToolDefinitions: LlamaCppToolDefinition[] = [
+  {
+    name: "log_turn_action",
+    description:
+      "Append an irreversible action note to the active turn log for this simulation. Use this as the authoritative turn history while resolving the turn. The response returns the full logged action list for the active turn.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      action: z
+        .string()
+        .trim()
+        .min(1)
+        .describe(
+          "A concise description of the action being committed, such as a phase change, land play, spell cast, attack, or other turn progression."
+        ),
+    }),
+  },
+  {
+    name: "draw_card_from_top",
+    description:
+      "Draw one or more cards from the top of the stored library for an existing simulation.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      count: z.number().int().positive().describe("How many cards to draw."),
+    }),
+  },
+  {
+    name: "draw_card_from_bottom",
+    description:
+      "Draw one or more cards from the bottom of the stored library for an existing simulation.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      count: z.number().int().positive().describe("How many cards to draw."),
+    }),
+  },
+  {
+    name: "take_cards_from_library",
+    description:
+      "Take one or more specific cards out of the stored library for tutor and search effects. Each requested name uses the best reasonably close fuzzy match, ignoring case and punctuation. If no close enough match exists, that request returns no card.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      cards: z
+        .array(z.string().trim().min(1))
+        .min(1)
+        .describe(
+          "The card names to remove from the library. Each request is matched independently against the current remaining library."
+        ),
+    }),
+  },
+  {
+    name: "return_card_to_library",
+    description:
+      "Return a card to the library for an existing simulation, placing it a specific number of cards from the top or bottom.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      card: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("The card name to put back into the library."),
+      side: z
+        .enum(["top", "bottom"])
+        .describe(
+          "Whether the position is measured from the top or the bottom of the library."
+        ),
+      position: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe(
+          "How many cards should remain above the card if using top, or below the card if using bottom. Position 0 puts it directly on that end. For example, if you want the card 3rd from the top, use side top, position 2."
+        ),
+    }),
+  },
+  {
+    name: "return_cards_to_library",
+    description:
+      "Return multiple cards to the top or bottom of the library for an existing simulation, optionally randomizing the order they are returned in.",
+    inputSchema: z.object({
+      ...llmRunIdentifierSchema,
+      cards: z
+        .array(z.string().trim().min(1))
+        .min(1)
+        .describe(
+          "The cards to put back into the library. If randomizeOrder is false, they are inserted in list order, so the last card becomes the outermost card on the chosen side."
+        ),
+      side: z
+        .enum(["top", "bottom"])
+        .describe("Which end of the library to return the cards to."),
+      randomizeOrder: z
+        .boolean()
+        .describe("Whether to shuffle the returned cards before putting them back."),
+    }),
+  },
+  {
+    name: "shuffle_library",
+    description: "Shuffle the stored library for an existing simulation.",
+    inputSchema: z.object(llmRunIdentifierSchema),
+  },
+]
+
 function createOpeningHandOpenRouterTools(
   mcpClient: Client,
   signal: AbortSignal
 ): Tool[] {
-  return [
-    tool({
-      name: "draw_starting_hand",
-      description:
-        "Draw the very first opening seven-card hand from the stored library for an existing simulation. Call this exactly once per simulation, before any mulligans. Never call this after mulligan, because mulligan already shuffles and draws the replacement seven-card hand.",
-      inputSchema: z.object(llmRunIdentifierSchema),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "draw_starting_hand",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "mulligan",
-      description:
-        "Return the current opening hand to the library, shuffle, and draw a fresh seven-card hand. This can only be called after the starting hand has been drawn. Important: this tool already draws and returns the replacement hand, so do not call draw_starting_hand after using this tool.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        reason: z
-          .string()
-          .trim()
-          .min(1)
-          .describe(
-            "A short explanation of why this hand is being mulliganed."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(mcpClient, "mulligan", input, signal),
-    }),
-    tool({
-      name: "return_cards_to_library",
-      description:
-        "Return multiple cards to the top or bottom of the library for an existing simulation, optionally randomizing the order they are returned in.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        cards: z
-          .array(z.string().trim().min(1))
-          .min(1)
-          .describe(
-            "The cards to put back into the library. If randomizeOrder is false, they are inserted in list order, so the last card becomes the outermost card on the chosen side."
-          ),
-        side: z
-          .enum(["top", "bottom"])
-          .describe("Which end of the library to return the cards to."),
-        randomizeOrder: z
-          .boolean()
-          .describe(
-            "Whether to shuffle the returned cards before putting them back."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "return_cards_to_library",
-          input,
-          signal
-        ),
-    }),
-  ]
+  return createOpenRouterTools(
+    openingHandLlmToolDefinitions,
+    mcpClient,
+    signal
+  )
 }
 
 function createTurnSimulationOpenRouterTools(
   mcpClient: Client,
   signal: AbortSignal
 ): Tool[] {
-  return [
-    tool({
-      name: "log_turn_action",
-      description:
-        "Append an irreversible action note to the active turn log for this simulation. Use this as the authoritative turn history while resolving the turn. The response returns the full logged action list for the active turn.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        action: z
-          .string()
-          .trim()
-          .min(1)
-          .describe(
-            "A concise description of the action being committed, such as a phase change, land play, spell cast, attack, or other turn progression."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(mcpClient, "log_turn_action", input, signal),
-    }),
-    tool({
-      name: "draw_card_from_top",
-      description:
-        "Draw one or more cards from the top of the stored library for an existing simulation.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        count: z.number().int().positive().describe("How many cards to draw."),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "draw_card_from_top",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "draw_card_from_bottom",
-      description:
-        "Draw one or more cards from the bottom of the stored library for an existing simulation.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        count: z.number().int().positive().describe("How many cards to draw."),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "draw_card_from_bottom",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "take_cards_from_library",
-      description:
-        "Take one or more specific cards out of the stored library for tutor and search effects. Each requested name uses the best reasonably close fuzzy match, ignoring case and punctuation. If no close enough match exists, that request returns no card.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        cards: z
-          .array(z.string().trim().min(1))
-          .min(1)
-          .describe(
-            "The card names to remove from the library. Each request is matched independently against the current remaining library."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "take_cards_from_library",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "return_card_to_library",
-      description:
-        "Return a card to the library for an existing simulation, placing it a specific number of cards from the top or bottom.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        card: z
-          .string()
-          .trim()
-          .min(1)
-          .describe("The card name to put back into the library."),
-        side: z
-          .enum(["top", "bottom"])
-          .describe(
-            "Whether the position is measured from the top or the bottom of the library."
-          ),
-        position: z
-          .number()
-          .int()
-          .nonnegative()
-          .describe(
-            "How many cards should remain above the card if using top, or below the card if using bottom. Position 0 puts it directly on that end. For example, if you want the card 3rd from the top, use side top, position 2."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "return_card_to_library",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "return_cards_to_library",
-      description:
-        "Return multiple cards to the top or bottom of the library for an existing simulation, optionally randomizing the order they are returned in.",
-      inputSchema: z.object({
-        ...llmRunIdentifierSchema,
-        cards: z
-          .array(z.string().trim().min(1))
-          .min(1)
-          .describe(
-            "The cards to put back into the library. If randomizeOrder is false, they are inserted in list order, so the last card becomes the outermost card on the chosen side."
-          ),
-        side: z
-          .enum(["top", "bottom"])
-          .describe("Which end of the library to return the cards to."),
-        randomizeOrder: z
-          .boolean()
-          .describe(
-            "Whether to shuffle the returned cards before putting them back."
-          ),
-      }),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(
-          mcpClient,
-          "return_cards_to_library",
-          input,
-          signal
-        ),
-    }),
-    tool({
-      name: "shuffle_library",
-      description: "Shuffle the stored library for an existing simulation.",
-      inputSchema: z.object(llmRunIdentifierSchema),
-      execute: async (input) =>
-        callMcpToolForOpenRouter(mcpClient, "shuffle_library", input, signal),
-    }),
-  ]
+  return createOpenRouterTools(
+    turnSimulationLlmToolDefinitions,
+    mcpClient,
+    signal
+  )
 }
 
-async function callMcpToolForOpenRouter(
+function createOpenRouterTools(
+  toolDefinitions: readonly LlamaCppToolDefinition[],
+  mcpClient: Client,
+  signal: AbortSignal
+): Tool[] {
+  return toolDefinitions.map((definition) =>
+    tool({
+      name: definition.name,
+      description: definition.description,
+      inputSchema: definition.inputSchema,
+      execute: async (input) =>
+        callMcpToolForProvider(
+          mcpClient,
+          definition.name,
+          input,
+          signal,
+          "OpenRouter"
+        ),
+    })
+  )
+}
+
+async function callMcpToolForProvider(
   mcpClient: Client,
   name: string,
   args: Record<string, unknown>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  providerName: string
 ) {
   const result = await callWithRuntimeAbortSignal(
     signal,
@@ -1447,13 +1451,13 @@ async function callMcpToolForOpenRouter(
         undefined,
         options
       ),
-    `OpenRouter MCP tool ${name} was cancelled.`
+    `${providerName} MCP tool ${name} was cancelled.`
   )
 
-  return formatMcpToolResultForOpenRouter(result)
+  return formatMcpToolResultForProvider(result)
 }
 
-function formatMcpToolResultForOpenRouter(result: unknown) {
+function formatMcpToolResultForProvider(result: unknown) {
   const resultRecord = asRecord(result)
 
   if (Object.hasOwn(resultRecord, "structuredContent")) {
@@ -1507,11 +1511,19 @@ function parseMcpToolResultTextContent(textContent: string) {
   }
 }
 
-async function createOpenRouterMcpClient(path: string, signal: AbortSignal) {
+async function createProviderMcpClient({
+  clientName,
+  path,
+  signal,
+}: {
+  clientName: string
+  path: string
+  signal: AbortSignal
+}) {
   throwIfRuntimeAborted(signal)
 
   const mcpClient = new Client({
-    name: `${SERVER_NAME}-openrouter-agent`,
+    name: `${SERVER_NAME}-${clientName}`,
     version: "0.0.1",
   })
   const transport = new StreamableHTTPClientTransport(
@@ -1525,7 +1537,7 @@ async function createOpenRouterMcpClient(path: string, signal: AbortSignal) {
   } catch (error) {
     await mcpClient.close().catch((closeError: unknown) => {
       console.error(
-        "Failed to close aborted OpenRouter MCP client:",
+        `Failed to close aborted ${clientName} MCP client:`,
         closeError
       )
     })
@@ -1604,6 +1616,7 @@ function buildOpeningHandOpenRouterRequestPayload(
   simulationId: string
 ) {
   return {
+    providerType: "openrouter" as const,
     model: config.model,
     input: fullPrompt,
     metadata: {
@@ -1620,6 +1633,31 @@ function buildOpeningHandOpenRouterRequestPayload(
   }
 }
 
+function buildOpeningHandLlamaCppRequestPayload(
+  config: LlamaCppRunConfig,
+  fullPrompt: string,
+  simulationId: string
+): LlamaCppChatCompletionRequestPayload {
+  return {
+    providerType: "llamacpp",
+    model: config.model,
+    messages: [
+      {
+        role: "user",
+        content: fullPrompt,
+      },
+    ],
+    metadata: {
+      simulationId,
+      phase: "opening_hand",
+    },
+    parallel_tool_calls: false,
+    reasoning_effort: config.reasoningEffort,
+    tools: createLlamaCppChatCompletionTools(openingHandLlmToolDefinitions),
+    stopWhenStepCount: config.stopWhenStepCount,
+  }
+}
+
 function buildTurnSimulationOpenRouterRequestPayload(
   config: OpenRouterRunConfig,
   fullPrompt: string,
@@ -1627,6 +1665,7 @@ function buildTurnSimulationOpenRouterRequestPayload(
   turnNumber: number
 ) {
   return {
+    providerType: "openrouter" as const,
     model: config.model,
     input: fullPrompt,
     metadata: {
@@ -1640,6 +1679,33 @@ function buildTurnSimulationOpenRouterRequestPayload(
     },
     parallelToolCalls: false as const,
     provider: getOpenRouterProviderPreferences(config.modelProvider),
+    stopWhenStepCount: config.stopWhenStepCount,
+  }
+}
+
+function buildTurnSimulationLlamaCppRequestPayload(
+  config: LlamaCppRunConfig,
+  fullPrompt: string,
+  simulationId: string,
+  turnNumber: number
+): LlamaCppChatCompletionRequestPayload {
+  return {
+    providerType: "llamacpp",
+    model: config.model,
+    messages: [
+      {
+        role: "user",
+        content: fullPrompt,
+      },
+    ],
+    metadata: {
+      simulationId,
+      phase: "turn",
+      turnNumber: String(turnNumber),
+    },
+    parallel_tool_calls: false,
+    reasoning_effort: config.reasoningEffort,
+    tools: createLlamaCppChatCompletionTools(turnSimulationLlmToolDefinitions),
     stopWhenStepCount: config.stopWhenStepCount,
   }
 }
@@ -1668,6 +1734,14 @@ function buildOpeningHandLlmRequestPayload(
     )
   }
 
+  if (config.provider === "llamacpp") {
+    return buildOpeningHandLlamaCppRequestPayload(
+      config,
+      fullPrompt,
+      simulationId
+    )
+  }
+
   return buildOpeningHandOpenRouterRequestPayload(
     config,
     fullPrompt,
@@ -1683,6 +1757,15 @@ function buildTurnSimulationLlmRequestPayload(
 ) {
   if (config.provider === "openai") {
     return buildTurnSimulationOpenAiRequestPayload(
+      config,
+      fullPrompt,
+      simulationId,
+      turnNumber
+    )
+  }
+
+  if (config.provider === "llamacpp") {
+    return buildTurnSimulationLlamaCppRequestPayload(
       config,
       fullPrompt,
       simulationId,
@@ -1710,14 +1793,26 @@ type OpeningHandOpenRouterRequestPayload = ReturnType<
 type TurnSimulationOpenRouterRequestPayload = ReturnType<
   typeof buildTurnSimulationOpenRouterRequestPayload
 >
+type LlamaCppRequestPayload =
+  | ReturnType<typeof buildOpeningHandLlamaCppRequestPayload>
+  | ReturnType<typeof buildTurnSimulationLlamaCppRequestPayload>
 
 function getPersistableLlmRequestPayload<
-  TRequestPayload extends { input: unknown },
+  TRequestPayload extends Record<string, unknown>,
 >(requestPayload: TRequestPayload) {
-  return {
+  const persistableRequestPayload: Record<string, unknown> = {
     ...requestPayload,
-    input: "[stored in llm_runs.full_prompt]",
   }
+
+  if (Object.hasOwn(persistableRequestPayload, "input")) {
+    persistableRequestPayload.input = "[stored in llm_runs.full_prompt]"
+  }
+
+  if (Array.isArray(persistableRequestPayload.messages)) {
+    persistableRequestPayload.messages = "[stored in llm_runs.full_prompt]"
+  }
+
+  return persistableRequestPayload
 }
 
 function formatLlmRunPhase(phase: LlmRunPhase) {
@@ -1972,7 +2067,13 @@ function isOpenAiRequestPayload(
 function isOpenRouterRequestPayload(
   requestPayload: OpeningHandLlmRequestPayload | TurnSimulationLlmRequestPayload
 ): requestPayload is OpenRouterRequestPayload {
-  return "stopWhenStepCount" in requestPayload
+  return asRecord(requestPayload).providerType === "openrouter"
+}
+
+function isLlamaCppRequestPayload(
+  requestPayload: OpeningHandLlmRequestPayload | TurnSimulationLlmRequestPayload
+): requestPayload is LlamaCppRequestPayload {
+  return asRecord(requestPayload).providerType === "llamacpp"
 }
 
 function requireOpenAiRequestPayload(
@@ -1989,6 +2090,16 @@ function requireOpenRouterRequestPayload(
   requestPayload: OpeningHandLlmRequestPayload | TurnSimulationLlmRequestPayload
 ) {
   if (!isOpenRouterRequestPayload(requestPayload)) {
+    throw new Error("LLM run config and request payload provider mismatch.")
+  }
+
+  return requestPayload
+}
+
+function requireLlamaCppRequestPayload(
+  requestPayload: OpeningHandLlmRequestPayload | TurnSimulationLlmRequestPayload
+) {
+  if (!isLlamaCppRequestPayload(requestPayload)) {
     throw new Error("LLM run config and request payload provider mismatch.")
   }
 
@@ -2108,7 +2219,11 @@ async function collectOpenRouterLlmStream({
     apiKey: config.apiKey,
   })
   const signal = runtime.abortController.signal
-  const mcpClient = await createOpenRouterMcpClient(mcpPath, signal)
+  const mcpClient = await createProviderMcpClient({
+    clientName: "openrouter-agent",
+    path: mcpPath,
+    signal,
+  })
   let mcpClientClosePromise: Promise<void> | null = null
 
   const closeMcpClient = () => {
@@ -2219,6 +2334,96 @@ async function collectOpenRouterLlmStream({
   }
 }
 
+async function collectLlamaCppLlmStream({
+  config,
+  llmRunId,
+  mcpPath,
+  phase,
+  requestPayload,
+  runtime,
+  toolDefinitions,
+}: {
+  config: LlamaCppRunConfig
+  llmRunId: string
+  mcpPath: string
+  phase: LlmRunPhase
+  requestPayload: LlamaCppRequestPayload
+  runtime: ActiveLlmRunRuntime
+  toolDefinitions: readonly LlamaCppToolDefinition[]
+}): Promise<CompletedLlmStreamResult> {
+  const signal = runtime.abortController.signal
+  const client = new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+  })
+  const mcpClient = await createProviderMcpClient({
+    clientName: "llamacpp-agent",
+    path: mcpPath,
+    signal,
+  })
+  let mcpClientClosePromise: Promise<void> | null = null
+
+  const closeMcpClient = () => {
+    mcpClientClosePromise ??= mcpClient.close().catch((error: unknown) => {
+      console.error("Failed to close llama.cpp MCP client:", error)
+    })
+
+    return mcpClientClosePromise
+  }
+
+  try {
+    logLlmApiCallStarted({
+      llmRunId,
+      model: requestPayload.model,
+      phase,
+      provider: config.provider,
+    })
+
+    const removeAbortHandler = registerRuntimeAbortHandler(signal, () => {
+      void closeMcpClient()
+    })
+
+    try {
+      const result = await collectLlamaCppChatCompletion({
+        appendChunk: (chunk) => appendRuntimeChunk(runtime, chunk),
+        callTool: (name, args, toolSignal) =>
+          callMcpToolForProvider(
+            mcpClient,
+            name,
+            args,
+            toolSignal,
+            "llama.cpp"
+          ),
+        createChatCompletion: (body, options) =>
+          client.chat.completions.create(body, options),
+        requestPayload,
+        signal,
+        toolDefinitions,
+      })
+
+      logLlmApiCallFinished({
+        llmRunId,
+        model: requestPayload.model,
+        phase,
+        provider: config.provider,
+        usage: result.usage,
+      })
+
+      return result
+    } catch (error) {
+      if (signal.aborted) {
+        throw createRuntimeAbortError()
+      }
+
+      throw error
+    } finally {
+      removeAbortHandler()
+    }
+  } finally {
+    await closeMcpClient()
+  }
+}
+
 function startOpeningHandLlmRun({
   attemptNumber,
   config,
@@ -2313,15 +2518,25 @@ async function runOpeningHandLlmRun({
             requestPayload: requireOpenAiRequestPayload(requestPayload),
             runtime,
           })
-        : await collectOpenRouterLlmStream({
-            config,
-            createTools: createOpeningHandOpenRouterTools,
-            llmRunId,
-            mcpPath: OPENING_HAND_MCP_PATH,
-            phase: "opening_hand",
-            requestPayload: requireOpenRouterRequestPayload(requestPayload),
-            runtime,
-          })
+        : config.provider === "openrouter"
+          ? await collectOpenRouterLlmStream({
+              config,
+              createTools: createOpeningHandOpenRouterTools,
+              llmRunId,
+              mcpPath: OPENING_HAND_MCP_PATH,
+              phase: "opening_hand",
+              requestPayload: requireOpenRouterRequestPayload(requestPayload),
+              runtime,
+            })
+          : await collectLlamaCppLlmStream({
+              config,
+              llmRunId,
+              mcpPath: OPENING_HAND_MCP_PATH,
+              phase: "opening_hand",
+              requestPayload: requireLlamaCppRequestPayload(requestPayload),
+              runtime,
+              toolDefinitions: openingHandLlmToolDefinitions,
+            })
 
     throwIfRuntimeAborted(runtime.abortController.signal)
     await forceFlushRuntimeChunks(runtime)
@@ -2491,15 +2706,25 @@ async function runTurnLlmRun({
             requestPayload: requireOpenAiRequestPayload(requestPayload),
             runtime,
           })
-        : await collectOpenRouterLlmStream({
-            config,
-            createTools: createTurnSimulationOpenRouterTools,
-            llmRunId,
-            mcpPath: TURN_SIMULATION_MCP_PATH,
-            phase: "turn",
-            requestPayload: requireOpenRouterRequestPayload(requestPayload),
-            runtime,
-          })
+        : config.provider === "openrouter"
+          ? await collectOpenRouterLlmStream({
+              config,
+              createTools: createTurnSimulationOpenRouterTools,
+              llmRunId,
+              mcpPath: TURN_SIMULATION_MCP_PATH,
+              phase: "turn",
+              requestPayload: requireOpenRouterRequestPayload(requestPayload),
+              runtime,
+            })
+          : await collectLlamaCppLlmStream({
+              config,
+              llmRunId,
+              mcpPath: TURN_SIMULATION_MCP_PATH,
+              phase: "turn",
+              requestPayload: requireLlamaCppRequestPayload(requestPayload),
+              runtime,
+              toolDefinitions: turnSimulationLlmToolDefinitions,
+            })
 
     throwIfRuntimeAborted(runtime.abortController.signal)
     await forceFlushRuntimeChunks(runtime)

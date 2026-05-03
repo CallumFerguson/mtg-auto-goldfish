@@ -1,6 +1,6 @@
 import { z } from "zod/v4"
 
-export const llmProviderSchema = z.enum(["openai", "openrouter"])
+export const llmProviderSchema = z.enum(["openai", "openrouter", "llamacpp"])
 export const reasoningEffortSchema = z.enum([
   "none",
   "minimal",
@@ -32,6 +32,12 @@ export type OpenRouterRunConfig = BaseLlmRunConfig & {
   stopWhenStepCount: number
 }
 
+export type LlamaCppRunConfig = BaseLlmRunConfig & {
+  provider: "llamacpp"
+  baseUrl: string
+  stopWhenStepCount: number
+}
+
 export type OpeningHandOpenAiRunConfig = OpenAiRunConfig & {
   openingHandMcpPublicUrl: string
 }
@@ -43,10 +49,12 @@ export type TurnSimulationOpenAiRunConfig = OpenAiRunConfig & {
 export type OpeningHandLlmRunConfig =
   | OpeningHandOpenAiRunConfig
   | OpenRouterRunConfig
+  | LlamaCppRunConfig
 
 export type TurnSimulationLlmRunConfig =
   | TurnSimulationOpenAiRunConfig
   | OpenRouterRunConfig
+  | LlamaCppRunConfig
 
 export class LlmConfigurationError extends Error {
   constructor(message: string) {
@@ -93,7 +101,7 @@ export function getTurnSimulationLlmRunConfig(
 
 function getLlmRunConfig(
   environment: Environment
-): OpenAiRunConfig | OpenRouterRunConfig {
+): OpenAiRunConfig | OpenRouterRunConfig | LlamaCppRunConfig {
   const provider = getLlmProvider(environment)
 
   if (provider === "openai") {
@@ -104,6 +112,25 @@ function getLlmRunConfig(
       reasoningEffort: getRequiredReasoningEffort(
         environment,
         "OPENAI_REASONING_EFFORT"
+      ),
+    }
+  }
+
+  if (provider === "llamacpp") {
+    return {
+      apiKey:
+        getOptionalEnvironmentVariable(environment, "LLAMACPP_API_KEY") ??
+        "not-needed",
+      baseUrl: getRequiredEnvironmentVariable(environment, "LLAMACPP_BASE_URL"),
+      model: getRequiredEnvironmentVariable(environment, "LLAMACPP_MODEL"),
+      provider,
+      reasoningEffort: getRequiredReasoningEffort(
+        environment,
+        "LLAMACPP_REASONING_EFFORT"
+      ),
+      stopWhenStepCount: getRequiredPositiveIntegerEnvironmentVariable(
+        environment,
+        "LLAMACPP_STOP_WHEN_STEP_COUNT"
       ),
     }
   }
@@ -136,7 +163,7 @@ function getLlmProvider(environment: Environment): LlmProvider {
 
   if (!parsedProvider.success) {
     throw new LlmConfigurationError(
-      "LLM_PROVIDER must be one of: openai, openrouter."
+      "LLM_PROVIDER must be one of: openai, openrouter, llamacpp."
     )
   }
 

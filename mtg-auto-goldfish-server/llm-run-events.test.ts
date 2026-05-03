@@ -3,6 +3,10 @@ import test from "node:test"
 import {
   ProviderTerminalEventError,
   createCancellationChunk,
+  createLlamaCppCompletedChunk,
+  createLlamaCppMessageDeltaChunk,
+  createLlamaCppToolCallCompleteChunk,
+  createLlamaCppToolCallStartChunk,
   getCompletedResponseOutputText,
   isAbortError,
   normalizeOpenAiStreamEvent,
@@ -124,6 +128,19 @@ test("uses OpenRouter reported usage cost when estimating LLM price", () => {
   assert.equal(estimate?.formattedCents, "0.1")
 })
 
+test("does not estimate local llama.cpp inference prices", () => {
+  const estimate = estimateLlmTokenPriceCents({
+    provider: "llamacpp",
+    model: "local-model",
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 50,
+    },
+  })
+
+  assert.equal(estimate, null)
+})
+
 test("aggregates OpenRouter usage across agent turns", () => {
   const usage = aggregateOpenRouterUsage([
     {
@@ -222,7 +239,7 @@ test("rejects invalid provider and reasoning effort config", () => {
       getOpeningHandLlmRunConfig({
         LLM_PROVIDER: "anthropic",
       }),
-    /LLM_PROVIDER must be one of: openai, openrouter\./
+    /LLM_PROVIDER must be one of: openai, openrouter, llamacpp\./
   )
   assert.throws(
     () =>
@@ -262,6 +279,59 @@ test("validates provider-specific LLM config requirements", () => {
   assert.equal(config.modelProvider, null)
   assert.equal(config.reasoningEffort, "high")
   assert.equal(config.stopWhenStepCount, 7)
+})
+
+test("validates llama.cpp LLM config requirements", () => {
+  assert.throws(
+    () =>
+      getOpeningHandLlmRunConfig({
+        LLM_PROVIDER: "llamacpp",
+        LLAMACPP_BASE_URL: "http://127.0.0.1:8080/v1",
+        LLAMACPP_MODEL: "local-model",
+        LLAMACPP_REASONING_EFFORT: "none",
+        LLAMACPP_STOP_WHEN_STEP_COUNT: "0",
+      }),
+    /LLAMACPP_STOP_WHEN_STEP_COUNT must be a positive integer\./
+  )
+  assert.throws(
+    () =>
+      getOpeningHandLlmRunConfig({
+        LLM_PROVIDER: "llamacpp",
+        LLAMACPP_MODEL: "local-model",
+        LLAMACPP_REASONING_EFFORT: "none",
+        LLAMACPP_STOP_WHEN_STEP_COUNT: "7",
+      }),
+    /LLAMACPP_BASE_URL/
+  )
+
+  const config = getTurnSimulationLlmRunConfig({
+    LLM_PROVIDER: "llamacpp",
+    LLAMACPP_BASE_URL: "http://127.0.0.1:8080/v1",
+    LLAMACPP_MODEL: "local-model",
+    LLAMACPP_REASONING_EFFORT: "none",
+    LLAMACPP_STOP_WHEN_STEP_COUNT: "7",
+  })
+
+  assert.equal(config.provider, "llamacpp")
+  assert.equal(config.apiKey, "not-needed")
+  assert.equal(config.baseUrl, "http://127.0.0.1:8080/v1")
+  assert.equal(config.model, "local-model")
+  assert.equal(config.reasoningEffort, "none")
+  assert.equal(config.stopWhenStepCount, 7)
+})
+
+test("reads optional llama.cpp API key config", () => {
+  const config = getOpeningHandLlmRunConfig({
+    LLM_PROVIDER: "llamacpp",
+    LLAMACPP_API_KEY: "local-secret",
+    LLAMACPP_BASE_URL: "http://127.0.0.1:8080/v1",
+    LLAMACPP_MODEL: "local-model",
+    LLAMACPP_REASONING_EFFORT: "none",
+    LLAMACPP_STOP_WHEN_STEP_COUNT: "7",
+  })
+
+  assert.equal(config.provider, "llamacpp")
+  assert.equal(config.apiKey, "local-secret")
 })
 
 test("reads optional OpenRouter model provider config", () => {
@@ -313,6 +383,32 @@ test("creates a first-class cancellation chunk", () => {
   assert.deepEqual(chunk.payload, {
     message: "Stopped by user.",
   })
+})
+
+test("creates llama.cpp text, tool, and completion chunks", () => {
+  const startChunk = createLlamaCppToolCallStartChunk("draw_starting_hand", {
+    id: "call_1",
+  })
+  const completeChunk = createLlamaCppToolCallCompleteChunk(
+    "draw_starting_hand",
+    { cards: ["Sol Ring"] },
+    { id: "call_1" }
+  )
+  const textChunk = createLlamaCppMessageDeltaChunk(
+    '{"keptHand":["Sol Ring"]}',
+    { id: "chatcmpl_1" }
+  )
+  const completedChunk = createLlamaCppCompletedChunk({ id: "chatcmpl_1" })
+
+  assert.equal(startChunk.kind, "mcp_call_start")
+  assert.equal(startChunk.mcpFunctionName, "draw_starting_hand")
+  assert.equal(completeChunk.kind, "mcp_call_complete")
+  assert.deepEqual(completeChunk.mcpFunctionOutput, {
+    cards: ["Sol Ring"],
+  })
+  assert.equal(textChunk.kind, "message_delta")
+  assert.equal(textChunk.outputDelta, '{"keptHand":["Sol Ring"]}')
+  assert.equal(completedChunk.kind, "completed")
 })
 
 test("runtime abort helper throws a recognized abort error", () => {

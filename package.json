@@ -14,7 +14,7 @@
     "server:watch": "tsx watch --include \"mtg-auto-goldfish-server/**/*.ts\" mtg-auto-goldfish-server/mtg-auto-goldfish-server.ts",
     "server:start": "node dist-server/mtg-auto-goldfish-server.js",
     "test:openrouter-agent": "node tests/openrouter-agent-square-root.mjs",
-    "test": "npm run server:build && node dist-server/llm-run-events.test.js && node dist-server/simulation-results-stream.test.js && tsc -p tsconfig.stream-test.json && node node_modules/.tmp/stream-test/tests/simulation-results-stream.test.js",
+    "test": "npm run server:build && node dist-server/llm-run-events.test.js && node dist-server/llamacpp-chat.test.js && node dist-server/simulation-results-stream.test.js && tsc -p tsconfig.stream-test.json && node node_modules/.tmp/stream-test/tests/simulation-results-stream.test.js",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview"
   },

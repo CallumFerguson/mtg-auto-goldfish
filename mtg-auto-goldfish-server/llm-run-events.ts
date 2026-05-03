@@ -201,6 +201,56 @@ export function createCancellationChunk(
   })
 }
 
+export function createLlamaCppMessageDeltaChunk(
+  outputDelta: string,
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("message_delta", {
+    outputDelta,
+    payload,
+  })
+}
+
+export function createLlamaCppReasoningDeltaChunk(
+  reasoningDelta: string,
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("reasoning_delta", {
+    reasoningDelta,
+    payload,
+  })
+}
+
+export function createLlamaCppCompletedChunk(
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("completed", {
+    payload,
+  })
+}
+
+export function createLlamaCppToolCallStartChunk(
+  mcpFunctionName: string | null,
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("mcp_call_start", {
+    mcpFunctionName,
+    payload,
+  })
+}
+
+export function createLlamaCppToolCallCompleteChunk(
+  mcpFunctionName: string | null,
+  mcpFunctionOutput: unknown,
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("mcp_call_complete", {
+    mcpFunctionName,
+    mcpFunctionOutput,
+    payload,
+  })
+}
+
 export function parseOpeningHandFromResponseText(responseText: string) {
   if (!responseText.trim()) {
     throw new Error("Opening-hand LLM completed response was empty.")
