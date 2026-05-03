@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { parseSimulationFinalOutput } from "../src/lib/simulation-final-output.js"
 import { formatDebugChunkBlocks } from "../src/lib/simulation-debug-chunks.js"
+import { getSimulationResultChunks } from "../src/lib/simulation-result-chunks.js"
 import { applySimulationResultsStreamEvent } from "../src/lib/simulation-results-stream.js"
 import type {
   SimulationDebugLlmRun,
@@ -308,6 +309,49 @@ test("keeps whitespace-only formatted blocks by default for debug views", () => 
   )
 })
 
+test("hides completed tool starts across intervening chunks", () => {
+  const resultChunks = getSimulationResultChunks([
+    createChunk({
+      id: 1,
+      kind: "mcp_call_start",
+      mcpFunctionName: "draw_starting_hand",
+      payload: {
+        item: {
+          id: "call_1",
+        },
+      },
+      sequence: 1,
+    }),
+    createChunk({
+      id: 2,
+      kind: "reasoning_delta",
+      reasoningDelta: "Need to inspect the opener.",
+      sequence: 2,
+    }),
+    createChunk({
+      id: 3,
+      outputDelta: "Checking hand.",
+      sequence: 3,
+    }),
+    createChunk({
+      id: 4,
+      kind: "mcp_call_complete",
+      mcpFunctionName: "draw_starting_hand",
+      payload: {
+        item: {
+          id: "call_1",
+        },
+      },
+      sequence: 4,
+    }),
+  ])
+
+  assert.deepEqual(
+    resultChunks.map((chunk) => chunk.sequence),
+    [2, 3, 4]
+  )
+})
+
 function createResults({
   openingHandLlmRuns = [],
   turnLlmRuns = [],
@@ -353,7 +397,10 @@ function createRun(overrides: {
 function createChunk(overrides: {
   id: number | null
   kind?: string
+  mcpFunctionName?: string | null
+  mcpFunctionOutput?: unknown | null
   outputDelta?: string
+  payload?: unknown
   reasoningDelta?: string
   sequence: number
 }): SimulationDebugLlmRunChunk {
@@ -361,11 +408,11 @@ function createChunk(overrides: {
     id: overrides.id,
     sequence: overrides.sequence,
     kind: overrides.kind ?? "message_delta",
-    mcpFunctionName: null,
-    mcpFunctionOutput: null,
+    mcpFunctionName: overrides.mcpFunctionName ?? null,
+    mcpFunctionOutput: overrides.mcpFunctionOutput ?? null,
     reasoningDelta: overrides.reasoningDelta ?? null,
     outputDelta: overrides.outputDelta ?? null,
-    payload: {},
+    payload: overrides.payload ?? {},
     receivedAt: "2026-01-01T00:00:00.000Z",
   }
 }

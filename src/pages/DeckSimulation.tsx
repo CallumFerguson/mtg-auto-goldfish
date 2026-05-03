@@ -55,6 +55,7 @@ import {
   getDebugDeltaChunkLabel,
 } from "@/lib/simulation-debug-chunks"
 import { applySimulationResultsStreamEvent } from "@/lib/simulation-results-stream"
+import { getSimulationResultChunks } from "@/lib/simulation-result-chunks"
 
 type OpeningHandCardOption = {
   id: string
@@ -2088,37 +2089,6 @@ function SimulationFinalOutputBlock({
   )
 }
 
-function getSimulationResultChunks(
-  chunks: readonly SimulationDebugLlmRunChunk[]
-) {
-  const visibleChunks = chunks.filter(
-    (chunk, index) => !isRedundantMcpCallFailedEvent(chunk, chunks[index + 1])
-  )
-
-  return visibleChunks.filter((chunk, index) => {
-    const nextChunk = visibleChunks[index + 1]
-
-    return !(
-      chunk.kind === "mcp_call_start" &&
-      nextChunk?.kind === "mcp_call_complete" &&
-      chunk.mcpFunctionName !== null &&
-      chunk.mcpFunctionName === nextChunk.mcpFunctionName
-    )
-  })
-}
-
-function isRedundantMcpCallFailedEvent(
-  chunk: SimulationDebugLlmRunChunk,
-  nextChunk: SimulationDebugLlmRunChunk | undefined
-) {
-  return (
-    chunk.kind === "error" &&
-    nextChunk?.kind === "mcp_call_complete" &&
-    getPayloadString(chunk.payload, "item_id") !== null &&
-    getPayloadString(chunk.payload, "item_id") === getMcpCallItemId(nextChunk)
-  )
-}
-
 function SimulationResultEvent({
   chunk,
 }: {
@@ -2282,10 +2252,6 @@ function getMcpCallErrorPayload(chunk: SimulationDebugLlmRunChunk) {
   }
 
   return textParts.join("\n")
-}
-
-function getMcpCallItemId(chunk: SimulationDebugLlmRunChunk) {
-  return getPayloadString(asPayloadRecord(chunk.payload).item, "id")
 }
 
 function asPayloadRecord(value: unknown): Record<string, unknown> {
