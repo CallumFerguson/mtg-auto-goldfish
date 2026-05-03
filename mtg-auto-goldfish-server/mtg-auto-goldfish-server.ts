@@ -3510,13 +3510,15 @@ async function main() {
           generation.generationId
         )
         const providerName = getOpenRouterGenerationProviderName(result)
-        const providerSlug = providerName
-          ? await queryOpenRouterProviderSlug(providerName)
+        const providerEntry = providerName
+          ? await queryOpenRouterProviderEntry(providerName)
           : null
+        const providerSlug = getOpenRouterProviderSlug(providerEntry)
 
         res.status(200).json({
           generation,
           providerName,
+          providerEntry,
           providerSlug,
           result,
         })
@@ -4134,10 +4136,10 @@ async function queryOpenRouterGenerationEndpoint(generationId: string) {
   return result
 }
 
-async function queryOpenRouterProviderSlug(providerName: string) {
+async function queryOpenRouterProviderEntry(providerName: string) {
   const providersResult = await queryOpenRouterProvidersEndpoint()
 
-  return getOpenRouterProviderSlugByName(providersResult, providerName)
+  return getOpenRouterProviderEntryByName(providersResult, providerName)
 }
 
 async function queryOpenRouterProvidersEndpoint() {
@@ -4175,7 +4177,7 @@ function getOpenRouterGenerationProviderName(result: unknown) {
   )
 }
 
-function getOpenRouterProviderSlugByName(
+function getOpenRouterProviderEntryByName(
   providersResult: unknown,
   providerName: string
 ) {
@@ -4194,11 +4196,15 @@ function getOpenRouterProviderSlugByName(
       name &&
       normalizeOpenRouterProviderName(name) === normalizedProviderName
     ) {
-      return getNonEmptyStringProperty(providerRecord, "slug")
+      return providerRecord
     }
   }
 
   return null
+}
+
+function getOpenRouterProviderSlug(providerEntry: unknown) {
+  return getNonEmptyStringProperty(asRecord(providerEntry), "slug")
 }
 
 function normalizeOpenRouterProviderName(providerName: string) {

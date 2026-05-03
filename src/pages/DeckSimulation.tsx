@@ -2533,6 +2533,7 @@ type OpenRouterGenerationLookupState =
   | {
       status: "loaded"
       providerName: string | null
+      providerEntry: unknown | null
       providerSlug: string | null
       result: unknown
     }
@@ -2589,6 +2590,7 @@ function OpenRouterGenerationsTable({
           [generationId]: {
             status: "loaded",
             providerName: data.providerName ?? null,
+            providerEntry: data.providerEntry ?? null,
             providerSlug: data.providerSlug ?? null,
             result: data.result,
           },
@@ -2726,6 +2728,7 @@ function OpenRouterGenerationLookupResult({
       <pre className="debug-scrollbar-neutral max-h-96 max-w-full min-w-0 overflow-y-auto border-t border-sky-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-sky-50/80">
         {JSON.stringify(lookup.result, null, 2)}
       </pre>
+      <OpenRouterMatchedProviderEntry providerEntry={lookup.providerEntry} />
     </details>
   )
 }
@@ -2758,6 +2761,29 @@ function OpenRouterGenerationProviderMetadata({
         </dd>
       </div>
     </dl>
+  )
+}
+
+function OpenRouterMatchedProviderEntry({
+  providerEntry,
+}: {
+  providerEntry: unknown | null
+}) {
+  return (
+    <section className="border-t border-sky-500/20">
+      <p className="px-3 py-2 text-xs font-medium text-sky-200">
+        Matched provider entry
+      </p>
+      {providerEntry ? (
+        <pre className="debug-scrollbar-neutral max-h-96 max-w-full min-w-0 overflow-y-auto border-t border-sky-500/20 p-3 text-xs leading-5 break-words whitespace-pre-wrap text-sky-50/80">
+          {JSON.stringify(providerEntry, null, 2)}
+        </pre>
+      ) : (
+        <p className="border-t border-sky-500/20 px-3 py-2 text-xs text-muted-foreground">
+          No matching provider entry returned.
+        </p>
+      )}
+    </section>
   )
 }
 
