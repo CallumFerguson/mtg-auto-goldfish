@@ -2053,6 +2053,7 @@ function SimulationResultChunkCards({
                 <SimulationFinalOutputBlock
                   key={block.id}
                   finalOutput={finalOutput}
+                  cardMentions={block.chunk.cardMentions}
                 />
               )
             }
@@ -2068,8 +2069,10 @@ function SimulationResultChunkCards({
 }
 
 function SimulationFinalOutputBlock({
+  cardMentions = [],
   finalOutput,
 }: {
+  cardMentions?: SimulationDebugLlmRunChunk["cardMentions"]
   finalOutput: ParsedSimulationFinalOutput
 }) {
   return (
@@ -2087,9 +2090,17 @@ function SimulationFinalOutputBlock({
             {finalOutput.keptHand.map((cardName, index) => (
               <li
                 key={`${cardName}-${index}`}
-                className="rounded border border-border bg-black/20 px-2 py-1"
+                className="flex min-w-0 items-center gap-2 rounded border border-border bg-black/20 px-2 py-1"
               >
-                {cardName}
+                {cardMentions[index]?.defaultImageUrl ? (
+                  <img
+                    className="h-12 w-9 shrink-0 rounded-sm object-cover"
+                    src={cardMentions[index].defaultImageUrl}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
+                <span className="min-w-0 truncate">{cardName}</span>
               </li>
             ))}
           </ul>

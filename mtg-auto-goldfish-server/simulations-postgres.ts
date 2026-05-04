@@ -2239,6 +2239,7 @@ async function insertLlmRunChunkCardMentions(
       kind: chunk.kind,
       mcpFunctionName: chunk.mcp_function_name,
       mcpFunctionOutput: chunk.mcp_function_output,
+      payload: chunk.payload,
     }).map((mention) => ({
       ...mention,
       llmRunChunkId: Number(chunk.id),
@@ -2425,32 +2426,42 @@ async function getResolvedCardsByNormalizedName(
 }
 
 export function extractLlmRunChunkCardMentionRequests(
-  chunk: Pick<LlmRunChunkInput, "kind" | "mcpFunctionName" | "mcpFunctionOutput">
+  chunk: Pick<
+    LlmRunChunkInput,
+    "kind" | "mcpFunctionName" | "mcpFunctionOutput" | "payload"
+  >
 ): LlmRunChunkCardMentionRequest[] {
-  if (chunk.kind !== "mcp_call_complete") {
-    return []
+  if (chunk.kind === "final_parsed_output") {
+    return getArrayCardMentions(
+      asUnknownRecord(chunk.payload).keptHand,
+      "payload.keptHand"
+    )
   }
 
-  const toolOutputData = getToolOutputDataRecord(chunk.mcpFunctionOutput)
+  if (chunk.kind === "mcp_call_complete") {
+    const toolOutputData = getToolOutputDataRecord(chunk.mcpFunctionOutput)
 
-  switch (chunk.mcpFunctionName) {
-    case "draw_starting_hand":
-    case "mulligan":
-    case "draw_card_from_top":
-    case "draw_card_from_bottom":
-      return getArrayCardMentions(toolOutputData.cards, "data.cards")
-    case "return_card_to_library":
-      return getSingleCardMention(toolOutputData.card, "data.card")
-    case "return_cards_to_library":
-      return getArrayCardMentions(toolOutputData.cards, "data.cards")
-    case "take_cards_from_library":
-      return [
-        ...getArrayCardMentions(toolOutputData.foundCards, "data.foundCards"),
-        ...getTakeCardsMatchMentions(toolOutputData.matches),
-      ]
-    default:
-      return []
+    switch (chunk.mcpFunctionName) {
+      case "draw_starting_hand":
+      case "mulligan":
+      case "draw_card_from_top":
+      case "draw_card_from_bottom":
+        return getArrayCardMentions(toolOutputData.cards, "data.cards")
+      case "return_card_to_library":
+        return getSingleCardMention(toolOutputData.card, "data.card")
+      case "return_cards_to_library":
+        return getArrayCardMentions(toolOutputData.cards, "data.cards")
+      case "take_cards_from_library":
+        return [
+          ...getArrayCardMentions(toolOutputData.foundCards, "data.foundCards"),
+          ...getTakeCardsMatchMentions(toolOutputData.matches),
+        ]
+      default:
+        return []
+    }
   }
+
+  return []
 }
 
 function getToolOutputDataRecord(output: unknown) {

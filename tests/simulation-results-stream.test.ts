@@ -139,6 +139,60 @@ test("keeps card mentions from first streamed persisted chunks", () => {
   ])
 })
 
+test("keeps card mentions from final parsed output chunks", () => {
+  const results = createResults({
+    openingHandLlmRuns: [
+      createRun({
+        llmRunId: "opening-run",
+        phase: "opening_hand",
+      }),
+    ],
+  })
+
+  const updatedResults = applySimulationResultsStreamEvent(results, {
+    type: "chunk",
+    llmRunId: "opening-run",
+    chunk: createChunk({
+      id: 21,
+      kind: "final_parsed_output",
+      sequence: 1,
+      payload: {
+        keptHand: ["Sol Ring", "Mega Fake Lotus"],
+        summary: "Kept a hand.",
+      },
+      cardMentions: [
+        {
+          requestedName: "Sol Ring",
+          resolutionStatus: "exact",
+          resolvedName: "Sol Ring",
+          defaultImageUrl: "https://cards.example/sol-ring.jpg",
+        },
+        {
+          requestedName: "Mega Fake Lotus",
+          resolutionStatus: "missing",
+          resolvedName: null,
+          defaultImageUrl: null,
+        },
+      ],
+    }),
+  })
+
+  assert.deepEqual(updatedResults?.openingHandLlmRuns[0].chunks[0].cardMentions, [
+    {
+      requestedName: "Sol Ring",
+      resolutionStatus: "exact",
+      resolvedName: "Sol Ring",
+      defaultImageUrl: "https://cards.example/sol-ring.jpg",
+    },
+    {
+      requestedName: "Mega Fake Lotus",
+      resolutionStatus: "missing",
+      resolvedName: null,
+      defaultImageUrl: null,
+    },
+  ])
+})
+
 test("merges OpenRouter generations from persisted run updates", () => {
   const results = createResults({
     turnLlmRuns: [

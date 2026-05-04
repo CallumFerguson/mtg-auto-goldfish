@@ -3112,7 +3112,10 @@ async function appendRuntimeChunk(
 }
 
 function shouldPersistRuntimeChunkBeforeStreaming(chunk: LlmRunChunkInput) {
-  return chunk.kind === "mcp_call_complete"
+  return (
+    chunk.kind === "mcp_call_complete" ||
+    chunk.kind === "final_parsed_output"
+  )
 }
 
 function createStreamChunkFromPersistedChunk(

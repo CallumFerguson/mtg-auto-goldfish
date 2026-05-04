@@ -93,6 +93,7 @@ test("extracts card mentions from draw tool output data", () => {
           cards: ["Sol Ring", "Mega Fake Lotus", "Sol Ring"],
         },
       },
+      payload: {},
     }),
     [
       {
@@ -134,6 +135,7 @@ test("extracts requested and found card mentions from library search output", ()
           ],
         },
       },
+      payload: {},
     }),
     [
       {
@@ -155,6 +157,37 @@ test("extracts requested and found card mentions from library search output", ()
         sourcePath: "data.matches[*].requestedCard",
         position: 1,
         requestedName: "Imaginary Tutor",
+      },
+    ]
+  )
+})
+
+test("extracts card mentions from opening-hand final parsed output", () => {
+  assert.deepEqual(
+    extractLlmRunChunkCardMentionRequests({
+      kind: "final_parsed_output",
+      mcpFunctionName: null,
+      mcpFunctionOutput: null,
+      payload: {
+        keptHand: ["Sol Ring", "Command Tower", "Mega Fake Lotus"],
+        summary: "Kept a hand.",
+      },
+    }),
+    [
+      {
+        sourcePath: "payload.keptHand",
+        position: 0,
+        requestedName: "Sol Ring",
+      },
+      {
+        sourcePath: "payload.keptHand",
+        position: 1,
+        requestedName: "Command Tower",
+      },
+      {
+        sourcePath: "payload.keptHand",
+        position: 2,
+        requestedName: "Mega Fake Lotus",
       },
     ]
   )
