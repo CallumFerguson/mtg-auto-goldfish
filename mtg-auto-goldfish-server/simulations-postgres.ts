@@ -256,6 +256,7 @@ export type LibraryReturnCardsResult = {
 
 export type LibraryTakeCardsResult = {
   simulationId: string
+  requestedCards: string[]
   matches: {
     requestedCard: string
     foundCard: string | null
@@ -1478,6 +1479,7 @@ export async function takeCardsFromSimulationLibrary(
 
     return {
       simulationId,
+      requestedCards,
       matches,
       foundCards,
       cardsRemaining: library.length,
