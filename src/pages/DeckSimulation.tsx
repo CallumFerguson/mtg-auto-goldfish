@@ -2241,7 +2241,7 @@ function SimulationResultCompletedCardToolEvent({
             {cardImageMentions.map((mention, index) => (
               <a
                 key={`${mention.requestedName}-image-${index}`}
-                className="block w-28 overflow-hidden rounded-sm border border-border/80 bg-black/40 transition-colors hover:border-sky-300/60 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none sm:w-32"
+                className="block w-28 overflow-hidden rounded-sm bg-black/40 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none sm:w-32"
                 href={getCardMentionScryfallUrl(mention)}
                 target="_blank"
                 rel="noreferrer"

@@ -111,32 +111,39 @@ test("keeps card mentions from first streamed persisted chunks", () => {
           requestedName: "Sol Ring",
           resolutionStatus: "exact",
           resolvedName: "Sol Ring",
+          scryfallUri: "https://scryfall.com/card/test/1/sol-ring",
           defaultImageUrl: "https://cards.example/sol-ring.jpg",
         },
         {
           requestedName: "Mega Fake Lotus",
           resolutionStatus: "missing",
           resolvedName: null,
+          scryfallUri: null,
           defaultImageUrl: null,
         },
       ],
     }),
   })
 
-  assert.deepEqual(updatedResults?.openingHandLlmRuns[0].chunks[0].cardMentions, [
-    {
-      requestedName: "Sol Ring",
-      resolutionStatus: "exact",
-      resolvedName: "Sol Ring",
-      defaultImageUrl: "https://cards.example/sol-ring.jpg",
-    },
-    {
-      requestedName: "Mega Fake Lotus",
-      resolutionStatus: "missing",
-      resolvedName: null,
-      defaultImageUrl: null,
-    },
-  ])
+  assert.deepEqual(
+    updatedResults?.openingHandLlmRuns[0].chunks[0].cardMentions,
+    [
+      {
+        requestedName: "Sol Ring",
+        resolutionStatus: "exact",
+        resolvedName: "Sol Ring",
+        scryfallUri: "https://scryfall.com/card/test/1/sol-ring",
+        defaultImageUrl: "https://cards.example/sol-ring.jpg",
+      },
+      {
+        requestedName: "Mega Fake Lotus",
+        resolutionStatus: "missing",
+        resolvedName: null,
+        scryfallUri: null,
+        defaultImageUrl: null,
+      },
+    ]
+  )
 })
 
 test("keeps card mentions from final parsed output chunks", () => {
@@ -165,32 +172,39 @@ test("keeps card mentions from final parsed output chunks", () => {
           requestedName: "Sol Ring",
           resolutionStatus: "exact",
           resolvedName: "Sol Ring",
+          scryfallUri: "https://scryfall.com/card/test/1/sol-ring",
           defaultImageUrl: "https://cards.example/sol-ring.jpg",
         },
         {
           requestedName: "Mega Fake Lotus",
           resolutionStatus: "missing",
           resolvedName: null,
+          scryfallUri: null,
           defaultImageUrl: null,
         },
       ],
     }),
   })
 
-  assert.deepEqual(updatedResults?.openingHandLlmRuns[0].chunks[0].cardMentions, [
-    {
-      requestedName: "Sol Ring",
-      resolutionStatus: "exact",
-      resolvedName: "Sol Ring",
-      defaultImageUrl: "https://cards.example/sol-ring.jpg",
-    },
-    {
-      requestedName: "Mega Fake Lotus",
-      resolutionStatus: "missing",
-      resolvedName: null,
-      defaultImageUrl: null,
-    },
-  ])
+  assert.deepEqual(
+    updatedResults?.openingHandLlmRuns[0].chunks[0].cardMentions,
+    [
+      {
+        requestedName: "Sol Ring",
+        resolutionStatus: "exact",
+        resolvedName: "Sol Ring",
+        scryfallUri: "https://scryfall.com/card/test/1/sol-ring",
+        defaultImageUrl: "https://cards.example/sol-ring.jpg",
+      },
+      {
+        requestedName: "Mega Fake Lotus",
+        resolutionStatus: "missing",
+        resolvedName: null,
+        scryfallUri: null,
+        defaultImageUrl: null,
+      },
+    ]
+  )
 })
 
 test("merges OpenRouter generations from persisted run updates", () => {
