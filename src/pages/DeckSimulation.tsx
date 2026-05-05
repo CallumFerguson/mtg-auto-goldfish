@@ -2094,9 +2094,10 @@ function SimulationResultsPanel({
       ) : null}
 
       {simulationAction ? (
-        <div className="flex justify-start">
+        <div className="flex justify-center">
           <Button
-            className="w-fit"
+            className="w-fit bg-background/35 text-foreground hover:bg-muted/45"
+            variant="outline"
             type="button"
             onClick={() => {
               if (simulationAction.kind === "opening_hand") {
@@ -2107,17 +2108,10 @@ function SimulationResultsPanel({
               onStartTurnRun(simulationAction.turnNumber)
             }}
           >
-            {simulationAction.kind === "opening_hand" ? (
-              <>
-                <Sparkles data-icon="inline-start" />
-                Simulate opening hand
-              </>
-            ) : (
-              <>
-                <Dices data-icon="inline-start" />
-                Simulate next turn
-              </>
-            )}
+            <Sparkles data-icon="inline-start" />
+            {simulationAction.kind === "opening_hand"
+              ? "Simulate opening hand"
+              : "Simulate next turn"}
           </Button>
         </div>
       ) : null}
