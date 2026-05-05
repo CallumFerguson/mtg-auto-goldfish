@@ -2436,7 +2436,7 @@ function SimulationResultThinkingPreview({
 
   return (
     <div
-      className={`flex min-h-[3.5rem] items-stretch gap-2 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
+      className={`flex min-h-[3.5rem] select-none items-stretch gap-2 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
     >
       <div
         className={`min-w-0 flex-1 ${
