@@ -1345,16 +1345,20 @@ function SimulationDetails({
     }
   }
 
-  async function handleStartTurnRun() {
+  async function handleStartTurnRun(turnNumberOverride?: number) {
     if (isStartingTurnRun || isStartingOpeningHandRun || isStoppingSimulation) {
       return
     }
 
-    const turnNumber = Number(selectedTurnNumber)
+    const turnNumber = turnNumberOverride ?? Number(selectedTurnNumber)
 
     if (!Number.isInteger(turnNumber) || turnNumber < 1) {
       setTurnRunError("Turn number must be a positive integer.")
       return
+    }
+
+    if (turnNumberOverride !== undefined) {
+      setSelectedTurnNumber(String(turnNumber))
     }
 
     setIsStartingTurnRun(true)
@@ -1618,7 +1622,14 @@ function SimulationDetails({
 
           {resultsInfo ? (
             <SimulationResultsPanel
+              canStartOpeningHandRun={shouldSimulateOpeningHand}
+              isStartingOpeningHandRun={isStartingOpeningHandRun}
+              isStartingTurnRun={isStartingTurnRun}
               isStoppingSimulation={isStoppingSimulation}
+              onStartOpeningHandRun={() => void handleStartOpeningHandRun()}
+              onStartTurnRun={(turnNumber) =>
+                void handleStartTurnRun(turnNumber)
+              }
               onStopSimulation={() => void handleStopSimulation()}
               resultsInfo={resultsInfo}
               stopSimulationError={stopSimulationError}
@@ -1937,20 +1948,46 @@ function SimulationDebugModal({
 }
 
 function SimulationResultsPanel({
+  canStartOpeningHandRun,
+  isStartingOpeningHandRun,
+  isStartingTurnRun,
   isStoppingSimulation,
+  onStartOpeningHandRun,
+  onStartTurnRun,
   onStopSimulation,
   resultsInfo,
   stopSimulationError,
 }: {
+  canStartOpeningHandRun: boolean
+  isStartingOpeningHandRun: boolean
+  isStartingTurnRun: boolean
   isStoppingSimulation: boolean
+  onStartOpeningHandRun: () => void
+  onStartTurnRun: (turnNumber: number) => void
   onStopSimulation: () => void
   resultsInfo: SimulationResultsInfo
   stopSimulationError: string | null
 }) {
+  const isOpeningHandRunning = resultsInfo.openingHandLlmRuns.some((run) =>
+    isActiveLlmRunStatus(run.status)
+  )
+  const activeTurnNumbers = new Set(
+    resultsInfo.turnLlmRuns
+      .filter(
+        (run) =>
+          typeof run.turnNumber === "number" &&
+          isActiveLlmRunStatus(run.status)
+      )
+      .map((run) => run.turnNumber as number)
+  )
+  const isStartingSimulationRun =
+    isStartingOpeningHandRun || isStartingTurnRun || isStoppingSimulation
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
       ...run,
+      canRerun: canStartOpeningHandRun && !isOpeningHandRunning,
       isActive: isActiveLlmRunStatus(run.status),
+      resultKind: "opening_hand" as const,
       resultLabel: `Opening hand attempt ${run.attemptNumber}`,
       resultEntries: getSimulationResultEntries(run.chunks),
       activeToolCallName: getSimulationRunActiveToolCallName(run.chunks),
@@ -1958,7 +1995,11 @@ function SimulationResultsPanel({
     })),
     ...resultsInfo.turnLlmRuns.map((run) => ({
       ...run,
+      canRerun:
+        typeof run.turnNumber === "number" &&
+        !activeTurnNumbers.has(run.turnNumber),
       isActive: isActiveLlmRunStatus(run.status),
+      resultKind: "turn" as const,
       resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${run.attemptNumber}`,
       resultEntries: getSimulationResultEntries(run.chunks),
       activeToolCallName: getSimulationRunActiveToolCallName(run.chunks),
@@ -1994,7 +2035,7 @@ function SimulationResultsPanel({
             className="grid gap-3 rounded-md border border-border bg-background/35 p-3"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <h5 className="text-sm font-medium text-foreground">
                   {run.resultLabel}
                 </h5>
@@ -2002,6 +2043,37 @@ function SimulationResultsPanel({
                   {runMetadata.join(" / ")}
                 </p>
               </div>
+              {run.canRerun ? (
+                <Button
+                  className="shrink-0"
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  disabled={isStartingSimulationRun}
+                  aria-label={
+                    run.resultKind === "opening_hand"
+                      ? "Rerun opening hand"
+                      : `Rerun turn ${run.turnNumber}`
+                  }
+                  title={
+                    run.resultKind === "opening_hand"
+                      ? "Rerun opening hand"
+                      : `Rerun turn ${run.turnNumber}`
+                  }
+                  onClick={() => {
+                    if (run.resultKind === "opening_hand") {
+                      onStartOpeningHandRun()
+                      return
+                    }
+
+                    if (typeof run.turnNumber === "number") {
+                      onStartTurnRun(run.turnNumber)
+                    }
+                  }}
+                >
+                  <RefreshCw />
+                </Button>
+              ) : null}
             </div>
 
             {run.gameState && !getSimulationFinalParsedOutput(run) ? (
