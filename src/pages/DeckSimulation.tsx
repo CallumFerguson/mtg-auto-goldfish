@@ -329,6 +329,13 @@ export function DeckSimulation({
       ) ?? null,
     [detailsSimulation?.startingHandId, startingHands]
   )
+  const selectedSimulationStartingHand = useMemo(
+    () =>
+      startingHands.find(
+        (hand) => hand.id === selectedSimulation?.startingHandId
+      ) ?? null,
+    [selectedSimulation?.startingHandId, startingHands]
+  )
   const canStartSimulation =
     (seedMode === "random" || Boolean(selectedSavedSeed)) &&
     turnsToSimulate.length > 0 &&
@@ -1147,8 +1154,11 @@ export function DeckSimulation({
           ) : selectedSimulation ? (
             <SimulationDetails
               deckId={deckId}
+              isLoadingStartingHand={isLoadingStartingHands}
               onSimulationUpdated={updateSimulation}
               simulation={selectedSimulation}
+              startingHand={selectedSimulationStartingHand}
+              startingHandLoadError={startingHandLoadError}
             />
           ) : (
             <EmptySimulationSelection />
@@ -1408,12 +1418,18 @@ function SimulationDetailsModal({
 
 function SimulationDetails({
   deckId,
+  isLoadingStartingHand,
   onSimulationUpdated,
   simulation,
+  startingHand,
+  startingHandLoadError,
 }: {
   deckId: string
+  isLoadingStartingHand: boolean
   onSimulationUpdated: (simulation: Simulation) => void
   simulation: Simulation
+  startingHand: StartingHand | null
+  startingHandLoadError: string | null
 }) {
   const [isStartingOpeningHandRun, setIsStartingOpeningHandRun] =
     useState(false)
@@ -1814,6 +1830,7 @@ function SimulationDetails({
           <SimulationResultsPanel
             isStartingOpeningHandRun={isStartingOpeningHandRun}
             isStartingTurnRun={isStartingTurnRun}
+            isLoadingStartingHand={isLoadingStartingHand}
             isStoppingSimulation={isStoppingSimulation}
             onStartOpeningHandRun={() => void handleStartOpeningHandRun()}
             onKeepResultsScrolledToBottom={keepResultsScrolledToBottom}
@@ -1823,6 +1840,8 @@ function SimulationDetails({
             openingHandRunError={openingHandRunError}
             resultsInfo={resultsInfo}
             simulation={simulation}
+            startingHand={startingHand}
+            startingHandLoadError={startingHandLoadError}
             stopSimulationError={stopSimulationError}
             turnRunError={turnRunError}
           />
@@ -1932,6 +1951,7 @@ function SimulationDebugModal({
 function SimulationResultsPanel({
   isStartingOpeningHandRun,
   isStartingTurnRun,
+  isLoadingStartingHand,
   isStoppingSimulation,
   onStartOpeningHandRun,
   onKeepResultsScrolledToBottom,
@@ -1941,11 +1961,14 @@ function SimulationResultsPanel({
   openingHandRunError,
   resultsInfo,
   simulation,
+  startingHand,
+  startingHandLoadError,
   stopSimulationError,
   turnRunError,
 }: {
   isStartingOpeningHandRun: boolean
   isStartingTurnRun: boolean
+  isLoadingStartingHand: boolean
   isStoppingSimulation: boolean
   onStartOpeningHandRun: () => void
   onKeepResultsScrolledToBottom: () => void
@@ -1955,10 +1978,13 @@ function SimulationResultsPanel({
   openingHandRunError: string | null
   resultsInfo: SimulationResultsInfo
   simulation: Simulation
+  startingHand: StartingHand | null
+  startingHandLoadError: string | null
   stopSimulationError: string | null
   turnRunError: string | null
 }) {
   const canStartOpeningHandRun = simulation.startingHandId === null
+  const hasPresetStartingHand = simulation.startingHandId !== null
   const isOpeningHandRunning = resultsInfo.openingHandLlmRuns.some((run) =>
     isActiveLlmRunStatus(run.status)
   )
@@ -2130,7 +2156,15 @@ function SimulationResultsPanel({
 
   return (
     <div className="grid gap-3">
-      {runs.length === 0 ? (
+      {hasPresetStartingHand ? (
+        <SimulationPresetStartingHandBlock
+          isLoadingStartingHand={isLoadingStartingHand}
+          startingHand={startingHand}
+          startingHandLoadError={startingHandLoadError}
+        />
+      ) : null}
+
+      {runs.length === 0 && !hasPresetStartingHand ? (
         <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
           No opening hand or turn runs have been saved for this simulation yet.
         </p>
@@ -2480,6 +2514,9 @@ function SimulationResultThinkingPreview({
   )
 }
 
+type SimulationResultCardMention =
+  SimulationDebugLlmRunChunk["cardMentions"][number]
+
 function SimulationFinalOutputBlock({
   cardMentions = [],
   finalOutput,
@@ -2494,19 +2531,13 @@ function SimulationFinalOutputBlock({
       </p>
 
       {finalOutput.type === "opening_hand" ? (
-        <div>
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Kept hand
-          </p>
-          <div className="mt-2">
-            <SimulationResultCardImageLinks
-              mentions={getOpeningHandFinalOutputCardMentions(
-                finalOutput.keptHand,
-                cardMentions
-              )}
-            />
-          </div>
-        </div>
+        <SimulationOpeningHandCardsBlock
+          label="Kept hand"
+          mentions={getOpeningHandFinalOutputCardMentions(
+            finalOutput.keptHand,
+            cardMentions
+          )}
+        />
       ) : (
         <details className={simulationResultChunkSurfaceClassName}>
           <summary className={simulationResultChunkSummaryClassName}>
@@ -2517,6 +2548,65 @@ function SimulationFinalOutputBlock({
           </p>
         </details>
       )}
+    </div>
+  )
+}
+
+function SimulationPresetStartingHandBlock({
+  isLoadingStartingHand,
+  startingHand,
+  startingHandLoadError,
+}: {
+  isLoadingStartingHand: boolean
+  startingHand: StartingHand | null
+  startingHandLoadError: string | null
+}) {
+  const statusText = startingHand
+    ? `Using preset opening hand: ${startingHand.name}.`
+    : startingHandLoadError
+      ? "Preset opening hand details could not be loaded."
+      : isLoadingStartingHand
+        ? "Loading preset opening hand..."
+        : "Preset opening hand details are unavailable."
+
+  return (
+    <div className={`grid gap-3 p-3 ${simulationResultChunkSurfaceClassName}`}>
+      <p className="text-sm leading-6 text-muted-foreground">{statusText}</p>
+
+      {startingHand ? (
+        <SimulationOpeningHandCardsBlock
+          label="Preset hand"
+          mentions={getStartingHandCardMentions(startingHand)}
+        />
+      ) : null}
+
+      {!startingHand && startingHandLoadError ? (
+        <p
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          role="alert"
+        >
+          {startingHandLoadError}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function SimulationOpeningHandCardsBlock({
+  label,
+  mentions,
+}: {
+  label: string
+  mentions: SimulationResultCardMention[]
+}) {
+  return (
+    <div>
+      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {label}
+      </p>
+      <div className="mt-2">
+        <SimulationResultCardImageLinks mentions={mentions} />
+      </div>
     </div>
   )
 }
@@ -2693,9 +2783,6 @@ function SimulationResultCompletedCardToolEvent({
   )
 }
 
-type SimulationResultCardMention =
-  SimulationDebugLlmRunChunk["cardMentions"][number]
-
 function SimulationResultCardImageLinks({
   mentions,
 }: {
@@ -2790,6 +2877,21 @@ function getOpeningHandFinalOutputCardMentions(
         scryfallUri: null,
         defaultImageUrl: null,
       }
+  )
+}
+
+function getStartingHandCardMentions(startingHand: StartingHand) {
+  return startingHand.cards.flatMap((card) =>
+    Array.from(
+      { length: card.quantity },
+      (): SimulationResultCardMention => ({
+        requestedName: card.name,
+        resolutionStatus: "exact",
+        resolvedName: card.name,
+        scryfallUri: card.scryfallUri,
+        defaultImageUrl: card.defaultImageUrl,
+      })
+    )
   )
 }
 
