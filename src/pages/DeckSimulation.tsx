@@ -15,6 +15,7 @@ import {
   Dices,
   Eye,
   EyeOff,
+  LoaderCircle,
   MoreVertical,
   Plus,
   RefreshCw,
@@ -61,7 +62,10 @@ import {
   getDebugDeltaChunkLabel,
 } from "@/lib/simulation-debug-chunks"
 import { applySimulationResultsStreamEvent } from "@/lib/simulation-results-stream"
-import { getSimulationResultChunks } from "@/lib/simulation-result-chunks"
+import {
+  getSimulationResultChunks,
+  getSimulationRunThinkingPreview,
+} from "@/lib/simulation-result-chunks"
 
 type OpeningHandCardOption = {
   id: string
@@ -1921,13 +1925,17 @@ function SimulationResultsPanel({
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
       ...run,
+      isActive: isActiveLlmRunStatus(run.status),
       resultLabel: `Opening hand attempt ${run.attemptNumber}`,
       resultChunks: getSimulationResultChunks(run.chunks),
+      thinkingPreview: getSimulationRunThinkingPreview(run.chunks),
     })),
     ...resultsInfo.turnLlmRuns.map((run) => ({
       ...run,
+      isActive: isActiveLlmRunStatus(run.status),
       resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${run.attemptNumber}`,
       resultChunks: getSimulationResultChunks(run.chunks),
+      thinkingPreview: getSimulationRunThinkingPreview(run.chunks),
     })),
   ]
   if (runs.length === 0) {
@@ -1977,7 +1985,13 @@ function SimulationResultsPanel({
 
           {run.resultChunks.length > 0 ? (
             <SimulationResultChunkCards run={run} chunks={run.resultChunks} />
-          ) : !run.gameState ? (
+          ) : null}
+
+          {run.isActive ? (
+            <SimulationResultThinkingPreview
+              previewText={run.thinkingPreview}
+            />
+          ) : run.resultChunks.length === 0 && !run.gameState ? (
             <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
               No user-facing events have been saved for this run yet.
             </p>
@@ -2011,38 +2025,6 @@ function SimulationResultChunkCards({
   return (
     <div className="grid gap-2">
       {blocks.map((block) => {
-        if (block.type === "reasoning") {
-          return (
-            <details
-              key={block.id}
-              className={simulationResultChunkSurfaceClassName}
-            >
-              <summary className={simulationResultChunkSummaryClassName}>
-                Reasoning summary
-              </summary>
-              <p className={simulationResultChunkTextClassName}>
-                {block.text}
-              </p>
-            </details>
-          )
-        }
-
-        if (block.type === "output") {
-          return (
-            <details
-              key={block.id}
-              className={simulationResultChunkSurfaceClassName}
-            >
-              <summary className={simulationResultChunkSummaryClassName}>
-                Output
-              </summary>
-              <p className={simulationResultChunkTextClassName}>
-                {block.text}
-              </p>
-            </details>
-          )
-        }
-
         if (block.type === "event") {
           if (block.chunk.kind === "final_parsed_output") {
             const finalOutput = getSimulationFinalParsedOutputFromPayload(
@@ -2066,6 +2048,69 @@ function SimulationResultChunkCards({
 
         return null
       })}
+    </div>
+  )
+}
+
+function SimulationResultThinkingPreview({
+  previewText,
+}: {
+  previewText: string | null
+}) {
+  const previewTextRef = useRef<HTMLParagraphElement | null>(null)
+  const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false)
+
+  useLayoutEffect(() => {
+    const previewTextElement = previewTextRef.current
+
+    if (!previewTextElement || !previewText) {
+      setIsPreviewOverflowing(false)
+      return
+    }
+
+    const measuredPreviewTextElement = previewTextElement
+
+    function updatePreviewOverflow() {
+      setIsPreviewOverflowing(
+        measuredPreviewTextElement.scrollWidth >
+          measuredPreviewTextElement.clientWidth + 1
+      )
+    }
+
+    updatePreviewOverflow()
+
+    const resizeObserver = new ResizeObserver(updatePreviewOverflow)
+    resizeObserver.observe(measuredPreviewTextElement)
+
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [previewText])
+
+  return (
+    <div
+      className={`grid gap-1 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
+    >
+      <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-sky-100">
+        <LoaderCircle className="size-4 shrink-0 animate-spin text-sky-300" />
+        <span>Thinking</span>
+      </div>
+      {previewText ? (
+        <p
+          ref={previewTextRef}
+          className={`min-w-0 overflow-hidden text-xs whitespace-nowrap text-muted-foreground/65 ${
+            isPreviewOverflowing ? "text-right" : "text-left"
+          }`}
+          style={{
+            WebkitMaskImage:
+              "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
+            maskImage:
+              "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
+          }}
+        >
+          {previewText}
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -2,7 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { getSimulationFinalParsedOutput } from "../src/lib/simulation-final-output.js"
 import { formatDebugChunkBlocks } from "../src/lib/simulation-debug-chunks.js"
-import { getSimulationResultChunks } from "../src/lib/simulation-result-chunks.js"
+import {
+  getSimulationResultChunks,
+  getSimulationRunThinkingPreview,
+} from "../src/lib/simulation-result-chunks.js"
 import { applySimulationResultsStreamEvent } from "../src/lib/simulation-results-stream.js"
 import type {
   SimulationDebugLlmRun,
@@ -466,7 +469,114 @@ test("hides completed tool starts across intervening chunks", () => {
 
   assert.deepEqual(
     resultChunks.map((chunk) => chunk.sequence),
-    [2, 3, 4]
+    [4]
+  )
+})
+
+test("omits reasoning and output deltas from result chunks", () => {
+  const resultChunks = getSimulationResultChunks([
+    createChunk({
+      id: 1,
+      kind: "reasoning_delta",
+      reasoningDelta: "Need to inspect the opener.",
+      sequence: 1,
+    }),
+    createChunk({
+      id: 2,
+      outputDelta: "Checking hand.",
+      sequence: 2,
+    }),
+    createChunk({
+      id: 3,
+      kind: "final_parsed_output",
+      payload: {
+        keptHand: ["Sol Ring", "Forest"],
+        summary: "Kept a stable opener.",
+      },
+      sequence: 3,
+    }),
+  ])
+
+  assert.deepEqual(
+    resultChunks.map((chunk) => chunk.sequence),
+    [3]
+  )
+})
+
+test("builds a one-line thinking preview from reasoning and output deltas", () => {
+  const preview = getSimulationRunThinkingPreview([
+    createChunk({
+      id: 1,
+      kind: "reasoning_delta",
+      reasoningDelta: "Evaluating\nmana",
+      sequence: 1,
+    }),
+    createChunk({
+      id: 2,
+      outputDelta: " and\r\nkeeping.",
+      sequence: 2,
+    }),
+    createChunk({
+      id: 3,
+      kind: "mcp_call_complete",
+      mcpFunctionName: "draw_starting_hand",
+      sequence: 3,
+    }),
+  ])
+
+  assert.equal(preview, "Evaluating mana and keeping.")
+})
+
+test("keeps thinking preview deltas in sequence order", () => {
+  const preview = getSimulationRunThinkingPreview([
+    createChunk({
+      id: 2,
+      outputDelta: "second",
+      sequence: 2,
+    }),
+    createChunk({
+      id: 1,
+      kind: "reasoning_delta",
+      reasoningDelta: "first ",
+      sequence: 1,
+    }),
+  ])
+
+  assert.equal(preview, "first second")
+})
+
+test("limits thinking preview to the latest 100 delta chunks", () => {
+  const chunks = Array.from({ length: 101 }, (_, index) =>
+    createChunk({
+      id: index + 1,
+      outputDelta: `${index + 1},`,
+      sequence: index + 1,
+    })
+  )
+
+  const preview = getSimulationRunThinkingPreview(chunks)
+
+  assert.ok(preview?.startsWith("2,"))
+  assert.ok(preview?.endsWith("101,"))
+})
+
+test("returns null for empty thinking previews", () => {
+  assert.equal(
+    getSimulationRunThinkingPreview([
+      createChunk({
+        id: 1,
+        kind: "reasoning_delta",
+        reasoningDelta: " \n\t",
+        sequence: 1,
+      }),
+      createChunk({
+        id: 2,
+        kind: "mcp_call_complete",
+        mcpFunctionName: "draw_starting_hand",
+        sequence: 2,
+      }),
+    ]),
+    null
   )
 })
 

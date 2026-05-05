@@ -8,7 +8,26 @@ export function getSimulationResultChunks(
   )
   const hiddenToolStartChunks = getCompletedToolStartChunks(visibleChunks)
 
-  return visibleChunks.filter((chunk) => !hiddenToolStartChunks.has(chunk))
+  return visibleChunks.filter(
+    (chunk) => !hiddenToolStartChunks.has(chunk) && !isDeltaChunk(chunk)
+  )
+}
+
+export function getSimulationRunThinkingPreview(
+  chunks: readonly SimulationDebugLlmRunChunk[]
+) {
+  const previewText = chunks
+    .filter(isDeltaChunk)
+    .sort(
+      (firstChunk, secondChunk) => firstChunk.sequence - secondChunk.sequence
+    )
+    .slice(-100)
+    .map(getDeltaText)
+    .join("")
+    .replace(/\r\n?|\n/g, " ")
+    .trim()
+
+  return previewText.length > 0 ? previewText : null
 }
 
 function getCompletedToolStartChunks(
@@ -83,6 +102,22 @@ function isRedundantMcpCallFailedEvent(
     getPayloadString(chunk.payload, "item_id") !== null &&
     getPayloadString(chunk.payload, "item_id") === getMcpCallItemId(nextChunk)
   )
+}
+
+function isDeltaChunk(chunk: SimulationDebugLlmRunChunk) {
+  return chunk.kind === "reasoning_delta" || chunk.kind === "message_delta"
+}
+
+function getDeltaText(chunk: SimulationDebugLlmRunChunk) {
+  if (chunk.kind === "reasoning_delta") {
+    return chunk.reasoningDelta ?? ""
+  }
+
+  if (chunk.kind === "message_delta") {
+    return chunk.outputDelta ?? ""
+  }
+
+  return ""
 }
 
 function getMcpCallItemId(chunk: SimulationDebugLlmRunChunk) {
