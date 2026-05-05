@@ -22,6 +22,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Square,
   Trash2,
   X,
 } from "lucide-react"
@@ -1177,8 +1178,6 @@ function SimulationDetails({
   const [stopSimulationError, setStopSimulationError] = useState<string | null>(
     null
   )
-  const [stopSimulationResult, setStopSimulationResult] =
-    useState<StopSimulationResponse | null>(null)
   const [isLoadingDebugInfo, setIsLoadingDebugInfo] = useState(false)
   const [debugInfoError, setDebugInfoError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<SimulationDebugInfo | null>(null)
@@ -1235,7 +1234,6 @@ function SimulationDetails({
     setTurnRun(null)
     setIsStoppingSimulation(false)
     setStopSimulationError(null)
-    setStopSimulationResult(null)
     isLoadingDebugInfoRef.current = false
     setIsLoadingDebugInfo(false)
     setDebugInfoError(null)
@@ -1313,7 +1311,6 @@ function SimulationDetails({
 
     setIsStartingOpeningHandRun(true)
     setOpeningHandRunError(null)
-    setStopSimulationResult(null)
 
     try {
       const stopResult = await stopSimulation()
@@ -1363,7 +1360,6 @@ function SimulationDetails({
     setIsStartingTurnRun(true)
     setTurnRunError(null)
     setTurnRun(null)
-    setStopSimulationResult(null)
 
     try {
       const stopResult = await stopSimulation()
@@ -1422,7 +1418,6 @@ function SimulationDetails({
       }
 
       const data = (await response.json()) as StopSimulationResponse
-      setStopSimulationResult(data)
       setOpeningHandRun(null)
       setTurnRun(null)
       return data
@@ -1622,7 +1617,12 @@ function SimulationDetails({
           ) : null}
 
           {resultsInfo ? (
-            <SimulationResultsPanel resultsInfo={resultsInfo} />
+            <SimulationResultsPanel
+              isStoppingSimulation={isStoppingSimulation}
+              onStopSimulation={() => void handleStopSimulation()}
+              resultsInfo={resultsInfo}
+              stopSimulationError={stopSimulationError}
+            />
           ) : !isLoadingResults && !resultsError ? (
             <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
               Waiting for simulation results.
@@ -1649,25 +1649,9 @@ function SimulationDetails({
 
         <section className="grid gap-3">
           <div className="grid gap-3 rounded-md border border-border bg-background/35 p-3">
-            <div className="grid gap-3">
-              <h4 className="text-sm font-semibold text-foreground">
-                LLM simulations
-              </h4>
-              <Button
-                className="w-fit"
-                type="button"
-                variant="outline"
-                disabled={
-                  isStoppingSimulation ||
-                  isStartingOpeningHandRun ||
-                  isStartingTurnRun
-                }
-                onClick={() => void handleStopSimulation()}
-              >
-                <X data-icon="inline-start" />
-                {isStoppingSimulation ? "Stopping..." : "Stop simulation"}
-              </Button>
-            </div>
+            <h4 className="text-sm font-semibold text-foreground">
+              LLM simulations
+            </h4>
 
             {shouldSimulateOpeningHand ? (
               <div className="grid gap-3 border-t border-border pt-3">
@@ -1768,24 +1752,6 @@ function SimulationDetails({
                 role="alert"
               >
                 {openingHandRunError}
-              </p>
-            ) : null}
-
-            {stopSimulationError ? (
-              <p
-                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                role="alert"
-              >
-                {stopSimulationError}
-              </p>
-            ) : null}
-
-            {stopSimulationResult ? (
-              <p className="text-sm text-muted-foreground">
-                Stop requested for{" "}
-                {stopSimulationResult.stoppedLlmRunIds.length +
-                  stopSimulationResult.cancelRequestedLlmRunIds.length}{" "}
-                LLM run(s).
               </p>
             ) : null}
           </div>
@@ -1971,9 +1937,15 @@ function SimulationDebugModal({
 }
 
 function SimulationResultsPanel({
+  isStoppingSimulation,
+  onStopSimulation,
   resultsInfo,
+  stopSimulationError,
 }: {
+  isStoppingSimulation: boolean
+  onStopSimulation: () => void
   resultsInfo: SimulationResultsInfo
+  stopSimulationError: string | null
 }) {
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
@@ -2053,8 +2025,12 @@ function SimulationResultsPanel({
             {run.isActive ? (
               <SimulationResultThinkingPreview
                 activeToolCallName={run.activeToolCallName}
+                canStopSimulation={run.status !== "cancel_requested"}
+                isStoppingSimulation={isStoppingSimulation}
+                onStopSimulation={onStopSimulation}
                 previewText={run.thinkingPreview}
                 runStartTimeMs={getSimulationRunStartTimeMs(run)}
+                stopSimulationError={stopSimulationError}
               />
             ) : run.resultEntries.length === 0 && !run.gameState ? (
               <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
@@ -2124,12 +2100,20 @@ function SimulationResultChunkCards({
 
 function SimulationResultThinkingPreview({
   activeToolCallName,
+  canStopSimulation,
+  isStoppingSimulation,
+  onStopSimulation,
   previewText,
   runStartTimeMs,
+  stopSimulationError,
 }: {
   activeToolCallName: string | null
+  canStopSimulation: boolean
+  isStoppingSimulation: boolean
+  onStopSimulation: () => void
   previewText: string | null
   runStartTimeMs: number | null
+  stopSimulationError: string | null
 }) {
   const previewTextRef = useRef<HTMLParagraphElement | null>(null)
   const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false)
@@ -2138,7 +2122,11 @@ function SimulationResultThinkingPreview({
   useLayoutEffect(() => {
     const previewTextElement = previewTextRef.current
 
-    if (!previewTextElement || !previewText) {
+    if (!previewTextElement) {
+      return
+    }
+
+    if (!previewText) {
       return
     }
 
@@ -2188,37 +2176,83 @@ function SimulationResultThinkingPreview({
     runStartTimeMs === null
       ? null
       : formatMinutesSeconds(currentTimeMs - runStartTimeMs)
+  const hasPreviewText = Boolean(previewText)
 
   return (
     <div
-      className={`grid gap-1 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
+      className={`flex min-h-[3.5rem] items-stretch gap-2 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
     >
-      <div className="flex min-w-0 items-center gap-3 text-sm font-medium text-sky-100">
-        <div className="flex min-w-0 items-center gap-2">
-          <LoaderCircle className="size-4 shrink-0 animate-spin text-sky-300" />
-          <span className="min-w-0 truncate">{statusLabel}</span>
+      <div
+        className={`min-w-0 flex-1 ${
+          hasPreviewText ? "grid gap-1" : "flex items-center"
+        }`}
+      >
+        <div
+          className={`flex min-w-0 flex-1 items-center gap-3 font-medium text-sky-100 ${
+            hasPreviewText ? "text-sm" : "text-base"
+          }`}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <LoaderCircle
+              className={`shrink-0 animate-spin text-sky-300 ${
+                hasPreviewText ? "size-4" : "size-5"
+              }`}
+            />
+            <span className="min-w-0 truncate">{statusLabel}</span>
+          </div>
+          {elapsedText ? (
+            <span
+              className={`ml-auto shrink-0 font-normal tabular-nums text-sky-100/65 ${
+                hasPreviewText ? "text-xs" : "text-sm"
+              }`}
+            >
+              {elapsedText}
+            </span>
+          ) : null}
         </div>
-        {elapsedText ? (
-          <span className="ml-auto shrink-0 text-xs font-normal tabular-nums text-sky-100/65">
-            {elapsedText}
-          </span>
+
+        {previewText ? (
+          <p
+            ref={previewTextRef}
+            className={`min-h-4 min-w-0 overflow-hidden text-xs whitespace-nowrap text-muted-foreground/65 ${
+              isPreviewOverflowing ? "text-right" : "text-left"
+            }`}
+            style={{
+              WebkitMaskImage:
+                "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
+              maskImage:
+                "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
+            }}
+          >
+            {previewText}
+          </p>
+        ) : null}
+
+        {stopSimulationError ? (
+          <p
+            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            {stopSimulationError}
+          </p>
         ) : null}
       </div>
-      {previewText ? (
-        <p
-          ref={previewTextRef}
-          className={`min-w-0 overflow-hidden text-xs whitespace-nowrap text-muted-foreground/65 ${
-            isPreviewOverflowing ? "text-right" : "text-left"
-          }`}
-          style={{
-            WebkitMaskImage:
-              "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
-            maskImage:
-              "linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent)",
-          }}
+      {canStopSimulation ? (
+        <Button
+          className="aspect-square h-auto min-h-full rounded-full bg-background/40 p-0 text-muted-foreground hover:text-foreground"
+          type="button"
+          variant="outline"
+          disabled={isStoppingSimulation}
+          aria-label="Stop simulation"
+          title="Stop simulation"
+          onClick={onStopSimulation}
         >
-          {previewText}
-        </p>
+          {isStoppingSimulation ? (
+            <LoaderCircle className="animate-spin" />
+          ) : (
+            <Square fill="currentColor" />
+          )}
+        </Button>
       ) : null}
     </div>
   )
