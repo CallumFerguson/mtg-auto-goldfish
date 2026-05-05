@@ -90,6 +90,8 @@ type SimulationResultsAction =
       turnNumber: number
     }
 
+const DEFAULT_TURNS_TO_SIMULATE = "1"
+
 function getSimulationLabel(simulation: Simulation) {
   return `${simulation.id.slice(0, 8)} - ${simulation.completedLlmRunCount} runs`
 }
@@ -274,7 +276,9 @@ export function DeckSimulation({
   const [selectedSimulationId, setSelectedSimulationId] = useState("")
   const [seedMode, setSeedMode] = useState<"random" | "set">("random")
   const [selectedSavedSeedId, setSelectedSavedSeedId] = useState("")
-  const [turnsToSimulate, setTurnsToSimulate] = useState("5")
+  const [turnsToSimulate, setTurnsToSimulate] = useState(
+    DEFAULT_TURNS_TO_SIMULATE
+  )
   const [openingHandMode, setOpeningHandMode] = useState<
     "simulate" | "provide"
   >("simulate")
@@ -537,7 +541,7 @@ export function DeckSimulation({
   function resetCreateSimulationForm() {
     setSeedMode("random")
     setSelectedSavedSeedId(savedSeeds[0]?.id ?? "")
-    setTurnsToSimulate("5")
+    setTurnsToSimulate(DEFAULT_TURNS_TO_SIMULATE)
     setOpeningHandMode("simulate")
     setSelectedOpeningHandId(startingHands[0]?.id ?? "")
   }
