@@ -920,9 +920,14 @@ function createRun(overrides: {
   llmRunId: string
   phase: string
   attemptNumber?: number
+  cancelledAt?: string | null
   chunks?: ReturnType<typeof createChunk>[]
+  completedAt?: string | null
+  createdAt?: string
+  failedAt?: string | null
   openrouterGenerations?: SimulationDebugLlmRun["openrouterGenerations"]
   provider?: string
+  startedAt?: string | null
   status?: string
   turnNumber?: number
 }): SimulationDebugLlmRun {
@@ -936,6 +941,11 @@ function createRun(overrides: {
     status: overrides.status ?? "streaming",
     runtimeStreamKey: null,
     attemptNumber: overrides.attemptNumber ?? 1,
+    createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
+    startedAt: overrides.startedAt ?? "2026-01-01T00:00:01.000Z",
+    completedAt: overrides.completedAt ?? null,
+    failedAt: overrides.failedAt ?? null,
+    cancelledAt: overrides.cancelledAt ?? null,
     turnNumber: overrides.turnNumber,
     openrouterGenerations: overrides.openrouterGenerations ?? [],
     chunks: overrides.chunks ?? [],

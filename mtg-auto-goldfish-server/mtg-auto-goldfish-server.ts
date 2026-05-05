@@ -261,6 +261,7 @@ type ActiveLlmRunRuntime = {
   attemptNumber: number
   chunkBuffer: LlmRunChunkInput[]
   completionPromise: Promise<void>
+  createdAt: string
   deckId: string
   flushTimer: NodeJS.Timeout | null
   flushPromise: Promise<void> | null
@@ -275,6 +276,7 @@ type ActiveLlmRunRuntime = {
   resolveCompletion: () => void
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string | null
   status: LlmRunStatus
   turnNumber?: number
 }
@@ -370,6 +372,11 @@ function createStreamRunFromRuntime(
     status: runtime.status,
     runtimeStreamKey: runtime.runtimeStreamKey,
     attemptNumber: runtime.attemptNumber,
+    createdAt: runtime.createdAt,
+    startedAt: runtime.startedAt,
+    completedAt: null,
+    failedAt: null,
+    cancelledAt: null,
     turnNumber: runtime.turnNumber,
     openrouterGenerations: runtime.openrouterGenerations,
     chunks,
@@ -2059,6 +2066,7 @@ async function prepareAndStartOpeningHandLlmRun({
 
     startOpeningHandLlmRun({
       config: llmConfig,
+      createdAt: openingHandRun.createdAt,
       deckId,
       fullPrompt,
       attemptNumber: openingHandRun.attemptNumber,
@@ -2136,6 +2144,7 @@ async function prepareAndStartTurnLlmRun({
 
     startTurnLlmRun({
       config: llmConfig,
+      createdAt: turnRun.createdAt,
       deckId,
       fullPrompt,
       attemptNumber: turnRun.attemptNumber,
@@ -2642,6 +2651,7 @@ async function collectLlamaCppLlmStream({
 function startOpeningHandLlmRun({
   attemptNumber,
   config,
+  createdAt,
   deckId,
   fullPrompt,
   llmRunId,
@@ -2651,6 +2661,7 @@ function startOpeningHandLlmRun({
 }: {
   attemptNumber: number
   config: ResolvedOpeningHandLlmRunConfig
+  createdAt: string
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2661,6 +2672,7 @@ function startOpeningHandLlmRun({
   void runOpeningHandLlmRun({
     attemptNumber,
     config,
+    createdAt,
     deckId,
     fullPrompt,
     llmRunId,
@@ -2673,6 +2685,7 @@ function startOpeningHandLlmRun({
 async function runOpeningHandLlmRun({
   attemptNumber,
   config,
+  createdAt,
   deckId,
   llmRunId,
   requestPayload,
@@ -2681,6 +2694,7 @@ async function runOpeningHandLlmRun({
 }: {
   attemptNumber: number
   config: ResolvedOpeningHandLlmRunConfig
+  createdAt: string
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2694,6 +2708,7 @@ async function runOpeningHandLlmRun({
     attemptNumber,
     chunkBuffer: [],
     completionPromise: completion.completionPromise,
+    createdAt,
     deckId,
     flushTimer: null,
     flushPromise: null,
@@ -2708,6 +2723,7 @@ async function runOpeningHandLlmRun({
     resolveCompletion: completion.resolveCompletion,
     runtimeStreamKey,
     simulationId,
+    startedAt: null,
     status: "streaming",
   }
 
@@ -2722,6 +2738,7 @@ async function runOpeningHandLlmRun({
         "Opening-hand LLM run was cancelled before it started streaming."
       )
     }
+    runtime.startedAt = new Date().toISOString()
 
     throwIfRuntimeAborted(runtime.abortController.signal)
 
@@ -2831,6 +2848,7 @@ async function runOpeningHandLlmRun({
 function startTurnLlmRun({
   attemptNumber,
   config,
+  createdAt,
   deckId,
   fullPrompt,
   llmRunId,
@@ -2841,6 +2859,7 @@ function startTurnLlmRun({
 }: {
   attemptNumber: number
   config: ResolvedTurnSimulationLlmRunConfig
+  createdAt: string
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2852,6 +2871,7 @@ function startTurnLlmRun({
   void runTurnLlmRun({
     attemptNumber,
     config,
+    createdAt,
     deckId,
     fullPrompt,
     llmRunId,
@@ -2865,6 +2885,7 @@ function startTurnLlmRun({
 async function runTurnLlmRun({
   attemptNumber,
   config,
+  createdAt,
   deckId,
   llmRunId,
   requestPayload,
@@ -2874,6 +2895,7 @@ async function runTurnLlmRun({
 }: {
   attemptNumber: number
   config: ResolvedTurnSimulationLlmRunConfig
+  createdAt: string
   deckId: string
   fullPrompt: string
   llmRunId: string
@@ -2888,6 +2910,7 @@ async function runTurnLlmRun({
     attemptNumber,
     chunkBuffer: [],
     completionPromise: completion.completionPromise,
+    createdAt,
     deckId,
     flushTimer: null,
     flushPromise: null,
@@ -2902,6 +2925,7 @@ async function runTurnLlmRun({
     resolveCompletion: completion.resolveCompletion,
     runtimeStreamKey,
     simulationId,
+    startedAt: null,
     status: "streaming",
     turnNumber,
   }
@@ -2917,6 +2941,7 @@ async function runTurnLlmRun({
         "Turn LLM run was cancelled before it started streaming."
       )
     }
+    runtime.startedAt = new Date().toISOString()
 
     throwIfRuntimeAborted(runtime.abortController.signal)
 
@@ -3453,6 +3478,7 @@ async function main() {
           attemptNumber: turnRun.attemptNumber,
           runtimeStreamKey: turnRun.runtimeStreamKey,
           status: turnRun.status,
+          createdAt: turnRun.createdAt,
         })
       } catch (error) {
         if (error instanceof SimulationValidationError) {

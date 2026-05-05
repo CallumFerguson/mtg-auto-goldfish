@@ -65,6 +65,7 @@ export type CreateOpeningHandLlmRunResponse = {
   attemptNumber: number
   runtimeStreamKey: string
   status: string
+  createdAt: string
 }
 
 export type CreateTurnLlmRunResponse = CreateOpeningHandLlmRunResponse & {
@@ -114,6 +115,11 @@ export type SimulationDebugLlmRun = {
   status: string
   runtimeStreamKey: string | null
   attemptNumber: number
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  failedAt: string | null
+  cancelledAt: string | null
   turnNumber?: number
   gameState?: string
   outdated?: boolean

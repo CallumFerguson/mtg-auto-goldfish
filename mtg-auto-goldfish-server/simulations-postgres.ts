@@ -74,6 +74,7 @@ export type OpeningHandLlmRun = {
   attemptNumber: number
   runtimeStreamKey: string
   status: LlmRunStatus
+  createdAt: string
 }
 
 export type TurnLlmRun = OpeningHandLlmRun & {
@@ -157,6 +158,11 @@ export type SimulationDebugLlmRun = {
   status: LlmRunStatus
   runtimeStreamKey: string | null
   attemptNumber: number
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+  failedAt: string | null
+  cancelledAt: string | null
   turnNumber?: number
   gameState?: string
   outdated?: boolean
@@ -1709,6 +1715,7 @@ export async function createOpeningHandLlmRun(
       id: string
       status: LlmRunStatus
       runtime_stream_key: string
+      created_at: Date
     }>(
       `
         INSERT INTO llm_runs (
@@ -1731,7 +1738,7 @@ export async function createOpeningHandLlmRun(
           $6,
           $7::jsonb
         )
-        RETURNING id, status, runtime_stream_key
+        RETURNING id, status, runtime_stream_key, created_at
       `,
       [
         input.provider,
@@ -1765,6 +1772,7 @@ export async function createOpeningHandLlmRun(
       attemptNumber,
       runtimeStreamKey: llmRun.runtime_stream_key,
       status: llmRun.status,
+      createdAt: llmRun.created_at.toISOString(),
     }
   })
 }
@@ -1970,6 +1978,7 @@ export async function createTurnLlmRun(
       id: string
       status: LlmRunStatus
       runtime_stream_key: string
+      created_at: Date
     }>(
       `
         INSERT INTO llm_runs (
@@ -1988,7 +1997,7 @@ export async function createTurnLlmRun(
           $4,
           $5
         )
-        RETURNING id, status, runtime_stream_key
+        RETURNING id, status, runtime_stream_key, created_at
       `,
       [
         input.provider,
@@ -2022,6 +2031,7 @@ export async function createTurnLlmRun(
       attemptNumber,
       runtimeStreamKey: llmRun.runtime_stream_key,
       status: llmRun.status,
+      createdAt: llmRun.created_at.toISOString(),
       previousGameState,
     }
   })
@@ -3728,6 +3738,11 @@ type SimulationDebugLlmRunRow = {
   reasoning_effort: string | null
   status: LlmRunStatus
   runtime_stream_key: string | null
+  created_at: Date
+  started_at: Date | null
+  completed_at: Date | null
+  failed_at: Date | null
+  cancelled_at: Date | null
   attempt_number: number
   turn_number: number | null
   game_state: string | null
@@ -3777,6 +3792,11 @@ async function getSimulationDebugLlmRuns({
         llm_run.reasoning_effort,
         llm_run.status,
         llm_run.runtime_stream_key,
+        llm_run.created_at,
+        llm_run.started_at,
+        llm_run.completed_at,
+        llm_run.failed_at,
+        llm_run.cancelled_at,
         ${selectColumns},
         chunk.id AS chunk_id,
         chunk.sequence,
@@ -3823,6 +3843,11 @@ async function getSimulationDebugLlmRuns({
         status: row.status,
         runtimeStreamKey: row.runtime_stream_key,
         attemptNumber: row.attempt_number,
+        createdAt: row.created_at.toISOString(),
+        startedAt: row.started_at?.toISOString() ?? null,
+        completedAt: row.completed_at?.toISOString() ?? null,
+        failedAt: row.failed_at?.toISOString() ?? null,
+        cancelledAt: row.cancelled_at?.toISOString() ?? null,
         openrouterGenerations: [],
         chunks: [],
       }

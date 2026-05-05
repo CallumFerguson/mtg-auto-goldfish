@@ -106,6 +106,51 @@ function isActiveLlmRunStatus(status: string) {
   )
 }
 
+function getSimulationRunStartTimeMs(run: SimulationDebugLlmRun) {
+  return parseTimestampMs(run.startedAt) ?? parseTimestampMs(run.createdAt)
+}
+
+function getSimulationRunFinishedTimeMs(run: SimulationDebugLlmRun) {
+  return (
+    parseTimestampMs(run.completedAt) ??
+    parseTimestampMs(run.failedAt) ??
+    parseTimestampMs(run.cancelledAt)
+  )
+}
+
+function getSimulationRunFinishedDurationText(run: SimulationDebugLlmRun) {
+  const startTimeMs = getSimulationRunStartTimeMs(run)
+  const finishedTimeMs = getSimulationRunFinishedTimeMs(run)
+
+  if (startTimeMs === null || finishedTimeMs === null) {
+    return null
+  }
+
+  return formatMinutesSeconds(finishedTimeMs - startTimeMs)
+}
+
+function parseTimestampMs(timestamp: string | null | undefined) {
+  if (!timestamp) {
+    return null
+  }
+
+  const timeMs = Date.parse(timestamp)
+
+  return Number.isNaN(timeMs) ? null : timeMs
+}
+
+function formatMinutesSeconds(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) {
+    return `${seconds}s`
+  }
+
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`
+}
+
 function getCurrentOpeningHandRunCount(resultsInfo: SimulationResultsInfo) {
   const maxAttemptNumber = Math.max(
     0,
@@ -1948,6 +1993,7 @@ function SimulationResultsPanel({
       thinkingPreview: getSimulationRunThinkingPreview(run.chunks),
     })),
   ]
+
   if (runs.length === 0) {
     return (
       <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
@@ -1958,53 +2004,66 @@ function SimulationResultsPanel({
 
   return (
     <div className="grid gap-3">
-      {runs.map((run) => (
-        <section
-          key={run.llmRunId}
-          className="grid gap-3 rounded-md border border-border bg-background/35 p-3"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h5 className="text-sm font-medium text-foreground">
-                {run.resultLabel}
-              </h5>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {run.status} / {run.model}
-                {run.estimatedPriceCents
-                  ? ` / ${run.estimatedPriceCents} cents`
-                  : ""}
-                {run.outdated ? " / outdated" : ""}
-              </p>
+      {runs.map((run) => {
+        const finishedDurationText = getSimulationRunFinishedDurationText(run)
+        const runMetadata = [
+          run.status,
+          run.model,
+          run.estimatedPriceCents
+            ? `${run.estimatedPriceCents} cents`
+            : null,
+          finishedDurationText ? `took ${finishedDurationText}` : null,
+          run.outdated ? "outdated" : null,
+        ].filter(Boolean)
+
+        return (
+          <section
+            key={run.llmRunId}
+            className="grid gap-3 rounded-md border border-border bg-background/35 p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h5 className="text-sm font-medium text-foreground">
+                  {run.resultLabel}
+                </h5>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {runMetadata.join(" / ")}
+                </p>
+              </div>
             </div>
-          </div>
 
-          {run.gameState && !getSimulationFinalParsedOutput(run) ? (
-            <details className={simulationResultChunkSurfaceClassName}>
-              <summary className={simulationResultChunkSummaryClassName}>
-                Game state
-              </summary>
-              <p className={simulationResultChunkTextClassName}>
-                {run.gameState}
+            {run.gameState && !getSimulationFinalParsedOutput(run) ? (
+              <details className={simulationResultChunkSurfaceClassName}>
+                <summary className={simulationResultChunkSummaryClassName}>
+                  Game state
+                </summary>
+                <p className={simulationResultChunkTextClassName}>
+                  {run.gameState}
+                </p>
+              </details>
+            ) : null}
+
+            {run.resultEntries.length > 0 ? (
+              <SimulationResultChunkCards
+                run={run}
+                entries={run.resultEntries}
+              />
+            ) : null}
+
+            {run.isActive ? (
+              <SimulationResultThinkingPreview
+                activeToolCallName={run.activeToolCallName}
+                previewText={run.thinkingPreview}
+                runStartTimeMs={getSimulationRunStartTimeMs(run)}
+              />
+            ) : run.resultEntries.length === 0 && !run.gameState ? (
+              <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+                No user-facing events have been saved for this run yet.
               </p>
-            </details>
-          ) : null}
-
-          {run.resultEntries.length > 0 ? (
-            <SimulationResultChunkCards run={run} entries={run.resultEntries} />
-          ) : null}
-
-          {run.isActive ? (
-            <SimulationResultThinkingPreview
-              activeToolCallName={run.activeToolCallName}
-              previewText={run.thinkingPreview}
-            />
-          ) : run.resultEntries.length === 0 && !run.gameState ? (
-            <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
-              No user-facing events have been saved for this run yet.
-            </p>
-          ) : null}
-        </section>
-      ))}
+            ) : null}
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -2066,12 +2125,15 @@ function SimulationResultChunkCards({
 function SimulationResultThinkingPreview({
   activeToolCallName,
   previewText,
+  runStartTimeMs,
 }: {
   activeToolCallName: string | null
   previewText: string | null
+  runStartTimeMs: number | null
 }) {
   const previewTextRef = useRef<HTMLParagraphElement | null>(null)
   const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false)
+  const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
 
   useLayoutEffect(() => {
     const previewTextElement = previewTextRef.current
@@ -2102,6 +2164,16 @@ function SimulationResultThinkingPreview({
     }
   }, [previewText])
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTimeMs(Date.now())
+    }, 1000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
   const activeToolCallLabel =
     activeToolCallName === null
       ? null
@@ -2109,18 +2181,28 @@ function SimulationResultThinkingPreview({
           mcpFunctionName: activeToolCallName,
           state: "active",
         })
+  const statusLabel = activeToolCallName
+    ? (activeToolCallLabel ?? `Calling tool: ${activeToolCallName}`)
+    : "Thinking"
+  const elapsedText =
+    runStartTimeMs === null
+      ? null
+      : formatMinutesSeconds(currentTimeMs - runStartTimeMs)
 
   return (
     <div
       className={`grid gap-1 px-3 py-2 ${simulationResultChunkSurfaceClassName}`}
     >
-      <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-sky-100">
-        <LoaderCircle className="size-4 shrink-0 animate-spin text-sky-300" />
-        <span>
-          {activeToolCallName
-            ? (activeToolCallLabel ?? `Calling tool: ${activeToolCallName}`)
-            : "Thinking"}
-        </span>
+      <div className="flex min-w-0 items-center gap-3 text-sm font-medium text-sky-100">
+        <div className="flex min-w-0 items-center gap-2">
+          <LoaderCircle className="size-4 shrink-0 animate-spin text-sky-300" />
+          <span className="min-w-0 truncate">{statusLabel}</span>
+        </div>
+        {elapsedText ? (
+          <span className="ml-auto shrink-0 text-xs font-normal tabular-nums text-sky-100/65">
+            {elapsedText}
+          </span>
+        ) : null}
       </div>
       {previewText ? (
         <p
