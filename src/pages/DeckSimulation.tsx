@@ -1467,6 +1467,12 @@ function SimulationDetails({
     scrollResultsToBottom()
   }, [scrollResultsToBottom])
 
+  const scrollResultsToBottomIfKept = useCallback(() => {
+    if (keepResultsScrolledDownRef.current) {
+      scrollResultsToBottom()
+    }
+  }, [scrollResultsToBottom])
+
   useEffect(() => {
     keepResultsScrolledDownRef.current = true
     previousResultsScrollTopRef.current = 0
@@ -1811,6 +1817,7 @@ function SimulationDetails({
             isStoppingSimulation={isStoppingSimulation}
             onStartOpeningHandRun={() => void handleStartOpeningHandRun()}
             onKeepResultsScrolledToBottom={keepResultsScrolledToBottom}
+            onScrollResultsToBottomIfKept={scrollResultsToBottomIfKept}
             onStartTurnRun={(turnNumber) => void handleStartTurnRun(turnNumber)}
             onStopSimulation={() => void handleStopSimulation()}
             openingHandRunError={openingHandRunError}
@@ -1928,6 +1935,7 @@ function SimulationResultsPanel({
   isStoppingSimulation,
   onStartOpeningHandRun,
   onKeepResultsScrolledToBottom,
+  onScrollResultsToBottomIfKept,
   onStartTurnRun,
   onStopSimulation,
   openingHandRunError,
@@ -1941,6 +1949,7 @@ function SimulationResultsPanel({
   isStoppingSimulation: boolean
   onStartOpeningHandRun: () => void
   onKeepResultsScrolledToBottom: () => void
+  onScrollResultsToBottomIfKept: () => void
   onStartTurnRun: (turnNumber: number) => void
   onStopSimulation: () => void
   openingHandRunError: string | null
@@ -2099,6 +2108,20 @@ function SimulationResultsPanel({
       }
     }
   }, [simulationAction])
+
+  useLayoutEffect(() => {
+    if (
+      renderedSimulationAction?.kind === "turn" &&
+      isRenderedSimulationActionVisible
+    ) {
+      onScrollResultsToBottomIfKept()
+    }
+  }, [
+    isRenderedSimulationActionVisible,
+    onScrollResultsToBottomIfKept,
+    renderedSimulationAction,
+  ])
+
   const actionError = openingHandRunError ?? turnRunError
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
