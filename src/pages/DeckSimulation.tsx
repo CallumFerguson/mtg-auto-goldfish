@@ -12,6 +12,7 @@ import {
 } from "react"
 import {
   Bug,
+  Check,
   Dices,
   Eye,
   EyeOff,
@@ -91,6 +92,7 @@ type SimulationResultsAction =
     }
 
 const DEFAULT_TURNS_TO_SIMULATE = "1"
+const SHOW_SIMULATION_THINKING_PREVIEW = false
 
 function getSimulationLabel(simulation: Simulation) {
   return `${simulation.id.slice(0, 8)} - ${simulation.completedLlmRunCount} runs`
@@ -2176,6 +2178,21 @@ function SimulationResultsPanel({
 
       {runs.map((run) => {
         const finishedDurationText = getSimulationRunFinishedDurationText(run)
+        const shouldShowFinishedThinkingPreview =
+          !run.isActive && getSimulationRunFinishedTimeMs(run) !== null
+        const finishedThinkingPreview = shouldShowFinishedThinkingPreview ? (
+          <SimulationResultThinkingPreview
+            activeToolCallName={null}
+            canStopSimulation={false}
+            finishedDurationText={finishedDurationText}
+            isFinished={true}
+            isStoppingSimulation={false}
+            onStopSimulation={onStopSimulation}
+            previewText={run.thinkingPreview}
+            runStartTimeMs={null}
+            stopSimulationError={null}
+          />
+        ) : null
         const runMetadata = [
           run.status,
           run.model,
@@ -2242,10 +2259,11 @@ function SimulationResultsPanel({
               </details>
             ) : null}
 
-            {run.resultEntries.length > 0 ? (
+            {run.resultEntries.length > 0 || finishedThinkingPreview ? (
               <SimulationResultChunkCards
                 run={run}
                 entries={run.resultEntries}
+                finishedThinkingPreview={finishedThinkingPreview}
               />
             ) : null}
 
@@ -2253,6 +2271,8 @@ function SimulationResultsPanel({
               <SimulationResultThinkingPreview
                 activeToolCallName={run.activeToolCallName}
                 canStopSimulation={run.status !== "cancel_requested"}
+                finishedDurationText={null}
+                isFinished={false}
                 isStoppingSimulation={isStoppingSimulation}
                 onStopSimulation={onStopSimulation}
                 previewText={run.thinkingPreview}
@@ -2317,45 +2337,70 @@ const simulationResultChunkPreClassName =
 
 function SimulationResultChunkCards({
   entries,
+  finishedThinkingPreview,
   run,
 }: {
   entries: SimulationResultEntry[]
+  finishedThinkingPreview: ReactNode | null
   run: SimulationDebugLlmRun
 }) {
+  const finalParsedOutputEntryIndex = entries.findIndex(
+    (entry) =>
+      entry.type === "chunk" && entry.chunk.kind === "final_parsed_output"
+  )
+  const finishedThinkingPreviewIndex =
+    finishedThinkingPreview === null
+      ? -1
+      : finalParsedOutputEntryIndex === -1
+        ? entries.length > 0
+          ? entries.length - 1
+          : -1
+        : finalParsedOutputEntryIndex
+  const shouldAppendFinishedThinkingPreview =
+    finishedThinkingPreview !== null && finishedThinkingPreviewIndex === -1
+
+  function renderEntry(entry: SimulationResultEntry) {
+    if (entry.type === "turn_action_log") {
+      return (
+        <SimulationResultLoggedTurnActionEvent
+          actions={entry.actions}
+          chunks={entry.chunks}
+        />
+      )
+    }
+
+    const { chunk } = entry
+
+    if (chunk.kind === "final_parsed_output") {
+      const finalOutput = getSimulationFinalParsedOutputFromPayload(
+        run.phase,
+        chunk.payload
+      )
+
+      if (finalOutput) {
+        return (
+          <SimulationFinalOutputBlock
+            finalOutput={finalOutput}
+            cardMentions={chunk.cardMentions}
+          />
+        )
+      }
+    }
+
+    return <SimulationResultEvent chunk={chunk} />
+  }
+
   return (
     <div className="grid gap-2">
-      {entries.map((entry) => {
-        if (entry.type === "turn_action_log") {
-          return (
-            <SimulationResultLoggedTurnActionEvent
-              key={entry.id}
-              actions={entry.actions}
-              chunks={entry.chunks}
-            />
-          )
-        }
-
-        const { chunk } = entry
-
-        if (chunk.kind === "final_parsed_output") {
-          const finalOutput = getSimulationFinalParsedOutputFromPayload(
-            run.phase,
-            chunk.payload
-          )
-
-          if (finalOutput) {
-            return (
-              <SimulationFinalOutputBlock
-                key={entry.id}
-                finalOutput={finalOutput}
-                cardMentions={chunk.cardMentions}
-              />
-            )
-          }
-        }
-
-        return <SimulationResultEvent key={entry.id} chunk={chunk} />
-      })}
+      {entries.map((entry, index) => (
+        <Fragment key={entry.id}>
+          {index === finishedThinkingPreviewIndex
+            ? finishedThinkingPreview
+            : null}
+          {renderEntry(entry)}
+        </Fragment>
+      ))}
+      {shouldAppendFinishedThinkingPreview ? finishedThinkingPreview : null}
     </div>
   )
 }
@@ -2363,6 +2408,8 @@ function SimulationResultChunkCards({
 function SimulationResultThinkingPreview({
   activeToolCallName,
   canStopSimulation,
+  finishedDurationText,
+  isFinished,
   isStoppingSimulation,
   onStopSimulation,
   previewText,
@@ -2371,6 +2418,8 @@ function SimulationResultThinkingPreview({
 }: {
   activeToolCallName: string | null
   canStopSimulation: boolean
+  finishedDurationText: string | null
+  isFinished: boolean
   isStoppingSimulation: boolean
   onStopSimulation: () => void
   previewText: string | null
@@ -2380,15 +2429,17 @@ function SimulationResultThinkingPreview({
   const previewTextRef = useRef<HTMLParagraphElement | null>(null)
   const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
+  const shouldShowPreviewText =
+    SHOW_SIMULATION_THINKING_PREVIEW && Boolean(previewText)
 
   useLayoutEffect(() => {
-    const previewTextElement = previewTextRef.current
-
-    if (!previewTextElement) {
+    if (!shouldShowPreviewText) {
       return
     }
 
-    if (!previewText) {
+    const previewTextElement = previewTextRef.current
+
+    if (!previewTextElement) {
       return
     }
 
@@ -2410,9 +2461,13 @@ function SimulationResultThinkingPreview({
       window.cancelAnimationFrame(animationFrameId)
       resizeObserver.disconnect()
     }
-  }, [previewText])
+  }, [shouldShowPreviewText, previewText])
 
   useEffect(() => {
+    if (isFinished) {
+      return
+    }
+
     const intervalId = window.setInterval(() => {
       setCurrentTimeMs(Date.now())
     }, 1000)
@@ -2420,7 +2475,7 @@ function SimulationResultThinkingPreview({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [])
+  }, [isFinished])
 
   const activeToolCallLabel =
     activeToolCallName === null
@@ -2429,14 +2484,24 @@ function SimulationResultThinkingPreview({
           mcpFunctionName: activeToolCallName,
           state: "active",
         })
-  const statusLabel = activeToolCallName
-    ? (activeToolCallLabel ?? `Calling tool: ${activeToolCallName}`)
-    : "Thinking"
-  const elapsedText =
-    runStartTimeMs === null
+  const activeElapsedText =
+    runStartTimeMs === null || isFinished
       ? null
       : formatMinutesSeconds(currentTimeMs - runStartTimeMs)
-  const hasPreviewText = Boolean(previewText)
+  const statusLabel = isFinished
+    ? finishedDurationText
+      ? `Thought for ${finishedDurationText}`
+      : "Thought"
+    : activeToolCallName
+      ? (activeToolCallLabel ?? `Calling tool: ${activeToolCallName}`)
+      : "Thinking"
+  const statusTextSizeClassName = shouldShowPreviewText
+    ? "text-sm"
+    : "text-base"
+  const statusIconSizeClassName =
+    shouldShowPreviewText ? "size-4" : "size-5"
+  const elapsedTextSizeClassName =
+    shouldShowPreviewText ? "text-xs" : "text-sm"
 
   return (
     <div
@@ -2444,34 +2509,34 @@ function SimulationResultThinkingPreview({
     >
       <div
         className={`min-w-0 flex-1 ${
-          hasPreviewText ? "grid gap-1" : "flex items-center"
+          shouldShowPreviewText ? "grid gap-1" : "flex items-center"
         }`}
       >
         <div
-          className={`flex min-w-0 flex-1 items-center gap-3 font-medium text-sky-100 ${
-            hasPreviewText ? "text-sm" : "text-base"
-          }`}
+          className={`flex min-w-0 flex-1 items-center gap-3 font-medium text-sky-100 ${statusTextSizeClassName}`}
         >
           <div className="flex min-w-0 items-center gap-2">
-            <LoaderCircle
-              className={`shrink-0 animate-spin text-sky-300 ${
-                hasPreviewText ? "size-4" : "size-5"
-              }`}
-            />
+            {isFinished ? (
+              <Check
+                className={`shrink-0 text-emerald-300 ${statusIconSizeClassName}`}
+              />
+            ) : (
+              <LoaderCircle
+                className={`shrink-0 animate-spin text-sky-300 ${statusIconSizeClassName}`}
+              />
+            )}
             <span className="min-w-0 truncate">{statusLabel}</span>
           </div>
-          {elapsedText ? (
+          {activeElapsedText ? (
             <span
-              className={`ml-auto shrink-0 font-normal text-sky-100/65 tabular-nums ${
-                hasPreviewText ? "text-xs" : "text-sm"
-              }`}
+              className={`ml-auto shrink-0 font-normal text-sky-100/65 tabular-nums ${elapsedTextSizeClassName}`}
             >
-              {elapsedText}
+              {activeElapsedText}
             </span>
           ) : null}
         </div>
 
-        {previewText ? (
+        {shouldShowPreviewText ? (
           <p
             ref={previewTextRef}
             className={`min-h-4 min-w-0 overflow-hidden text-xs whitespace-nowrap text-muted-foreground/65 ${
