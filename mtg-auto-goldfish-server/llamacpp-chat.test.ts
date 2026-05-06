@@ -110,8 +110,10 @@ test("collects a llama.cpp opening-hand tool loop", async () => {
     [
       "mcp_call_start",
       "mcp_call_complete",
+      "output_start",
       "message_delta",
       "message_delta",
+      "output_done",
       "completed",
     ]
   )
@@ -172,7 +174,7 @@ test("collects a llama.cpp turn tool loop with shorthand tool calls", async () =
   )
 })
 
-test("streams llama.cpp reasoning deltas separately from output", async () => {
+test("streams llama.cpp reasoning and output lifecycle chunks", async () => {
   const chunks: Array<Omit<LlmRunChunkInput, "sequence">> = []
   const result = await collectLlamaCppChatCompletion({
     appendChunk: (chunk) => {
@@ -203,13 +205,33 @@ test("streams llama.cpp reasoning deltas separately from output", async () => {
     })),
     [
       {
+        kind: "reasoning_start",
+        outputDelta: null,
+        reasoningDelta: null,
+      },
+      {
         kind: "reasoning_delta",
         outputDelta: null,
         reasoningDelta: "Evaluating mana.",
       },
       {
+        kind: "reasoning_done",
+        outputDelta: null,
+        reasoningDelta: null,
+      },
+      {
+        kind: "output_start",
+        outputDelta: null,
+        reasoningDelta: null,
+      },
+      {
         kind: "message_delta",
         outputDelta: '{"keptHand":["Sol Ring"]}',
+        reasoningDelta: null,
+      },
+      {
+        kind: "output_done",
+        outputDelta: null,
         reasoningDelta: null,
       },
       {

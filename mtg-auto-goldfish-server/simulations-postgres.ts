@@ -31,8 +31,12 @@ export function canApplyLateLlmRunTerminalUpdate(status: LlmRunStatus) {
 
 export const LLM_CHUNK_KINDS = [
   "raw_event",
-  "message_delta",
+  "reasoning_start",
   "reasoning_delta",
+  "reasoning_done",
+  "output_start",
+  "message_delta",
+  "output_done",
   "completed",
   "final_parsed_output",
   "mcp_call_start",
@@ -662,17 +666,7 @@ export async function ensureSimulationsSchema() {
 
       CONSTRAINT llm_run_chunks_kind_active_values_check
         CHECK (
-          kind IN (
-            'raw_event',
-            'message_delta',
-            'reasoning_delta',
-            'completed',
-            'final_parsed_output',
-            'mcp_call_start',
-            'mcp_call_complete',
-            'error',
-            'cancelled'
-          )
+          kind IN (${LLM_CHUNK_KINDS.map(quoteSqlLiteral).join(", ")})
         ),
       UNIQUE (llm_run_id, sequence)
     )

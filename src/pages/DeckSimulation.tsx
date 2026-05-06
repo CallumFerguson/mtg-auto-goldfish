@@ -2185,6 +2185,7 @@ function SimulationResultsPanel({
             activeToolCallName={null}
             canStopSimulation={false}
             finishedDurationText={finishedDurationText}
+            isFinishedSuccessfully={run.status === "completed"}
             isFinished={true}
             isStoppingSimulation={false}
             onStopSimulation={onStopSimulation}
@@ -2272,6 +2273,7 @@ function SimulationResultsPanel({
                 activeToolCallName={run.activeToolCallName}
                 canStopSimulation={run.status !== "cancel_requested"}
                 finishedDurationText={null}
+                isFinishedSuccessfully={false}
                 isFinished={false}
                 isStoppingSimulation={isStoppingSimulation}
                 onStopSimulation={onStopSimulation}
@@ -2410,6 +2412,7 @@ function SimulationResultThinkingPreview({
   canStopSimulation,
   finishedDurationText,
   isFinished,
+  isFinishedSuccessfully,
   isStoppingSimulation,
   onStopSimulation,
   previewText,
@@ -2420,6 +2423,7 @@ function SimulationResultThinkingPreview({
   canStopSimulation: boolean
   finishedDurationText: string | null
   isFinished: boolean
+  isFinishedSuccessfully: boolean
   isStoppingSimulation: boolean
   onStopSimulation: () => void
   previewText: string | null
@@ -2517,9 +2521,15 @@ function SimulationResultThinkingPreview({
         >
           <div className="flex min-w-0 items-center gap-2">
             {isFinished ? (
-              <Check
-                className={`shrink-0 text-emerald-300 ${statusIconSizeClassName}`}
-              />
+              isFinishedSuccessfully ? (
+                <Check
+                  className={`shrink-0 text-emerald-300 ${statusIconSizeClassName}`}
+                />
+              ) : (
+                <X
+                  className={`shrink-0 text-destructive ${statusIconSizeClassName}`}
+                />
+              )
             ) : (
               <LoaderCircle
                 className={`shrink-0 animate-spin text-sky-300 ${statusIconSizeClassName}`}

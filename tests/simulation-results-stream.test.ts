@@ -639,33 +639,53 @@ test("keeps turn action log groups separated by other visible events", () => {
   )
 })
 
-test("omits reasoning and output deltas from result chunks", () => {
+test("omits reasoning and output lifecycle chunks and deltas from result chunks", () => {
   const resultChunks = getSimulationResultChunks([
     createChunk({
       id: 1,
-      kind: "reasoning_delta",
-      reasoningDelta: "Need to inspect the opener.",
+      kind: "reasoning_start",
       sequence: 1,
     }),
     createChunk({
       id: 2,
-      outputDelta: "Checking hand.",
+      kind: "reasoning_delta",
+      reasoningDelta: "Need to inspect the opener.",
       sequence: 2,
     }),
     createChunk({
       id: 3,
+      kind: "reasoning_done",
+      sequence: 3,
+    }),
+    createChunk({
+      id: 4,
+      kind: "output_start",
+      sequence: 4,
+    }),
+    createChunk({
+      id: 5,
+      outputDelta: "Checking hand.",
+      sequence: 5,
+    }),
+    createChunk({
+      id: 6,
+      kind: "output_done",
+      sequence: 6,
+    }),
+    createChunk({
+      id: 7,
       kind: "final_parsed_output",
       payload: {
         keptHand: ["Sol Ring", "Forest"],
         summary: "Kept a stable opener.",
       },
-      sequence: 3,
+      sequence: 7,
     }),
   ])
 
   assert.deepEqual(
     resultChunks.map((chunk) => chunk.sequence),
-    [3]
+    [7]
   )
 })
 
@@ -673,20 +693,40 @@ test("builds a one-line thinking preview from reasoning and output deltas", () =
   const preview = getSimulationRunThinkingPreview([
     createChunk({
       id: 1,
-      kind: "reasoning_delta",
-      reasoningDelta: "Evaluating\nmana",
+      kind: "reasoning_start",
       sequence: 1,
     }),
     createChunk({
       id: 2,
-      outputDelta: " and\r\nkeeping.",
+      kind: "reasoning_delta",
+      reasoningDelta: "Evaluating\nmana",
       sequence: 2,
     }),
     createChunk({
       id: 3,
+      kind: "reasoning_done",
+      sequence: 3,
+    }),
+    createChunk({
+      id: 4,
+      kind: "output_start",
+      sequence: 4,
+    }),
+    createChunk({
+      id: 5,
+      outputDelta: " and\r\nkeeping.",
+      sequence: 5,
+    }),
+    createChunk({
+      id: 6,
+      kind: "output_done",
+      sequence: 6,
+    }),
+    createChunk({
+      id: 7,
       kind: "mcp_call_complete",
       mcpFunctionName: "draw_starting_hand",
-      sequence: 3,
+      sequence: 7,
     }),
   ])
 

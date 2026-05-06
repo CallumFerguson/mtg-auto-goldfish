@@ -26,7 +26,8 @@ export function getSimulationResultChunks(
     (chunk) =>
       !hiddenToolStartChunks.has(chunk) &&
       chunk !== activeToolStartChunk &&
-      !isDeltaChunk(chunk)
+      !isDeltaChunk(chunk) &&
+      !isLifecycleChunk(chunk)
   )
 }
 
@@ -243,6 +244,15 @@ function isRedundantMcpCallFailedEvent(
 
 function isDeltaChunk(chunk: SimulationDebugLlmRunChunk) {
   return chunk.kind === "reasoning_delta" || chunk.kind === "message_delta"
+}
+
+function isLifecycleChunk(chunk: SimulationDebugLlmRunChunk) {
+  return (
+    chunk.kind === "reasoning_start" ||
+    chunk.kind === "reasoning_done" ||
+    chunk.kind === "output_start" ||
+    chunk.kind === "output_done"
+  )
 }
 
 function getDeltaText(chunk: SimulationDebugLlmRunChunk) {

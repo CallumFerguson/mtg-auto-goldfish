@@ -10,7 +10,11 @@ import {
   asRecord,
   createLlamaCppCompletedChunk,
   createLlamaCppMessageDeltaChunk,
+  createLlamaCppOutputDoneChunk,
+  createLlamaCppOutputStartChunk,
+  createLlamaCppReasoningDoneChunk,
   createLlamaCppReasoningDeltaChunk,
+  createLlamaCppReasoningStartChunk,
   createLlamaCppToolCallCompleteChunk,
   createLlamaCppToolCallStartChunk,
   getStringProperty,
@@ -66,6 +70,8 @@ type LlamaCppStreamingToolCallAccumulator = {
   index: number
   name: string
 }
+
+type LlamaCppStreamSegment = "reasoning" | "output"
 
 export function createLlamaCppChatCompletionTools(
   toolDefinitions: readonly LlamaCppToolDefinition[]
@@ -233,6 +239,38 @@ async function collectLlamaCppChatCompletionStep({
   let finishReason: string | null = null
   let finalChunk: unknown = null
   let streamedChunkCount = 0
+  let activeStreamSegment: LlamaCppStreamSegment | null = null
+
+  async function closeActiveStreamSegment(payload: unknown) {
+    if (activeStreamSegment === "reasoning") {
+      await appendChunk(createLlamaCppReasoningDoneChunk(payload))
+    }
+
+    if (activeStreamSegment === "output") {
+      await appendChunk(createLlamaCppOutputDoneChunk(payload))
+    }
+
+    activeStreamSegment = null
+  }
+
+  async function startStreamSegment(
+    segment: LlamaCppStreamSegment,
+    payload: unknown
+  ) {
+    if (activeStreamSegment === segment) {
+      return
+    }
+
+    await closeActiveStreamSegment(payload)
+
+    if (segment === "reasoning") {
+      await appendChunk(createLlamaCppReasoningStartChunk(payload))
+    } else {
+      await appendChunk(createLlamaCppOutputStartChunk(payload))
+    }
+
+    activeStreamSegment = segment
+  }
 
   for await (const chunk of stream) {
     throwIfRuntimeAborted(signal)
@@ -249,12 +287,14 @@ async function collectLlamaCppChatCompletionStep({
       const outputDelta = getStringProperty(deltaRecord, "content")
 
       if (reasoningDelta) {
+        await startStreamSegment("reasoning", chunk)
         await appendChunk(
           createLlamaCppReasoningDeltaChunk(reasoningDelta, chunk)
         )
       }
 
       if (outputDelta) {
+        await startStreamSegment("output", chunk)
         outputText += outputDelta
         await appendChunk(createLlamaCppMessageDeltaChunk(outputDelta, chunk))
       }
@@ -272,6 +312,7 @@ async function collectLlamaCppChatCompletionStep({
   }
 
   throwIfRuntimeAborted(signal)
+  await closeActiveStreamSegment(finalChunk ?? {})
 
   return {
     finishReason,

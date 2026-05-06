@@ -50,6 +50,17 @@ export function normalizeOpenAiStreamEvent(
     })
   }
 
+  const lifecycleChunkKind = getOutputItemLifecycleChunkKind(
+    eventType,
+    rawOutputItemKind
+  )
+
+  if (lifecycleChunkKind) {
+    return createChunk(lifecycleChunkKind, {
+      payload,
+    })
+  }
+
   if (
     eventType === "response.output_item.added" &&
     rawOutputItemKind === "mcp_call"
@@ -124,6 +135,17 @@ export function normalizeOpenRouterStreamEvent(
 
   if (eventType === "response.completed") {
     return createChunk("completed", {
+      payload,
+    })
+  }
+
+  const lifecycleChunkKind = getOutputItemLifecycleChunkKind(
+    eventType,
+    rawOutputItemKind
+  )
+
+  if (lifecycleChunkKind) {
+    return createChunk(lifecycleChunkKind, {
       payload,
     })
   }
@@ -219,6 +241,38 @@ export function createLlamaCppMessageDeltaChunk(
 ): Omit<LlmRunChunkInput, "sequence"> {
   return createChunk("message_delta", {
     outputDelta,
+    payload,
+  })
+}
+
+export function createLlamaCppOutputStartChunk(
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("output_start", {
+    payload,
+  })
+}
+
+export function createLlamaCppOutputDoneChunk(
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("output_done", {
+    payload,
+  })
+}
+
+export function createLlamaCppReasoningStartChunk(
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("reasoning_start", {
+    payload,
+  })
+}
+
+export function createLlamaCppReasoningDoneChunk(
+  payload: unknown
+): Omit<LlmRunChunkInput, "sequence"> {
+  return createChunk("reasoning_done", {
     payload,
   })
 }
@@ -555,6 +609,33 @@ function getNestedStringProperty(
   childProperty: string
 ) {
   return getStringProperty(asRecord(record[parentProperty]), childProperty)
+}
+
+function getOutputItemLifecycleChunkKind(
+  eventType: string | null,
+  itemType: string | null
+) {
+  if (eventType === "response.output_item.added") {
+    if (itemType === "reasoning") {
+      return "reasoning_start"
+    }
+
+    if (itemType === "message") {
+      return "output_start"
+    }
+  }
+
+  if (eventType === "response.output_item.done") {
+    if (itemType === "reasoning") {
+      return "reasoning_done"
+    }
+
+    if (itemType === "message") {
+      return "output_done"
+    }
+  }
+
+  return null
 }
 
 function getOutputTextParts(content: unknown[]) {

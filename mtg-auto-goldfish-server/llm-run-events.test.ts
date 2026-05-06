@@ -83,6 +83,52 @@ test("keeps malformed MCP output as raw text instead of throwing", () => {
   assert.equal(chunk.mcpFunctionOutput, '{"cards":')
 })
 
+test("normalizes OpenAI reasoning and output item lifecycle events", () => {
+  const reasoningStartChunk = normalizeOpenAiStreamEvent({
+    type: "response.output_item.added",
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      status: "in_progress",
+    },
+  })
+  const reasoningDoneChunk = normalizeOpenAiStreamEvent({
+    type: "response.output_item.done",
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      status: "completed",
+    },
+  })
+  const outputStartChunk = normalizeOpenAiStreamEvent({
+    type: "response.output_item.added",
+    item: {
+      type: "message",
+      id: "msg_1",
+      status: "in_progress",
+      role: "assistant",
+      content: [],
+    },
+  })
+  const outputDoneChunk = normalizeOpenAiStreamEvent({
+    type: "response.output_item.done",
+    item: {
+      type: "message",
+      id: "msg_1",
+      status: "completed",
+      role: "assistant",
+      content: [],
+    },
+  })
+
+  assert.equal(reasoningStartChunk.kind, "reasoning_start")
+  assert.equal(reasoningDoneChunk.kind, "reasoning_done")
+  assert.equal(outputStartChunk.kind, "output_start")
+  assert.equal(outputDoneChunk.kind, "output_done")
+})
+
 test("extracts card mentions from draw tool output data", () => {
   assert.deepEqual(
     extractLlmRunChunkCardMentionRequests({
@@ -628,6 +674,52 @@ test("normalizes OpenRouter text and reasoning stream deltas", () => {
   assert.equal(reasoningChunk.reasoningDelta, "Evaluating mana.")
 })
 
+test("normalizes OpenRouter reasoning and output item lifecycle events", () => {
+  const reasoningStartChunk = normalizeOpenRouterStreamEvent({
+    type: "response.output_item.added",
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      status: "in_progress",
+    },
+  })
+  const reasoningDoneChunk = normalizeOpenRouterStreamEvent({
+    type: "response.output_item.done",
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      status: "completed",
+    },
+  })
+  const outputStartChunk = normalizeOpenRouterStreamEvent({
+    type: "response.output_item.added",
+    item: {
+      type: "message",
+      id: "msg_1",
+      status: "in_progress",
+      role: "assistant",
+      content: [],
+    },
+  })
+  const outputDoneChunk = normalizeOpenRouterStreamEvent({
+    type: "response.output_item.done",
+    item: {
+      type: "message",
+      id: "msg_1",
+      status: "completed",
+      role: "assistant",
+      content: [],
+    },
+  })
+
+  assert.equal(reasoningStartChunk.kind, "reasoning_start")
+  assert.equal(reasoningDoneChunk.kind, "reasoning_done")
+  assert.equal(outputStartChunk.kind, "output_start")
+  assert.equal(outputDoneChunk.kind, "output_done")
+})
+
 test("normalizes OpenRouter function calls and tool results", () => {
   const toolCallNamesById = new Map<string, string>()
   const startChunk = normalizeOpenRouterStreamEvent(
@@ -825,6 +917,10 @@ test("reports invalid completed turn JSON with an explicit message", () => {
 })
 
 test("normal results exclude only raw and completed chunks", () => {
+  assert.equal(LLM_CHUNK_KINDS.includes("reasoning_start"), true)
+  assert.equal(LLM_CHUNK_KINDS.includes("reasoning_done"), true)
+  assert.equal(LLM_CHUNK_KINDS.includes("output_start"), true)
+  assert.equal(LLM_CHUNK_KINDS.includes("output_done"), true)
   assert.equal(LLM_CHUNK_KINDS.includes("final_parsed_output"), true)
   assert.deepEqual(SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS, [
     "raw_event",
