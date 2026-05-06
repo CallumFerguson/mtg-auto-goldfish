@@ -2667,6 +2667,10 @@ function SimulationRunActivityPanel({
     () => getSimulationRunActivityBlocks(run.chunks),
     [run.chunks]
   )
+  const activityTimelineItems = useMemo(
+    () => getSimulationRunActivityTimelineItems(activityBlocks),
+    [activityBlocks]
+  )
   const runStartTimeMs = getSimulationRunStartTimeMs(run)
   const runFinishedTimeMs = getSimulationRunFinishedTimeMs(run)
   const durationText =
@@ -2718,7 +2722,7 @@ function SimulationRunActivityPanel({
     if (keepActivityScrolledDownRef.current) {
       scrollActivityToBottom()
     }
-  }, [activityBlocks, scrollActivityToBottom])
+  }, [activityTimelineItems, scrollActivityToBottom])
 
   useEffect(() => {
     const activityScrollElement = activityScrollRef.current
@@ -2782,16 +2786,24 @@ function SimulationRunActivityPanel({
 
       <div
         ref={activityScrollRef}
-        className="simulation-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4"
+        className="simulation-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-5"
         onScroll={handleActivityScroll}
       >
-        <div className="grid gap-3">
-          {activityBlocks.length > 0 ? (
-            activityBlocks.map((block) => (
-              <SimulationRunActivityBlockView key={block.id} block={block} />
-            ))
+        <div className="grid gap-4">
+          {activityTimelineItems.length > 0 ? (
+            <>
+              <p className="text-base font-semibold text-sky-100">Thinking</p>
+              <div className="grid gap-5">
+                {activityTimelineItems.map((item) => (
+                  <SimulationRunActivityTimelineItemView
+                    key={item.id}
+                    item={item}
+                  />
+                ))}
+              </div>
+            </>
           ) : (
-            <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               No activity recorded yet.
             </p>
           )}
@@ -2801,38 +2813,128 @@ function SimulationRunActivityPanel({
   )
 }
 
-function SimulationRunActivityBlockView({
-  block,
+type SimulationRunActivityTimelineItem =
+  | {
+      id: string
+      type: "reasoning"
+      block: Extract<SimulationRunActivityBlock, { type: "reasoning" }>
+    }
+  | {
+      id: string
+      type: "tool_call_group"
+      blocks: Extract<SimulationRunActivityBlock, { type: "tool_call" }>[]
+    }
+
+function getSimulationRunActivityTimelineItems(
+  blocks: readonly SimulationRunActivityBlock[]
+): SimulationRunActivityTimelineItem[] {
+  const timelineItems: SimulationRunActivityTimelineItem[] = []
+  let pendingToolCallBlocks: Extract<
+    SimulationRunActivityBlock,
+    { type: "tool_call" }
+  >[] = []
+
+  function flushPendingToolCalls() {
+    if (pendingToolCallBlocks.length === 0) {
+      return
+    }
+
+    const firstBlock = pendingToolCallBlocks[0]
+    const lastBlock = pendingToolCallBlocks[pendingToolCallBlocks.length - 1]
+
+    timelineItems.push({
+      id:
+        firstBlock === lastBlock
+          ? `tool-group-${firstBlock.id}`
+          : `tool-group-${firstBlock.id}-${lastBlock.id}`,
+      type: "tool_call_group",
+      blocks: pendingToolCallBlocks,
+    })
+    pendingToolCallBlocks = []
+  }
+
+  for (const block of blocks) {
+    if (block.type === "tool_call") {
+      pendingToolCallBlocks.push(block)
+      continue
+    }
+
+    flushPendingToolCalls()
+    timelineItems.push({
+      id: block.id,
+      type: "reasoning",
+      block,
+    })
+  }
+
+  flushPendingToolCalls()
+
+  return timelineItems
+}
+
+function SimulationRunActivityTimelineItemView({
+  item,
 }: {
-  block: SimulationRunActivityBlock
+  item: SimulationRunActivityTimelineItem
 }) {
-  if (block.type === "tool_call") {
+  if (item.type === "tool_call_group") {
     return (
-      <div className="flex min-w-0 items-start gap-2 rounded-md border border-border bg-black/20 px-3 py-2 text-sm leading-6 text-muted-foreground">
-        <span className="shrink-0 text-sky-300" aria-hidden="true">
-          •
-        </span>
-        <span className="min-w-0 font-medium break-words text-foreground/90">
-          {block.toolName}
-        </span>
-      </div>
+      <SimulationRunActivityTimelineRow marker="tool">
+        <div className="flex min-w-0 flex-wrap gap-1.5 pt-0.5">
+          {item.blocks.map((block) => (
+            <span
+              key={block.id}
+              className="inline-flex max-w-full items-center gap-1 rounded-full bg-muted/55 px-2.5 py-1 text-xs leading-4 font-medium text-foreground/90"
+              title={block.toolName}
+            >
+              <span className="text-sky-300" aria-hidden="true">
+                •
+              </span>
+              <span className="truncate">{block.toolName}</span>
+            </span>
+          ))}
+        </div>
+      </SimulationRunActivityTimelineRow>
     )
   }
 
   return (
-    <section className="grid min-w-0 gap-2 rounded-md border border-border bg-black/20 p-3">
-      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        Reasoning
-      </p>
+    <SimulationRunActivityTimelineRow marker="reasoning">
       <div className={simulationActivityMarkdownClassName}>
-        <ReactMarkdown>{block.text}</ReactMarkdown>
+        <ReactMarkdown>{item.block.text}</ReactMarkdown>
       </div>
-    </section>
+    </SimulationRunActivityTimelineRow>
+  )
+}
+
+function SimulationRunActivityTimelineRow({
+  children,
+  marker,
+}: {
+  children: ReactNode
+  marker: "reasoning" | "tool"
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-2">
+      <div className="relative flex justify-center">
+        <span
+          className={`mt-2 size-1.5 rounded-full ${
+            marker === "tool" ? "bg-sky-300" : "bg-muted-foreground"
+          }`}
+          aria-hidden="true"
+        />
+        <span
+          className="absolute top-5 bottom-[-1.25rem] w-px bg-border"
+          aria-hidden="true"
+        />
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
   )
 }
 
 const simulationActivityMarkdownClassName =
-  "min-w-0 space-y-2 text-sm leading-6 break-words text-foreground/90 [&_a]:text-sky-300 [&_a]:underline [&_code]:rounded-sm [&_code]:bg-muted/45 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sky-100 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-black/30 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_ul]:list-disc [&_ul]:pl-5"
+  "min-w-0 space-y-2 text-sm leading-6 break-words text-foreground/95 [&_a]:text-sky-300 [&_a]:underline [&_code]:rounded-sm [&_code]:bg-muted/45 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sky-100 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-black/30 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_ul]:list-disc [&_ul]:pl-5"
 
 type SimulationResultCardMention =
   SimulationDebugLlmRunChunk["cardMentions"][number]
