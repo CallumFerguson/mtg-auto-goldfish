@@ -14,6 +14,7 @@ import ReactMarkdown from "react-markdown"
 import {
   Bug,
   Check,
+  ChevronRight,
   Dices,
   Eye,
   EyeOff,
@@ -2502,54 +2503,47 @@ function SimulationResultThinkingStatus({
       : "Thinking"
 
   return (
-    <div
-      className={`flex min-h-[3.5rem] items-stretch gap-2 transition-colors select-none ${simulationResultChunkSurfaceClassName}`}
-    >
-      <button
-        className="flex min-w-0 flex-1 items-center px-3 py-2 text-left transition-colors hover:bg-sky-950/20 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
-        type="button"
-        aria-pressed={isActivitySelected}
-        onClick={onViewActivity}
-      >
-        <div
-          className="flex min-w-0 flex-1 items-center gap-3 text-base font-medium text-sky-100"
+    <div className="grid gap-2 py-1 select-none">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <button
+          className={`group inline-flex min-w-0 max-w-full flex-1 items-center gap-2 rounded-sm px-0.5 py-1 text-left text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none ${
+            isActivitySelected
+              ? "text-sky-100"
+              : "text-sky-200 hover:text-sky-100"
+          }`}
+          type="button"
+          aria-pressed={isActivitySelected}
+          title="View thinking activity"
+          onClick={onViewActivity}
         >
-          <div className="flex min-w-0 items-center gap-2">
-            {isFinished ? (
-              isFinishedSuccessfully ? (
-                <Check className="size-5 shrink-0 text-emerald-300" />
-              ) : (
-                <X className="size-5 shrink-0 text-destructive" />
-              )
+          {isFinished ? (
+            isFinishedSuccessfully ? (
+              <Check className="size-4 shrink-0 text-emerald-300" />
             ) : (
-              <LoaderCircle className="size-5 shrink-0 animate-spin text-sky-300" />
-            )}
-            <span className="min-w-0 truncate">{statusLabel}</span>
-          </div>
+              <X className="size-4 shrink-0 text-destructive" />
+            )
+          ) : (
+            <LoaderCircle className="size-4 shrink-0 animate-spin text-sky-300" />
+          )}
+          <span className="min-w-0 truncate">{statusLabel}</span>
           {activeElapsedText ? (
             <span
-              className="ml-auto shrink-0 text-sm font-normal text-sky-100/65 tabular-nums"
+              className="shrink-0 text-xs font-normal text-sky-100/65 tabular-nums"
             >
               {activeElapsedText}
             </span>
           ) : null}
-        </div>
-
-        {stopSimulationError ? (
-          <p
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-            role="alert"
-          >
-            {stopSimulationError}
-          </p>
-        ) : null}
-      </button>
-      {canStopSimulation ? (
-        <div className="py-2 pr-3">
+          <ChevronRight
+            className="size-4 shrink-0 text-sky-300/70 transition-transform group-hover:translate-x-0.5 group-hover:text-sky-100"
+            aria-hidden="true"
+          />
+        </button>
+        {canStopSimulation ? (
           <Button
-            className="aspect-square h-full rounded-full bg-background/40 p-0 text-muted-foreground hover:text-foreground"
+            className="size-8 rounded-full border border-border/80 bg-background/20 text-muted-foreground hover:border-sky-300/50 hover:text-foreground"
             type="button"
-            variant="outline"
+            variant="ghost"
+            size="icon"
             disabled={isStoppingSimulation}
             aria-label="Stop simulation"
             title="Stop simulation"
@@ -2561,7 +2555,15 @@ function SimulationResultThinkingStatus({
               <Square fill="currentColor" />
             )}
           </Button>
-        </div>
+        ) : null}
+      </div>
+      {stopSimulationError ? (
+        <p
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          role="alert"
+        >
+          {stopSimulationError}
+        </p>
       ) : null}
     </div>
   )
