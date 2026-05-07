@@ -129,7 +129,7 @@ Do NOT count:
 - cards that technically make mana later but are not realistic early development for this hand
 - slow cards that only matter much later and do not help stabilize the opening keep
 
-IMPORTANT INTERPRETATION
+LAND / ACCELERATION INTERPRETATION
 - Do NOT treat 1 land and 1 mana rock as the same as 2 lands.
 - Do NOT treat 4 lands + 1 ramp piece as the same as 5 lands with no acceleration.
 - Lands are the primary measure of stability.
@@ -336,7 +336,7 @@ While reasoning about each hand, keep your internal checklist compact:
 - Verdict:
 - Short reason:
 
-Before responding, do one last silent procedural check:
+Before responding, verify:
 - Did I already decide KEEP?
 - If yes, have I finished all required bottoming first?
 - Is keptHand the exact final hand after bottoming?
