@@ -278,6 +278,56 @@ test("adds auto-advanced turn runs", () => {
   assert.equal(updatedResults?.turnLlmRuns[0].llmRunId, "turn-run")
 })
 
+test("streams report runs and keeps report attempts sorted", () => {
+  let results: SimulationResultsInfo | null = createResults()
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "llm_run_started",
+    run: createRun({
+      llmRunId: "report-run-2",
+      phase: "report",
+      attemptNumber: 2,
+    }),
+  })
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "llm_run_started",
+    run: createRun({
+      llmRunId: "report-run-1",
+      phase: "report",
+      attemptNumber: 1,
+    }),
+  })
+
+  assert.equal(results?.reportLlmRunCount, 2)
+  assert.deepEqual(
+    results?.reportLlmRuns.map((run) => run.attemptNumber),
+    [1, 2]
+  )
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "chunk",
+    llmRunId: "report-run-2",
+    chunk: createChunk({ id: null, sequence: 1, outputDelta: "# Report" }),
+  })
+
+  assert.equal(results?.reportLlmRuns[1].chunks[0].outputDelta, "# Report")
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "llm_run_updated",
+    run: createRun({
+      llmRunId: "report-run-2",
+      phase: "report",
+      attemptNumber: 2,
+      report: "# Report\n\nLooks good.",
+      status: "completed",
+    }),
+  })
+
+  assert.equal(results?.reportLlmRuns[1].status, "completed")
+  assert.equal(results?.reportLlmRuns[1].report, "# Report\n\nLooks good.")
+})
+
 test("reads opening hand final output from final parsed output chunks", () => {
   const parsedOutput = getSimulationFinalParsedOutput(
     createRun({
@@ -353,6 +403,30 @@ test("reads turn final output from final parsed output chunks", () => {
     type: "turn",
     gameState: "Hand: Forest\nBattlefield: Island",
     summary: "Played Island and passed.",
+  })
+})
+
+test("reads report final output from final parsed output chunks", () => {
+  const parsedOutput = getSimulationFinalParsedOutput(
+    createRun({
+      llmRunId: "report-run",
+      phase: "report",
+      chunks: [
+        createChunk({
+          id: 1,
+          sequence: 1,
+          kind: "final_parsed_output",
+          payload: {
+            report: "# Simulation report\n\nThe opener converted cleanly.",
+          },
+        }),
+      ],
+    })
+  )
+
+  assert.deepEqual(parsedOutput, {
+    type: "report",
+    report: "# Simulation report\n\nThe opener converted cleanly.",
   })
 })
 
@@ -1291,16 +1365,20 @@ test("keeps unknown tool events available for diagnostic fallback", () => {
 
 function createResults({
   openingHandLlmRuns = [],
+  reportLlmRuns = [],
   turnLlmRuns = [],
 }: {
   openingHandLlmRuns?: SimulationDebugLlmRun[]
+  reportLlmRuns?: SimulationDebugLlmRun[]
   turnLlmRuns?: SimulationDebugLlmRun[]
 } = {}): SimulationResultsInfo {
   return {
     simulationId: "simulation-id",
     openingHandLlmRunCount: openingHandLlmRuns.length,
+    reportLlmRunCount: reportLlmRuns.length,
     turnLlmRunCount: turnLlmRuns.length,
     openingHandLlmRuns,
+    reportLlmRuns,
     turnLlmRuns,
   }
 }
@@ -1316,6 +1394,7 @@ function createRun(overrides: {
   failedAt?: string | null
   openrouterGenerations?: SimulationDebugLlmRun["openrouterGenerations"]
   provider?: string
+  report?: string
   startedAt?: string | null
   status?: string
   turnNumber?: number
@@ -1336,6 +1415,7 @@ function createRun(overrides: {
     failedAt: overrides.failedAt ?? null,
     cancelledAt: overrides.cancelledAt ?? null,
     turnNumber: overrides.turnNumber,
+    report: overrides.report,
     openrouterGenerations: overrides.openrouterGenerations ?? [],
     chunks: overrides.chunks ?? [],
   }

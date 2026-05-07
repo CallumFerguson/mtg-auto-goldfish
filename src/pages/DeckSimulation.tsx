@@ -22,6 +22,7 @@ import {
   Dices,
   Eye,
   EyeOff,
+  FileText,
   LoaderCircle,
   MoreVertical,
   Plus,
@@ -94,12 +95,12 @@ type OpeningHandCardOption = {
 
 type SimulationResultsAction =
   | {
-    kind: "opening_hand"
-  }
+      kind: "opening_hand"
+    }
   | {
-    kind: "turn"
-    turnNumber: number
-  }
+      kind: "turn"
+      turnNumber: number
+    }
 
 const DEFAULT_TURNS_TO_SIMULATE = "1"
 const ACTIVITY_PANEL_EXIT_FALLBACK_MS = 350
@@ -164,14 +165,17 @@ function getSimulationLabel(simulation: Simulation) {
 function getSimulationRunCountFromResults(resultsInfo: SimulationResultsInfo) {
   return (
     getCurrentOpeningHandRunCount(resultsInfo) +
-    resultsInfo.turnLlmRuns.filter(isCountedTurnRun).length
+    resultsInfo.turnLlmRuns.filter(isCountedTurnRun).length +
+    resultsInfo.reportLlmRuns.filter(isCountedReportRun).length
   )
 }
 
 function getActiveLlmRunCountFromResults(resultsInfo: SimulationResultsInfo) {
-  return [...resultsInfo.openingHandLlmRuns, ...resultsInfo.turnLlmRuns].filter(
-    (run) => isActiveLlmRunStatus(run.status)
-  ).length
+  return [
+    ...resultsInfo.openingHandLlmRuns,
+    ...resultsInfo.turnLlmRuns,
+    ...resultsInfo.reportLlmRuns,
+  ].filter((run) => isActiveLlmRunStatus(run.status)).length
 }
 
 function isActiveLlmRunStatus(status: string) {
@@ -344,6 +348,7 @@ export function DeckSimulation({
   const [turnsToSimulate, setTurnsToSimulate] = useState(
     DEFAULT_TURNS_TO_SIMULATE
   )
+  const [autoGenerateReport, setAutoGenerateReport] = useState(false)
   const [openingHandMode, setOpeningHandMode] = useState<
     "simulate" | "provide"
   >("simulate")
@@ -607,6 +612,7 @@ export function DeckSimulation({
     setSeedMode("random")
     setSelectedSavedSeedId(savedSeeds[0]?.id ?? "")
     setTurnsToSimulate(DEFAULT_TURNS_TO_SIMULATE)
+    setAutoGenerateReport(false)
     setOpeningHandMode("simulate")
     setSelectedOpeningHandId(startingHands[0]?.id ?? "")
   }
@@ -642,6 +648,7 @@ export function DeckSimulation({
                 ? createRandomSimulationSeed()
                 : selectedSavedSeed?.seed,
             turnsToSimulate: parsedTurnsToSimulate,
+            autoGenerateReport,
             startingHandId:
               openingHandMode === "provide" && selectedOpeningHand
                 ? selectedOpeningHand.id
@@ -743,10 +750,11 @@ export function DeckSimulation({
           >
             <div className="simulation-sidebar-surface sticky top-0 z-10 px-2 pt-2 pb-1">
               <button
-                className={`flex h-11 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium transition-colors ${isNewSimulationSelected
+                className={`flex h-11 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium transition-colors ${
+                  isNewSimulationSelected
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                  }`}
+                }`}
                 type="button"
                 aria-pressed={isNewSimulationSelected}
                 onClick={() => {
@@ -759,8 +767,9 @@ export function DeckSimulation({
                 New simulation
               </button>
               <div
-                className={`absolute right-0 bottom-0 left-0 border-b border-border transition-opacity ${isSimulationListScrolled ? "opacity-100" : "opacity-0"
-                  }`}
+                className={`absolute right-0 bottom-0 left-0 border-b border-border transition-opacity ${
+                  isSimulationListScrolled ? "opacity-100" : "opacity-0"
+                }`}
               />
             </div>
 
@@ -788,11 +797,12 @@ export function DeckSimulation({
                   {simulations.map((simulation) => (
                     <li key={simulation.id} className="group relative">
                       <button
-                        className={`h-11 w-full rounded-md pr-11 pl-3 text-left text-sm font-medium transition-colors ${!isNewSimulationSelected &&
-                            selectedSimulationId === simulation.id
+                        className={`h-11 w-full rounded-md pr-11 pl-3 text-left text-sm font-medium transition-colors ${
+                          !isNewSimulationSelected &&
+                          selectedSimulationId === simulation.id
                             ? "bg-accent text-accent-foreground"
                             : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                          }`}
+                        }`}
                         type="button"
                         aria-pressed={
                           !isNewSimulationSelected &&
@@ -809,13 +819,14 @@ export function DeckSimulation({
                         {getSimulationLabel(simulation)}
                       </button>
                       {simulation.activeLlmRunCount > 0 &&
-                        (isNewSimulationSelected ||
-                          selectedSimulationId !== simulation.id) ? (
+                      (isNewSimulationSelected ||
+                        selectedSimulationId !== simulation.id) ? (
                         <div
-                          className={`pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-muted-foreground transition-opacity group-hover:opacity-0 ${openSimulationMenuId === simulation.id
+                          className={`pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-muted-foreground transition-opacity group-hover:opacity-0 ${
+                            openSimulationMenuId === simulation.id
                               ? "opacity-0"
                               : "opacity-100"
-                            }`}
+                          }`}
                           aria-hidden="true"
                         >
                           <svg
@@ -837,10 +848,11 @@ export function DeckSimulation({
                         </div>
                       ) : null}
                       <div
-                        className={`absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${openSimulationMenuId === simulation.id
+                        className={`absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${
+                          openSimulationMenuId === simulation.id
                             ? "opacity-100"
                             : ""
-                          }`}
+                        }`}
                       >
                         <Button
                           type="button"
@@ -923,10 +935,11 @@ export function DeckSimulation({
                       </legend>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${seedMode === "random"
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            seedMode === "random"
                               ? "border-ring bg-accent text-accent-foreground"
                               : "border-border bg-background/35 text-muted-foreground"
-                            }`}
+                          }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -938,10 +951,11 @@ export function DeckSimulation({
                           Random seed
                         </label>
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${seedMode === "set"
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            seedMode === "set"
                               ? "border-ring bg-accent text-accent-foreground"
                               : "border-border bg-background/35 text-muted-foreground"
-                            }`}
+                          }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1055,16 +1069,29 @@ export function DeckSimulation({
                       </select>
                     </div>
 
+                    <label className="flex items-center gap-2 rounded-md border border-border bg-background/35 px-3 py-3 text-sm text-muted-foreground transition-colors has-checked:border-ring has-checked:bg-accent has-checked:text-accent-foreground">
+                      <input
+                        className="size-4 accent-sky-300"
+                        type="checkbox"
+                        checked={autoGenerateReport}
+                        onChange={(event) =>
+                          setAutoGenerateReport(event.target.checked)
+                        }
+                      />
+                      Auto-generate report after final turn
+                    </label>
+
                     <fieldset className="grid gap-3">
                       <legend className="text-sm font-medium text-foreground">
                         Opening hand
                       </legend>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${openingHandMode === "simulate"
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            openingHandMode === "simulate"
                               ? "border-ring bg-accent text-accent-foreground"
                               : "border-border bg-background/35 text-muted-foreground"
-                            }`}
+                          }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1076,10 +1103,11 @@ export function DeckSimulation({
                           Simulate opening hand
                         </label>
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${openingHandMode === "provide"
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
+                            openingHandMode === "provide"
                               ? "border-ring bg-accent text-accent-foreground"
                               : "border-border bg-background/35 text-muted-foreground"
-                            }`}
+                          }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1409,6 +1437,14 @@ function SimulationDetailsModal({
                     {shouldSimulateOpeningHand ? "Yes" : "No"}
                   </dd>
                 </div>
+                <div className="rounded-md border border-border bg-background/35 p-3">
+                  <dt className="text-muted-foreground">
+                    Auto-generate report
+                  </dt>
+                  <dd className="mt-1 font-medium text-foreground">
+                    {simulation.autoGenerateReport ? "Yes" : "No"}
+                  </dd>
+                </div>
               </dl>
 
               {!shouldSimulateOpeningHand ? (
@@ -1498,6 +1534,8 @@ function SimulationDetails({
   )
   const [isStartingTurnRun, setIsStartingTurnRun] = useState(false)
   const [turnRunError, setTurnRunError] = useState<string | null>(null)
+  const [isStartingReportRun, setIsStartingReportRun] = useState(false)
+  const [reportRunError, setReportRunError] = useState<string | null>(null)
   const [isStoppingSimulation, setIsStoppingSimulation] = useState(false)
   const [stopSimulationError, setStopSimulationError] = useState<string | null>(
     null
@@ -1530,7 +1568,11 @@ function SimulationDetails({
       return []
     }
 
-    return [...resultsInfo.openingHandLlmRuns, ...resultsInfo.turnLlmRuns]
+    return [
+      ...resultsInfo.openingHandLlmRuns,
+      ...resultsInfo.turnLlmRuns,
+      ...resultsInfo.reportLlmRuns,
+    ]
   }, [resultsInfo])
   const selectedActivityRun = useMemo(() => {
     if (selectedActivityRunId === null) {
@@ -1685,6 +1727,8 @@ function SimulationDetails({
     setOpeningHandRunError(null)
     setIsStartingTurnRun(false)
     setTurnRunError(null)
+    setIsStartingReportRun(false)
+    setReportRunError(null)
     setIsStoppingSimulation(false)
     setStopSimulationError(null)
     resultsEventSourceRef.current?.close()
@@ -1756,6 +1800,7 @@ function SimulationDetails({
       !shouldSimulateOpeningHand ||
       isStartingOpeningHandRun ||
       isStartingTurnRun ||
+      isStartingReportRun ||
       isStoppingSimulation
     ) {
       return
@@ -1764,6 +1809,7 @@ function SimulationDetails({
     setIsStartingOpeningHandRun(true)
     setOpeningHandRunError(null)
     setTurnRunError(null)
+    setReportRunError(null)
 
     try {
       const stopResult = await stopSimulation()
@@ -1797,7 +1843,12 @@ function SimulationDetails({
   }
 
   async function handleStartTurnRun(turnNumber: number) {
-    if (isStartingTurnRun || isStartingOpeningHandRun || isStoppingSimulation) {
+    if (
+      isStartingTurnRun ||
+      isStartingOpeningHandRun ||
+      isStartingReportRun ||
+      isStoppingSimulation
+    ) {
       return
     }
 
@@ -1809,6 +1860,7 @@ function SimulationDetails({
     setIsStartingTurnRun(true)
     setTurnRunError(null)
     setOpeningHandRunError(null)
+    setReportRunError(null)
 
     try {
       const stopResult = await stopSimulation()
@@ -1842,6 +1894,44 @@ function SimulationDetails({
       setTurnRunError("Turn run could not be sent to the server.")
     } finally {
       setIsStartingTurnRun(false)
+    }
+  }
+
+  async function handleStartReportRun() {
+    if (
+      isStartingReportRun ||
+      isStartingTurnRun ||
+      isStartingOpeningHandRun ||
+      isStoppingSimulation
+    ) {
+      return
+    }
+
+    setIsStartingReportRun(true)
+    setReportRunError(null)
+    setTurnRunError(null)
+    setOpeningHandRunError(null)
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/decks/${deckId}/simulations/${simulation.id}/report-llm-runs`,
+        {
+          method: "POST",
+        }
+      )
+
+      if (!response.ok) {
+        setReportRunError(
+          await readApiError(response, "Report run could not be started.")
+        )
+        return
+      }
+
+      setResultsStreamRestartKey((currentKey) => currentKey + 1)
+    } catch {
+      setReportRunError("Report run could not be sent to the server.")
+    } finally {
+      setIsStartingReportRun(false)
     }
   }
 
@@ -2022,10 +2112,12 @@ function SimulationDetails({
           {resultsInfo ? (
             <SimulationResultsPanel
               isStartingOpeningHandRun={isStartingOpeningHandRun}
+              isStartingReportRun={isStartingReportRun}
               isStartingTurnRun={isStartingTurnRun}
               isLoadingStartingHand={isLoadingStartingHand}
               isStoppingSimulation={isStoppingSimulation}
               onStartOpeningHandRun={() => void handleStartOpeningHandRun()}
+              onStartReportRun={() => void handleStartReportRun()}
               onKeepResultsScrolledToBottom={keepResultsScrolledToBottom}
               onScrollResultsToBottomIfKept={scrollResultsToBottomIfKept}
               onSelectActivityRun={toggleActivityRun}
@@ -2034,6 +2126,7 @@ function SimulationDetails({
               }
               onStopSimulation={() => void handleStopSimulation()}
               openingHandRunError={openingHandRunError}
+              reportRunError={reportRunError}
               resultsInfo={resultsInfo}
               selectedActivityRunId={selectedActivityRunId}
               simulation={simulation}
@@ -2159,6 +2252,7 @@ function SimulationDebugModal({
 
 function SimulationResultsPanel({
   isStartingOpeningHandRun,
+  isStartingReportRun,
   isStartingTurnRun,
   isLoadingStartingHand,
   isStoppingSimulation,
@@ -2167,8 +2261,10 @@ function SimulationResultsPanel({
   onScrollResultsToBottomIfKept,
   onSelectActivityRun,
   onStartTurnRun,
+  onStartReportRun,
   onStopSimulation,
   openingHandRunError,
+  reportRunError,
   resultsInfo,
   selectedActivityRunId,
   simulation,
@@ -2178,6 +2274,7 @@ function SimulationResultsPanel({
   turnRunError,
 }: {
   isStartingOpeningHandRun: boolean
+  isStartingReportRun: boolean
   isStartingTurnRun: boolean
   isLoadingStartingHand: boolean
   isStoppingSimulation: boolean
@@ -2186,8 +2283,10 @@ function SimulationResultsPanel({
   onScrollResultsToBottomIfKept: () => void
   onSelectActivityRun: (llmRunId: string) => void
   onStartTurnRun: (turnNumber: number) => void
+  onStartReportRun: () => void
   onStopSimulation: () => void
   openingHandRunError: string | null
+  reportRunError: string | null
   resultsInfo: SimulationResultsInfo
   selectedActivityRunId: string | null
   simulation: Simulation
@@ -2204,6 +2303,9 @@ function SimulationResultsPanel({
   const isTurnRunning = resultsInfo.turnLlmRuns.some((run) =>
     isActiveLlmRunStatus(run.status)
   )
+  const isReportRunning = resultsInfo.reportLlmRuns.some((run) =>
+    isActiveLlmRunStatus(run.status)
+  )
   const activeTurnNumbers = new Set(
     resultsInfo.turnLlmRuns
       .filter(
@@ -2213,12 +2315,17 @@ function SimulationResultsPanel({
       .map((run) => run.turnNumber as number)
   )
   const isStartingSimulationRun =
-    isStartingOpeningHandRun || isStartingTurnRun || isStoppingSimulation
+    isStartingOpeningHandRun ||
+    isStartingTurnRun ||
+    isStartingReportRun ||
+    isStoppingSimulation
   const isSimulationActionBlocked =
     isStartingSimulationRun ||
     isOpeningHandRunning ||
     isTurnRunning ||
+    isReportRunning ||
     simulation.activeLlmRunCount > 0
+  const canStartReportRun = !isSimulationActionBlocked
   const latestOpeningHandRun = resultsInfo.openingHandLlmRuns.reduce<
     SimulationResultsInfo["openingHandLlmRuns"][number] | null
   >((latestRun, run) => {
@@ -2335,7 +2442,7 @@ function SimulationResultsPanel({
     }
   }, [onScrollResultsToBottomIfKept, renderedSimulationAction])
 
-  const actionError = openingHandRunError ?? turnRunError
+  const actionError = openingHandRunError ?? turnRunError ?? reportRunError
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
       ...run,
@@ -2357,6 +2464,18 @@ function SimulationResultsPanel({
       isActive: isActiveLlmRunStatus(run.status),
       resultKind: "turn" as const,
       resultLabel: `Turn ${run.turnNumber ?? "?"} attempt ${run.attemptNumber}`,
+      resultEntries: getSimulationResultEntries(run.chunks),
+      activeToolCallName: getSimulationRunActiveToolCallName(run.chunks),
+      hasFinalParsedOutputChunk: hasSimulationRunFinalParsedOutputChunk(
+        run.chunks
+      ),
+    })),
+    ...resultsInfo.reportLlmRuns.map((run) => ({
+      ...run,
+      canRerun: !isSimulationActionBlocked,
+      isActive: isActiveLlmRunStatus(run.status),
+      resultKind: "report" as const,
+      resultLabel: `Report attempt ${run.attemptNumber}`,
       resultEntries: getSimulationResultEntries(run.chunks),
       activeToolCallName: getSimulationRunActiveToolCallName(run.chunks),
       hasFinalParsedOutputChunk: hasSimulationRunFinalParsedOutputChunk(
@@ -2432,16 +2551,25 @@ function SimulationResultsPanel({
                   aria-label={
                     run.resultKind === "opening_hand"
                       ? "Rerun opening hand"
-                      : `Rerun turn ${run.turnNumber}`
+                      : run.resultKind === "report"
+                        ? "Rerun report"
+                        : `Rerun turn ${run.turnNumber}`
                   }
                   title={
                     run.resultKind === "opening_hand"
                       ? "Rerun opening hand"
-                      : `Rerun turn ${run.turnNumber}`
+                      : run.resultKind === "report"
+                        ? "Rerun report"
+                        : `Rerun turn ${run.turnNumber}`
                   }
                   onClick={() => {
                     if (run.resultKind === "opening_hand") {
                       onStartOpeningHandRun()
+                      return
+                    }
+
+                    if (run.resultKind === "report") {
+                      onStartReportRun()
                       return
                     }
 
@@ -2506,29 +2634,42 @@ function SimulationResultsPanel({
         </p>
       ) : null}
 
-      <div className="flex min-h-8 justify-center">
+      <div className="flex min-h-8 flex-wrap justify-center gap-2">
         {renderedSimulationAction ? (
-          <div>
-            <Button
-              className="w-fit bg-background/35 text-foreground hover:bg-muted/45"
-              variant="outline"
-              type="button"
-              onClick={() => {
-                if (renderedSimulationAction.kind === "opening_hand") {
-                  onStartOpeningHandRun()
-                  return
-                }
+          <Button
+            className="w-fit bg-background/35 text-foreground hover:bg-muted/45"
+            variant="outline"
+            type="button"
+            onClick={() => {
+              if (renderedSimulationAction.kind === "opening_hand") {
+                onStartOpeningHandRun()
+                return
+              }
 
-                onKeepResultsScrolledToBottom()
-                onStartTurnRun(renderedSimulationAction.turnNumber)
-              }}
-            >
-              <Sparkles data-icon="inline-start" />
-              {renderedSimulationAction.kind === "opening_hand"
-                ? "Simulate opening hand"
-                : "Simulate next turn"}
-            </Button>
-          </div>
+              onKeepResultsScrolledToBottom()
+              onStartTurnRun(renderedSimulationAction.turnNumber)
+            }}
+          >
+            <Sparkles data-icon="inline-start" />
+            {renderedSimulationAction.kind === "opening_hand"
+              ? "Simulate opening hand"
+              : "Simulate next turn"}
+          </Button>
+        ) : null}
+        {canStartReportRun ? (
+          <Button
+            className="w-fit bg-background/35 text-foreground hover:bg-muted/45"
+            variant="outline"
+            type="button"
+            disabled={isStartingSimulationRun}
+            onClick={() => {
+              onKeepResultsScrolledToBottom()
+              onStartReportRun()
+            }}
+          >
+            <FileText data-icon="inline-start" />
+            Generate report
+          </Button>
         ) : null}
       </div>
     </div>
@@ -2567,6 +2708,10 @@ function SimulationResultChunkCards({
         : finalParsedOutputEntryIndex
   const shouldAppendFinishedThinkingStatus =
     finishedThinkingStatus !== null && finishedThinkingStatusIndex === -1
+  const liveReport =
+    run.phase === "report" && finalParsedOutputEntryIndex === -1
+      ? getReportTextFromChunks(run.chunks)
+      : null
 
   function renderEntry(entry: SimulationResultEntry) {
     if (entry.type === "turn_action_log") {
@@ -2601,6 +2746,13 @@ function SimulationResultChunkCards({
 
   return (
     <div className="grid gap-2">
+      {liveReport ? (
+        <div
+          className={`grid gap-3 p-3 ${simulationResultChunkSurfaceClassName}`}
+        >
+          <SimulationReportMarkdown report={liveReport} />
+        </div>
+      ) : null}
       {entries.map((entry, index) => (
         <Fragment key={entry.id}>
           {index === finishedThinkingStatusIndex
@@ -2612,6 +2764,22 @@ function SimulationResultChunkCards({
       {shouldAppendFinishedThinkingStatus ? finishedThinkingStatus : null}
     </div>
   )
+}
+
+function getReportTextFromChunks(
+  chunks: readonly SimulationDebugLlmRunChunk[]
+) {
+  const report = [...chunks]
+    .sort(
+      (firstChunk, secondChunk) => firstChunk.sequence - secondChunk.sequence
+    )
+    .map((chunk) =>
+      chunk.kind === "message_delta" ? (chunk.outputDelta ?? "") : ""
+    )
+    .join("")
+    .trim()
+
+  return report.length > 0 ? report : null
 }
 
 function SimulationResultThinkingStatus({
@@ -2659,9 +2827,9 @@ function SimulationResultThinkingStatus({
     activeToolCallName === null
       ? null
       : getKnownSimulationResultToolLabel({
-        mcpFunctionName: activeToolCallName,
-        state: "active",
-      })
+          mcpFunctionName: activeToolCallName,
+          state: "active",
+        })
   const activeElapsedText =
     runStartTimeMs === null || isFinished
       ? null
@@ -2678,7 +2846,7 @@ function SimulationResultThinkingStatus({
     <div className="grid gap-2 py-1 select-none">
       <div className="flex min-w-0 items-center justify-between gap-2">
         <button
-          className="group inline-flex min-w-0 max-w-full flex-1 items-center gap-2 rounded-sm px-0.5 py-1 text-left text-sm font-medium text-sky-200 transition-colors hover:text-sky-100 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
+          className="group inline-flex max-w-full min-w-0 flex-1 items-center gap-2 rounded-sm px-0.5 py-1 text-left text-sm font-medium text-sky-200 transition-colors hover:text-sky-100 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
           type="button"
           aria-pressed={isActivitySelected}
           title={
@@ -2699,9 +2867,7 @@ function SimulationResultThinkingStatus({
           )}
           <span className="min-w-0 truncate">{statusLabel}</span>
           {activeElapsedText ? (
-            <span
-              className="shrink-0 text-xs font-normal text-sky-100/65 tabular-nums"
-            >
+            <span className="shrink-0 text-xs font-normal text-sky-100/65 tabular-nums">
               {activeElapsedText}
             </span>
           ) : null}
@@ -2789,8 +2955,8 @@ function SimulationRunActivityPanel({
     runStartTimeMs === null
       ? null
       : formatMinutesSeconds(
-        (runFinishedTimeMs ?? currentTimeMs) - runStartTimeMs
-      )
+          (runFinishedTimeMs ?? currentTimeMs) - runStartTimeMs
+        )
   const terminalActivityStatus = useMemo(
     () => getSimulationRunTerminalActivityStatus(run.status, durationText),
     [durationText, run.status]
@@ -2860,10 +3026,7 @@ function SimulationRunActivityPanel({
     return clearExitTimeout
   }, [clearExitTimeout, finishExit, isOpen])
 
-  useEffect(() => clearCopyResetTimeout, [
-    clearCopyResetTimeout,
-    run.llmRunId,
-  ])
+  useEffect(() => clearCopyResetTimeout, [clearCopyResetTimeout, run.llmRunId])
 
   useEffect(() => {
     keepActivityScrolledDownRef.current = true
@@ -3152,15 +3315,15 @@ function SimulationRunActivityTerminalStatus({
 
 type SimulationRunActivityTimelineItem =
   | {
-    id: string
-    type: "reasoning"
-    block: Extract<SimulationRunActivityBlock, { type: "reasoning" }>
-  }
+      id: string
+      type: "reasoning"
+      block: Extract<SimulationRunActivityBlock, { type: "reasoning" }>
+    }
   | {
-    id: string
-    type: "tool_call_group"
-    blocks: Extract<SimulationRunActivityBlock, { type: "tool_call" }>[]
-  }
+      id: string
+      type: "tool_call_group"
+      blocks: Extract<SimulationRunActivityBlock, { type: "tool_call" }>[]
+    }
 
 function getSimulationRunActivityTimelineItems(
   blocks: readonly SimulationRunActivityBlock[]
@@ -3304,9 +3467,11 @@ function SimulationFinalOutputBlock({
 }) {
   return (
     <div className={`grid gap-3 p-3 ${simulationResultChunkSurfaceClassName}`}>
-      <p className="text-sm leading-6 text-muted-foreground">
-        {finalOutput.summary}
-      </p>
+      {finalOutput.type === "report" ? null : (
+        <p className="text-sm leading-6 text-muted-foreground">
+          {finalOutput.summary}
+        </p>
+      )}
 
       {finalOutput.type === "opening_hand" ? (
         <SimulationOpeningHandCardsBlock
@@ -3316,7 +3481,7 @@ function SimulationFinalOutputBlock({
             cardMentions
           )}
         />
-      ) : (
+      ) : finalOutput.type === "turn" ? (
         <details className={simulationResultChunkSurfaceClassName}>
           <summary className={simulationResultChunkSummaryClassName}>
             Game state
@@ -3325,7 +3490,17 @@ function SimulationFinalOutputBlock({
             {finalOutput.gameState}
           </p>
         </details>
+      ) : (
+        <SimulationReportMarkdown report={finalOutput.report} />
       )}
+    </div>
+  )
+}
+
+function SimulationReportMarkdown({ report }: { report: string }) {
+  return (
+    <div className={simulationActivityMarkdownClassName}>
+      <ReactMarkdown>{report}</ReactMarkdown>
     </div>
   )
 }
@@ -3504,6 +3679,18 @@ function SimulationResultEvent({
   )
 }
 
+function isCountedReportRun(
+  run: SimulationResultsInfo["reportLlmRuns"][number]
+) {
+  return (
+    run.outdated !== true &&
+    (isActiveLlmRunStatus(run.status) ||
+      run.status === "failed" ||
+      run.status === "cancelled" ||
+      (run.status === "completed" && Boolean(run.report?.trim())))
+  )
+}
+
 function SimulationResultToolLabelEvent({
   icon,
   title,
@@ -3551,19 +3738,19 @@ function SimulationResultCompletedCardToolEvent({
           </Button>
           {!showCardImages
             ? chunk.cardMentions.map((mention, index) => (
-              <a
-                key={`${mention.requestedName}-${index}`}
-                className="max-w-full rounded-full border border-sky-500/30 bg-sky-950/30 px-2.5 py-1 text-xs font-medium text-sky-100 transition-colors hover:border-sky-300/60 hover:bg-sky-900/40 hover:text-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
-                href={getCardMentionScryfallUrl(mention)}
-                target="_blank"
-                rel="noreferrer"
-                title={getCardMentionDisplayName(mention)}
-              >
-                <span className="block truncate">
-                  {getCardMentionDisplayName(mention)}
-                </span>
-              </a>
-            ))
+                <a
+                  key={`${mention.requestedName}-${index}`}
+                  className="max-w-full rounded-full border border-sky-500/30 bg-sky-950/30 px-2.5 py-1 text-xs font-medium text-sky-100 transition-colors hover:border-sky-300/60 hover:bg-sky-900/40 hover:text-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
+                  href={getCardMentionScryfallUrl(mention)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={getCardMentionDisplayName(mention)}
+                >
+                  <span className="block truncate">
+                    {getCardMentionDisplayName(mention)}
+                  </span>
+                </a>
+              ))
             : null}
         </div>
 
@@ -3734,7 +3921,7 @@ function isMcpCallFailure(chunk: SimulationDebugLlmRunChunk) {
 
   return (
     getPayloadString(asPayloadRecord(chunk.payload).item, "status") ===
-    "failed" || getMcpCallErrorPayload(chunk) !== null
+      "failed" || getMcpCallErrorPayload(chunk) !== null
   )
 }
 
@@ -3810,6 +3997,12 @@ function SimulationDebugPanel({
             {debugInfo.turnLlmRunCount}
           </dd>
         </div>
+        <div className="rounded-md border border-border bg-background/35 p-3">
+          <dt className="text-muted-foreground">Report LLM runs</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {debugInfo.reportLlmRunCount}
+          </dd>
+        </div>
       </dl>
 
       <SimulationDebugRunGroup
@@ -3822,6 +4015,12 @@ function SimulationDebugPanel({
         deckId={deckId}
         heading="Turn runs"
         runs={debugInfo.turnLlmRuns}
+        simulationId={debugInfo.simulationId}
+      />
+      <SimulationDebugRunGroup
+        deckId={deckId}
+        heading="Report runs"
+        runs={debugInfo.reportLlmRuns}
         simulationId={debugInfo.simulationId}
       />
     </div>
@@ -3907,7 +4106,7 @@ function SimulationDebugRunGroup({
             </div>
 
             {run.provider === "openrouter" &&
-              (run.openrouterGenerations?.length ?? 0) > 0 ? (
+            (run.openrouterGenerations?.length ?? 0) > 0 ? (
               <OpenRouterGenerationsTable
                 deckId={deckId}
                 generations={run.openrouterGenerations ?? []}
@@ -3923,6 +4122,17 @@ function SimulationDebugRunGroup({
                 <pre className="debug-scrollbar-neutral max-h-96 max-w-full min-w-0 overflow-y-auto p-3 text-xs leading-5 break-words whitespace-pre-wrap text-emerald-50/80">
                   {run.gameState}
                 </pre>
+              </details>
+            ) : null}
+
+            {run.report ? (
+              <details className="rounded-md border border-emerald-500/35 bg-emerald-950/20 shadow-sm shadow-emerald-950/20">
+                <summary className="cursor-pointer border-b border-emerald-500/20 px-3 py-2 text-sm font-medium text-emerald-200 transition-colors hover:text-emerald-100">
+                  Report
+                </summary>
+                <div className="p-3">
+                  <SimulationReportMarkdown report={run.report} />
+                </div>
               </details>
             ) : null}
 
@@ -3957,19 +4167,19 @@ function SimulationDebugRunGroup({
 
 type OpenRouterGenerationLookupState =
   | {
-    status: "loading"
-  }
+      status: "loading"
+    }
   | {
-    status: "loaded"
-    providerName: string | null
-    providerEntry: unknown | null
-    providerSlug: string | null
-    result: unknown
-  }
+      status: "loaded"
+      providerName: string | null
+      providerEntry: unknown | null
+      providerSlug: string | null
+      result: unknown
+    }
   | {
-    status: "error"
-    error: string
-  }
+      status: "error"
+      error: string
+    }
 
 function OpenRouterGenerationsTable({
   deckId,
@@ -4692,12 +4902,13 @@ function CreateStartingHandModal({
                     return (
                       <li key={card.id}>
                         <label
-                          className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${isSelected
+                          className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                            isSelected
                               ? "bg-accent text-accent-foreground"
                               : isDisabled
                                 ? "text-muted-foreground/55"
                                 : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                            }`}
+                          }`}
                         >
                           <input
                             className="size-4 accent-sky-300"

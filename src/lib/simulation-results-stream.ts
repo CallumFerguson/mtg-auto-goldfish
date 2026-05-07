@@ -57,15 +57,27 @@ export function upsertSimulationResultsRun(
   }
 
   if (incomingRun.phase === "turn") {
-    const turnLlmRuns = upsertRun(
-      currentResults.turnLlmRuns,
-      incomingRun
-    ).sort(compareTurnRuns)
+    const turnLlmRuns = upsertRun(currentResults.turnLlmRuns, incomingRun).sort(
+      compareTurnRuns
+    )
 
     return {
       ...currentResults,
       turnLlmRunCount: turnLlmRuns.length,
       turnLlmRuns,
+    }
+  }
+
+  if (incomingRun.phase === "report") {
+    const reportLlmRuns = upsertRun(
+      currentResults.reportLlmRuns,
+      incomingRun
+    ).sort(compareReportRuns)
+
+    return {
+      ...currentResults,
+      reportLlmRunCount: reportLlmRuns.length,
+      reportLlmRuns,
     }
   }
 
@@ -91,10 +103,16 @@ export function appendSimulationResultsRunChunk(
     llmRunId,
     chunk
   )
+  const reportLlmRuns = appendChunkToRuns(
+    currentResults.reportLlmRuns,
+    llmRunId,
+    chunk
+  )
 
   if (
     openingHandLlmRuns === currentResults.openingHandLlmRuns &&
-    turnLlmRuns === currentResults.turnLlmRuns
+    turnLlmRuns === currentResults.turnLlmRuns &&
+    reportLlmRuns === currentResults.reportLlmRuns
   ) {
     return currentResults
   }
@@ -103,6 +121,7 @@ export function appendSimulationResultsRunChunk(
     ...currentResults,
     openingHandLlmRuns,
     turnLlmRuns,
+    reportLlmRuns,
   }
 }
 
@@ -191,8 +210,7 @@ function mergeOpenRouterGenerations(
 
   return Array.from(generationsByTurn.values()).sort(
     (firstGeneration, secondGeneration) =>
-      firstGeneration.openrouterTurnIndex -
-      secondGeneration.openrouterTurnIndex
+      firstGeneration.openrouterTurnIndex - secondGeneration.openrouterTurnIndex
   )
 }
 
@@ -236,4 +254,11 @@ function compareTurnRuns(
     (firstRun.turnNumber ?? 0) - (secondRun.turnNumber ?? 0) ||
     firstRun.attemptNumber - secondRun.attemptNumber
   )
+}
+
+function compareReportRuns(
+  firstRun: SimulationDebugLlmRun,
+  secondRun: SimulationDebugLlmRun
+) {
+  return firstRun.attemptNumber - secondRun.attemptNumber
 }

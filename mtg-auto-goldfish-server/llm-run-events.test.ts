@@ -1104,6 +1104,7 @@ test("turn completion advances until the target turn then completes", () => {
   assert.deepEqual(
     getTurnCompletionDecision({
       autoSimulateNextStep: true,
+      autoGenerateReport: false,
       turnNumber: 1,
       turnsToSimulate: 3,
     }),
@@ -1120,6 +1121,7 @@ test("turn completion advances until the target turn then completes", () => {
   assert.deepEqual(
     getTurnCompletionDecision({
       autoSimulateNextStep: false,
+      autoGenerateReport: false,
       turnNumber: 1,
       turnsToSimulate: 3,
     }),
@@ -1133,12 +1135,29 @@ test("turn completion advances until the target turn then completes", () => {
   assert.deepEqual(
     getTurnCompletionDecision({
       autoSimulateNextStep: true,
+      autoGenerateReport: false,
       turnNumber: 3,
       turnsToSimulate: 3,
     }),
     {
       simulationStatus: "completed",
       nextStep: null,
+      disableAutoSimulateNextStep: false,
+      failureMessage: null,
+    }
+  )
+  assert.deepEqual(
+    getTurnCompletionDecision({
+      autoSimulateNextStep: true,
+      autoGenerateReport: true,
+      turnNumber: 3,
+      turnsToSimulate: 3,
+    }),
+    {
+      simulationStatus: "completed",
+      nextStep: {
+        type: "report",
+      },
       disableAutoSimulateNextStep: false,
       failureMessage: null,
     }

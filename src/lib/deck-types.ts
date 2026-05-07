@@ -44,6 +44,7 @@ export type Simulation = {
   seed: string
   library: string[]
   turnsToSimulate: number
+  autoGenerateReport: boolean
   completedLlmRunCount: number
   activeLlmRunCount: number
   status: SimulationStatus
@@ -71,6 +72,8 @@ export type CreateOpeningHandLlmRunResponse = {
 export type CreateTurnLlmRunResponse = CreateOpeningHandLlmRunResponse & {
   turnNumber: number
 }
+
+export type CreateReportLlmRunResponse = CreateOpeningHandLlmRunResponse
 
 export type StopSimulationResponse = {
   simulationId: string
@@ -122,6 +125,7 @@ export type SimulationDebugLlmRun = {
   cancelledAt: string | null
   turnNumber?: number
   gameState?: string
+  report?: string
   outdated?: boolean
   openingHandIsValid?: boolean
   openrouterGenerations: OpenRouterGeneration[]
@@ -132,8 +136,10 @@ export type SimulationDebugInfo = {
   simulationId: string
   openingHandLlmRunCount: number
   turnLlmRunCount: number
+  reportLlmRunCount: number
   openingHandLlmRuns: SimulationDebugLlmRun[]
   turnLlmRuns: SimulationDebugLlmRun[]
+  reportLlmRuns: SimulationDebugLlmRun[]
 }
 
 export type SimulationDebugResponse = {
