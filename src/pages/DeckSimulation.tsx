@@ -2862,9 +2862,7 @@ function SimulationRunActivityPanel({
       onTransitionEnd={handlePanelTransitionEnd}
     >
       <aside
-        className={`flex h-full min-h-0 w-[clamp(18rem,30vw,24rem)] flex-col border-l border-border bg-background/80 transition-transform duration-300 ease-out motion-reduce:transition-none ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        className="flex h-full min-h-0 w-[clamp(18rem,30vw,24rem)] flex-col border-l border-border bg-background/80"
         aria-label="Simulation activity"
       >
         <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
