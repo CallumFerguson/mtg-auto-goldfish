@@ -8,6 +8,7 @@ import {
   useState,
   type FormEvent,
   type ReactNode,
+  type TransitionEvent,
   type UIEvent,
 } from "react"
 import ReactMarkdown from "react-markdown"
@@ -95,6 +96,7 @@ type SimulationResultsAction =
   }
 
 const DEFAULT_TURNS_TO_SIMULATE = "1"
+const ACTIVITY_PANEL_EXIT_FALLBACK_MS = 350
 
 function getSimulationLabel(simulation: Simulation) {
   return `${simulation.id.slice(0, 8)} - ${simulation.completedLlmRunCount} runs`
@@ -1458,38 +1460,136 @@ function SimulationDetails({
   const [selectedActivityRunId, setSelectedActivityRunId] = useState<
     string | null
   >(null)
+  const [activityPanelRunId, setActivityPanelRunId] = useState<string | null>(
+    null
+  )
+  const [isActivityPanelOpen, setIsActivityPanelOpen] = useState(false)
+  const openActivityPanelFrameRef = useRef<number | null>(null)
   const shouldSimulateOpeningHand = simulation.startingHandId === null
+  const activityRuns = useMemo(() => {
+    if (!resultsInfo) {
+      return []
+    }
+
+    return [...resultsInfo.openingHandLlmRuns, ...resultsInfo.turnLlmRuns]
+  }, [resultsInfo])
   const selectedActivityRun = useMemo(() => {
-    if (!resultsInfo || selectedActivityRunId === null) {
+    if (selectedActivityRunId === null) {
       return null
     }
 
     return (
-      [...resultsInfo.openingHandLlmRuns, ...resultsInfo.turnLlmRuns].find(
-        (run) => run.llmRunId === selectedActivityRunId
-      ) ?? null
+      activityRuns.find((run) => run.llmRunId === selectedActivityRunId) ?? null
     )
-  }, [resultsInfo, selectedActivityRunId])
+  }, [activityRuns, selectedActivityRunId])
+  const activityPanelRun = useMemo(() => {
+    if (activityPanelRunId === null) {
+      return null
+    }
+
+    return (
+      activityRuns.find((run) => run.llmRunId === activityPanelRunId) ?? null
+    )
+  }, [activityPanelRunId, activityRuns])
 
   useEffect(() => {
     simulationRef.current = simulation
   }, [simulation])
 
+  const clearOpenActivityPanelFrame = useCallback(() => {
+    if (openActivityPanelFrameRef.current === null) {
+      return
+    }
+
+    window.cancelAnimationFrame(openActivityPanelFrameRef.current)
+    openActivityPanelFrameRef.current = null
+  }, [])
+
+  const closeActivityPanel = useCallback(() => {
+    clearOpenActivityPanelFrame()
+    setSelectedActivityRunId(null)
+    setIsActivityPanelOpen(false)
+
+    if (!isActivityPanelOpen) {
+      setActivityPanelRunId(null)
+    }
+  }, [clearOpenActivityPanelFrame, isActivityPanelOpen])
+
+  const openActivityPanel = useCallback(
+    (llmRunId: string) => {
+      clearOpenActivityPanelFrame()
+      setSelectedActivityRunId(llmRunId)
+      setActivityPanelRunId(llmRunId)
+
+      if (isActivityPanelOpen || activityPanelRunId !== null) {
+        setIsActivityPanelOpen(true)
+        return
+      }
+
+      setIsActivityPanelOpen(false)
+      openActivityPanelFrameRef.current = window.requestAnimationFrame(() => {
+        openActivityPanelFrameRef.current = null
+        setIsActivityPanelOpen(true)
+      })
+    },
+    [activityPanelRunId, clearOpenActivityPanelFrame, isActivityPanelOpen]
+  )
+
+  const toggleActivityRun = useCallback(
+    (llmRunId: string) => {
+      if (selectedActivityRunId === llmRunId) {
+        closeActivityPanel()
+        return
+      }
+
+      openActivityPanel(llmRunId)
+    },
+    [closeActivityPanel, openActivityPanel, selectedActivityRunId]
+  )
+
+  const handleActivityPanelExited = useCallback(() => {
+    setActivityPanelRunId(null)
+  }, [])
+
   useEffect(() => {
-    if (
-      selectedActivityRunId !== null &&
-      resultsInfo !== null &&
-      selectedActivityRun === null
-    ) {
+    return () => {
+      clearOpenActivityPanelFrame()
+    }
+  }, [clearOpenActivityPanelFrame])
+
+  useEffect(() => {
+    if (resultsInfo === null) {
+      return
+    }
+
+    const isSelectedRunMissing =
+      selectedActivityRunId !== null && selectedActivityRun === null
+    const isPanelRunMissing =
+      activityPanelRunId !== null && activityPanelRun === null
+
+    if (!isSelectedRunMissing && !isPanelRunMissing) {
+      return
+    }
+
+    clearOpenActivityPanelFrame()
+
+    if (isSelectedRunMissing) {
       setSelectedActivityRunId(null)
     }
-  }, [resultsInfo, selectedActivityRun, selectedActivityRunId])
 
-  const toggleActivityRun = useCallback((llmRunId: string) => {
-    setSelectedActivityRunId((currentRunId) =>
-      currentRunId === llmRunId ? null : llmRunId
-    )
-  }, [])
+    if (isPanelRunMissing) {
+      setActivityPanelRunId(null)
+    }
+
+    setIsActivityPanelOpen(false)
+  }, [
+    activityPanelRun,
+    activityPanelRunId,
+    clearOpenActivityPanelFrame,
+    resultsInfo,
+    selectedActivityRun,
+    selectedActivityRunId,
+  ])
 
   const scrollResultsToBottom = useCallback(() => {
     const resultsPanel = resultsPanelRef.current
@@ -1542,7 +1642,10 @@ function SimulationDetails({
     resultsInfoRef.current = null
     setResultsStreamRestartKey(0)
     setSelectedActivityRunId(null)
-  }, [scrollResultsToBottom, simulation.id])
+    setActivityPanelRunId(null)
+    setIsActivityPanelOpen(false)
+    clearOpenActivityPanelFrame()
+  }, [clearOpenActivityPanelFrame, scrollResultsToBottom, simulation.id])
 
   useLayoutEffect(() => {
     if (keepResultsScrolledDownRef.current) {
@@ -1888,10 +1991,12 @@ function SimulationDetails({
         </section>
       </main>
 
-      {selectedActivityRun ? (
+      {activityPanelRun ? (
         <SimulationRunActivityPanel
-          run={selectedActivityRun}
-          onClose={() => setSelectedActivityRunId(null)}
+          isOpen={isActivityPanelOpen}
+          run={activityPanelRun}
+          onClose={closeActivityPanel}
+          onExited={handleActivityPanelExited}
         />
       ) : null}
     </div>
@@ -2580,16 +2685,22 @@ function SimulationResultThinkingStatus({
 }
 
 function SimulationRunActivityPanel({
+  isOpen,
   onClose,
+  onExited,
   run,
 }: {
+  isOpen: boolean
   onClose: () => void
+  onExited: () => void
   run: SimulationDebugLlmRun
 }) {
   const activityScrollRef = useRef<HTMLDivElement | null>(null)
   const keepActivityScrolledDownRef = useRef(true)
   const isProgrammaticActivityScrollRef = useRef(false)
   const previousActivityScrollTopRef = useRef(0)
+  const exitTimeoutRef = useRef<number | null>(null)
+  const hasOpenedRef = useRef(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
   const activityBlocks = useMemo(
     () => getSimulationRunActivityBlocks(run.chunks),
@@ -2612,6 +2723,24 @@ function SimulationRunActivityPanel({
     [durationText, run.status]
   )
 
+  const clearExitTimeout = useCallback(() => {
+    if (exitTimeoutRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(exitTimeoutRef.current)
+    exitTimeoutRef.current = null
+  }, [])
+
+  const finishExit = useCallback(() => {
+    if (isOpen) {
+      return
+    }
+
+    clearExitTimeout()
+    onExited()
+  }, [clearExitTimeout, isOpen, onExited])
+
   const scrollActivityToBottom = useCallback(() => {
     const activityScrollElement = activityScrollRef.current
 
@@ -2629,6 +2758,25 @@ function SimulationRunActivityPanel({
       isProgrammaticActivityScrollRef.current = false
     })
   }, [])
+
+  useEffect(() => {
+    if (isOpen) {
+      hasOpenedRef.current = true
+      clearExitTimeout()
+      return
+    }
+
+    if (!hasOpenedRef.current) {
+      return
+    }
+
+    exitTimeoutRef.current = window.setTimeout(
+      finishExit,
+      ACTIVITY_PANEL_EXIT_FALLBACK_MS
+    )
+
+    return clearExitTimeout
+  }, [clearExitTimeout, finishExit, isOpen])
 
   useEffect(() => {
     keepActivityScrolledDownRef.current = true
@@ -2695,65 +2843,85 @@ function SimulationRunActivityPanel({
     previousActivityScrollTopRef.current = activityScrollElement.scrollTop
   }
 
-  return (
-    <aside
-      className="flex h-full min-h-0 w-[clamp(18rem,30vw,24rem)] shrink-0 flex-col border-l border-border bg-background/80"
-      aria-label="Simulation activity"
-    >
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
-          {durationText ? `Activity • ${durationText}` : "Activity"}
-        </h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close activity"
-          title="Close activity"
-          onClick={onClose}
-        >
-          <X />
-        </Button>
-      </header>
+  function handlePanelTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
+    if (
+      event.target !== event.currentTarget ||
+      event.propertyName !== "width"
+    ) {
+      return
+    }
 
-      <div
-        ref={activityScrollRef}
-        className="simulation-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-5"
-        onScroll={handleActivityScroll}
+    finishExit()
+  }
+
+  return (
+    <div
+      className={`h-full min-h-0 shrink-0 overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none ${
+        isOpen ? "w-[clamp(18rem,30vw,24rem)]" : "w-0"
+      }`}
+      onTransitionEnd={handlePanelTransitionEnd}
+    >
+      <aside
+        className={`flex h-full min-h-0 w-[clamp(18rem,30vw,24rem)] flex-col border-l border-border bg-background/80 transition-transform duration-300 ease-out motion-reduce:transition-none ${
+          isOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+        aria-label="Simulation activity"
       >
-        <div className="grid gap-4">
-          {activityTimelineItems.length > 0 ? (
-            <>
-              <p className="text-base font-semibold text-sky-100">Thinking</p>
+        <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
+            {durationText ? `Activity • ${durationText}` : "Activity"}
+          </h3>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close activity"
+            title="Close activity"
+            onClick={onClose}
+          >
+            <X />
+          </Button>
+        </header>
+
+        <div
+          ref={activityScrollRef}
+          className="simulation-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-5"
+          onScroll={handleActivityScroll}
+        >
+          <div className="grid gap-4">
+            {activityTimelineItems.length > 0 ? (
+              <>
+                <p className="text-base font-semibold text-sky-100">Thinking</p>
+                <div className="grid gap-5">
+                  {activityTimelineItems.map((item) => (
+                    <SimulationRunActivityTimelineItemView
+                      key={item.id}
+                      item={item}
+                    />
+                  ))}
+                  {terminalActivityStatus ? (
+                    <SimulationRunActivityTerminalStatus
+                      status={terminalActivityStatus}
+                    />
+                  ) : null}
+                </div>
+              </>
+            ) : (
               <div className="grid gap-5">
-                {activityTimelineItems.map((item) => (
-                  <SimulationRunActivityTimelineItemView
-                    key={item.id}
-                    item={item}
-                  />
-                ))}
+                <p className="text-sm text-muted-foreground">
+                  No activity recorded yet.
+                </p>
                 {terminalActivityStatus ? (
                   <SimulationRunActivityTerminalStatus
                     status={terminalActivityStatus}
                   />
                 ) : null}
               </div>
-            </>
-          ) : (
-            <div className="grid gap-5">
-              <p className="text-sm text-muted-foreground">
-                No activity recorded yet.
-              </p>
-              {terminalActivityStatus ? (
-                <SimulationRunActivityTerminalStatus
-                  status={terminalActivityStatus}
-                />
-              ) : null}
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </div>
   )
 }
 
