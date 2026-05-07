@@ -503,6 +503,16 @@ export function DeckSimulation({
     (seedMode === "random" || Boolean(selectedSavedSeed)) &&
     turnsToSimulate.length > 0 &&
     (openingHandMode !== "provide" || Boolean(selectedOpeningHand))
+  const parsedTurnsToSimulateForForm = Number(turnsToSimulate)
+  const canAutoGenerateReport =
+    Number.isInteger(parsedTurnsToSimulateForForm) &&
+    parsedTurnsToSimulateForForm > 0
+
+  useEffect(() => {
+    if (!canAutoGenerateReport) {
+      setAutoGenerateReport(false)
+    }
+  }, [canAutoGenerateReport])
 
   const loadSimulations = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -737,7 +747,7 @@ export function DeckSimulation({
                 ? createRandomSimulationSeed()
                 : selectedSavedSeed?.seed,
             turnsToSimulate: parsedTurnsToSimulate,
-            autoGenerateReport,
+            autoGenerateReport: autoGenerateReport && canAutoGenerateReport,
             startingHandId:
               openingHandMode === "provide" && selectedOpeningHand
                 ? selectedOpeningHand.id
@@ -1158,11 +1168,12 @@ export function DeckSimulation({
                       </select>
                     </div>
 
-                    <label className="flex items-center gap-2 rounded-md border border-border bg-background/35 px-3 py-3 text-sm text-muted-foreground transition-colors has-checked:border-ring has-checked:bg-accent has-checked:text-accent-foreground">
+                    <label className="flex items-center gap-2 rounded-md border border-border bg-background/35 px-3 py-3 text-sm text-muted-foreground transition-colors has-checked:border-ring has-checked:bg-accent has-checked:text-accent-foreground has-disabled:cursor-not-allowed has-disabled:opacity-50">
                       <input
                         className="size-4 accent-sky-300"
                         type="checkbox"
-                        checked={autoGenerateReport}
+                        checked={canAutoGenerateReport && autoGenerateReport}
+                        disabled={!canAutoGenerateReport}
                         onChange={(event) =>
                           setAutoGenerateReport(event.target.checked)
                         }
