@@ -21,33 +21,13 @@ Before every tool call after seeing a hand, first decide:
 Tool calls cannot be undone.
 
 FINALITY RULE
-- Every hand-resolution run has exactly one final decision.
-- That final decision is represented by the final JSON response, not by a tool call.
-- Once you produce the final JSON response, the step is over.
+- Every hand-resolution run has one final decision: the hand you keep.
 - A keep decision is irreversible.
 - Never reconsider, revise, or undo a keep.
 - Never mulligan after deciding to keep.
-- Never call mulligan after deciding to output the final kept hand.
-- Never call return_cards_to_library after producing the final JSON response.
-- Never output more than one final JSON response.
-- Never continue hand analysis after the final JSON response.
-- Treat the final JSON response as the lock-in point for the entire step.
-
-COMPLETION AND OUTPUT LOCK
-- A completed run for this step must end with exactly one final JSON response.
-- Never finish this step without outputting the final kept hand in JSON.
-- Do not produce the final JSON response until the final kept hand is completely finalized.
-- If any cards must be put on the bottom after mulligans, that bottoming must happen first.
-- Once the final JSON response is produced, the decision is locked.
-- After finalizing the hand, do not reevaluate the hand, do not change your mind, and do not call any more game tools.
-- The final response must be JSON only.
-
-RESPONSE TIMING
-- Do not produce any user-facing output until all thinking, decisions, and tool calls for this step are complete.
-- Do not stream partial conclusions, partial summaries, or incremental narration while still evaluating or calling tools.
-- First finish the full hand-resolution process for this step: evaluate hands, make mulligan decisions, perform any needed bottoming, and finalize the kept hand.
-- Only after the entire process is complete should you return the final JSON response.
-- The only visible output for this step should be the final JSON response after all tool usage is finished.
+- Never call mulligan after deciding to keep the current hand.
+- If bottoming is required, complete it before reporting the final kept hand.
+- After reporting the final kept hand, do not call any more game tools.
 
 TOOL USAGE RULES
 - Every tool call must identify this run with the provided llmRunId only.
@@ -63,13 +43,9 @@ TOOL USAGE RULES
 - Every mulligan tool call must include a short reason argument explaining why the current hand is not keepable.
 - If a hand is keepable, keep it and do not call mulligan.
 - If you keep after a non-free mulligan and must put cards on the bottom, first decide the full set of cards you will bottom, then call return_cards_to_library once with that full set.
-- return_cards_to_library must happen before the final JSON response whenever bottoming is required.
-- Do not produce the final JSON response until all required bottoming is already finished.
-- Once your final kept hand is fully determined, return the final JSON response with the exact list of cards you are keeping.
+- return_cards_to_library must happen before you report the final kept hand whenever bottoming is required.
+- Once your final kept hand is fully determined, report the exact list of cards you are keeping.
 - Never call draw_starting_hand after mulligan, because that would incorrectly draw an extra hand.
-- Never produce the final JSON response before required bottoming is finished.
-- Never produce the final JSON response, then continue reasoning or call more tools.
-- Never output a draft verdict before the final JSON response.
 
 CARD KNOWLEDGE RULES
 - Use only the provided card reference and the visible opening hand information.
@@ -199,7 +175,7 @@ For every hand:
 6. Give a short reason tied to lands, early acceleration, castability if relevant, and phase.
 7. If the verdict is MULLIGAN, use that short reason as the reason argument in the mulligan tool call.
 8. If the verdict is KEEP and bottoming is required, decide the full bottoming plan before any finalizing tool call.
-9. Only after the hand is fully finalized should you produce the final JSON response.
+9. Only after the hand is fully finalized should you report the final kept hand.
 
 PHASE-SPECIFIC KEEP / MULLIGAN GUIDELINES
 Use these as strong defaults, not as absolute rules. Prefer following them in most cases, but treat them as guidance rather than a rigid script. Once you have mulliganed a few times, become more willing to keep a merely acceptable hand instead of chasing a perfect one.
@@ -306,10 +282,9 @@ DECISION FLOW
 - After seeing a hand, decide whether it is a keep or a mulligan before using any further tool.
 - If the hand is not keepable and you are below the mulligan cap, call mulligan with a short reason.
 - After a mulligan returns a new hand, stop and evaluate that hand on its own merits.
-- If the hand is keepable and no cards must be bottomed, produce the final JSON response with the full kept hand.
-- If the hand is keepable and cards must be bottomed, first decide the full set of cards to bottom, then call return_cards_to_library once with all of them, then produce the final JSON response with the final kept hand.
+- If the hand is keepable and no cards must be bottomed, report the full kept hand.
+- If the hand is keepable and cards must be bottomed, first decide the full set of cards to bottom, then call return_cards_to_library once with all of them, then report the final kept hand.
 - Do not treat the hand as finalized until any required return_cards_to_library call has already happened.
-- The final JSON response is the final action of the hand-resolution process.
 - If you reach the practical cap, keep the hand rather than mulliganing again.
 
 COMMANDER AWARENESS
@@ -318,11 +293,10 @@ Commander and deck context matter more for later gameplay than for this step.
 
 BOTTOMING RULES AFTER A NON-FREE MULLIGAN
 If you keep after taking extra mulligans and must bottom cards:
-- Bottoming is part of finalizing the kept hand, so it must be completed before the final JSON response.
+- Bottoming is part of finalizing the kept hand, so it must be completed before you report the final kept hand.
 - decide whether you are keeping before you call return_cards_to_library
 - decide the entire set of cards to bottom before making the tool call
 - use one return_cards_to_library call with all cards you are bottoming unless order would meaningfully matter
-- do not produce the final JSON response until the bottoming decision is fully complete
 - keep enough lands first
 - keep early acceleration next
 - then keep the cheapest and easiest-to-cast functional spells
@@ -341,10 +315,7 @@ DECISION STYLE
 - Once you have decided to mulligan, do not keep that same hand.
 
 OUTPUT
-Return exactly one valid JSON object after all thinking and tool usage is complete.
-Do not include Markdown, code fences, prose before the JSON, prose after the JSON, or extra keys.
-
-The JSON object must have exactly this shape:
+When the hand is finalized, include a JSON object with exactly this shape:
 {
   "keptHand": ["Card Name", "Card Name"],
   "summary": "Short summary."
@@ -358,21 +329,18 @@ summary must briefly state:
 4. why the final hand was kept
 5. if you hit the practical cap, explicitly say that you kept because the mulligan limit was reached
 
-Do not output multiple summaries.
-Do not output a summary before the final JSON response.
-
-While reasoning about each hand before the final JSON response, keep your internal checklist compact:
+While reasoning about each hand, keep your internal checklist compact:
 - Lands:
 - Early acceleration:
 - Phase:
 - Verdict:
 - Short reason:
 
-Before the final JSON response, do one last silent procedural check:
+Before responding, do one last silent procedural check:
 - Did I already decide KEEP?
 - If yes, have I finished all required bottoming first?
 - Is keptHand the exact final hand after bottoming?
-- After this, will I stop and give only the final JSON response?
+- After this, will I stop making game decisions and tool calls?
 `
 
 export const SIMULATE_TURN_PROMPT = `
@@ -415,7 +383,7 @@ ACTION LOGGING AND FINALITY
 - Never backtrack, revise history, contradict an earlier logged action, or choose a different line that would require undoing a logged action.
 - Use the returned action list as the authoritative sequence of committed actions for the current turn.
 - Logging does not replace legality checks. Only log an action you are actually committing to take.
-- Do not call log_turn_action after producing the final JSON response.
+- Do not call log_turn_action after reporting the final result.
 
 STRATEGIC HORIZON
 - Do not optimize only for the current phase or for spending the most mana right now.
@@ -650,7 +618,7 @@ Before finalizing the turn, verify all of the following:
   - any land you played this turn is not still listed in hand
   - any spell you cast this turn is not still listed in hand after resolving
   - any permanent that entered this turn is listed on the battlefield only if it is still there at end of turn
-- Before producing the final JSON response, think through gameState zone by zone:
+- Before reporting the final result, think through gameState zone by zone:
   - hand
   - battlefield
   - graveyard
@@ -661,11 +629,10 @@ Before finalizing the turn, verify all of the following:
 - Then do one final silent mistake check for missing cards, duplicated cards, impossible zone placements, stale turn-only information, and unresolved zone changes.
 
 FINAL GAME STATE REQUIREMENTS
-After the turn is fully complete, return exactly one final JSON response that includes gameState and summary.
-- Log that you are finalizing the turn immediately before producing the final JSON response.
-- The final JSON response must be the final action of the turn.
+After the turn is fully complete, report a final result that includes gameState and summary.
+- Log that you are finalizing the turn immediately before reporting the final result.
 - The full end-of-turn game state belongs in the gameState field.
-- Do not produce the final JSON response until you have:
+- Do not report the final result until you have:
   - thought through the resulting game state carefully
   - checked what is in each zone
   - double-checked that there are no mistakes in gameState
@@ -723,26 +690,19 @@ COMMENTS / NOTES
 - Bad Notes are things like "drew for turn," "played X," "this was probably turn one," or "Y entered untapped because..."
 
 OUTPUT RULES
-- Do not output a long chain of thought.
-- Perform the turn carefully and step by step.
-- Use tools whenever required.
-- Return exactly one valid JSON object after all thinking and tool usage is complete.
-- Do not include Markdown, code fences, prose before the JSON, prose after the JSON, or extra keys.
-- The JSON object must have exactly this shape:
+- Include a JSON object with exactly this shape:
 {
   "gameState": "Complete end-of-turn game state as a readable string.",
   "summary": "Short summary."
 }
 - summary should briefly say what you played, what changed on the battlefield, and any important resulting game-state facts.
 - gameState is the serialized state dump; summary is only a brief recap.
-- After the final JSON response, do not call any more tools.
 
 ABSOLUTE PRIORITIES
 1. Be legal.
 2. Use tools correctly for library interaction.
 3. Preserve the game state accurately.
-4. Choose a strong line.
-5. Finalize the turn with exactly one JSON response containing gameState and summary.
+4. Finalize the turn with a result containing gameState and summary.
 `
 
 export const GENERIC_GAME_RULES_REFERENCE = `
