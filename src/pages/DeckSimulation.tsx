@@ -2325,7 +2325,8 @@ function SimulationResultsPanel({
     isTurnRunning ||
     isReportRunning ||
     simulation.activeLlmRunCount > 0
-  const canStartReportRun = !isSimulationActionBlocked
+  const canStartReportRun =
+    !isSimulationActionBlocked && resultsInfo.reportLlmRuns.length === 0
   const latestOpeningHandRun = resultsInfo.openingHandLlmRuns.reduce<
     SimulationResultsInfo["openingHandLlmRuns"][number] | null
   >((latestRun, run) => {
