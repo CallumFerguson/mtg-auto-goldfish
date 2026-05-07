@@ -3,6 +3,7 @@ import test from "node:test"
 import { getSimulationFinalParsedOutput } from "../src/lib/simulation-final-output.js"
 import { formatDebugChunkBlocks } from "../src/lib/simulation-debug-chunks.js"
 import {
+  formatSimulationRunClipboardText,
   getSimulationRunActivityBlocks,
   getSimulationRunActiveToolCallName,
   getSimulationResultEntries,
@@ -374,6 +375,163 @@ test("ignores invalid final parsed output payloads", () => {
   )
 
   assert.equal(parsedOutput, null)
+})
+
+test("formats clipboard text from reasoning output lifecycle and tools", () => {
+  const text = formatSimulationRunClipboardText(
+    createRun({
+      llmRunId: "opening-run",
+      phase: "opening_hand",
+      chunks: [
+        createChunk({
+          id: 1,
+          kind: "reasoning_start",
+          sequence: 1,
+        }),
+        createChunk({
+          id: 2,
+          kind: "reasoning_delta",
+          reasoningDelta: "Evaluate opener.",
+          sequence: 2,
+        }),
+        createChunk({
+          id: 3,
+          kind: "reasoning_done",
+          sequence: 3,
+        }),
+        createChunk({
+          id: 4,
+          kind: "output_start",
+          sequence: 4,
+        }),
+        createChunk({
+          id: 5,
+          outputDelta: "Keeping.",
+          sequence: 5,
+        }),
+        createChunk({
+          id: 6,
+          kind: "output_done",
+          sequence: 6,
+        }),
+        createChunk({
+          id: 7,
+          kind: "mcp_call_start",
+          mcpFunctionName: "draw_starting_hand",
+          payload: {
+            item: {
+              id: "call_1",
+            },
+          },
+          sequence: 7,
+        }),
+        createChunk({
+          id: 8,
+          kind: "mcp_call_complete",
+          mcpFunctionName: "draw_starting_hand",
+          mcpFunctionOutput: {
+            data: {
+              cards: ["Forest"],
+            },
+          },
+          payload: {
+            item: {
+              id: "call_1",
+            },
+          },
+          sequence: 8,
+        }),
+      ],
+    })
+  )
+
+  assert.equal(
+    text,
+    [
+      "Evaluate opener.",
+      "Keeping.",
+      "[called draw_starting_hand]",
+      `[result of draw_starting_hand]\n${JSON.stringify(
+        {
+          data: {
+            cards: ["Forest"],
+          },
+        },
+        null,
+        2
+      )}`,
+    ].join("\n\n")
+  )
+})
+
+test("prepends full prompt in clipboard text without labels", () => {
+  const text = formatSimulationRunClipboardText(
+    createRun({
+      llmRunId: "opening-run",
+      phase: "opening_hand",
+      chunks: [
+        createChunk({
+          id: 1,
+          outputDelta: "Run text",
+          sequence: 1,
+        }),
+      ],
+    }),
+    { fullPrompt: "Prompt text" }
+  )
+
+  assert.equal(text, "Prompt text\n\nRun text")
+})
+
+test("keeps clipboard text chunks in sequence order", () => {
+  const text = formatSimulationRunClipboardText(
+    createRun({
+      llmRunId: "opening-run",
+      phase: "opening_hand",
+      chunks: [
+        createChunk({
+          id: 2,
+          outputDelta: "second",
+          sequence: 2,
+        }),
+        createChunk({
+          id: 1,
+          outputDelta: "first ",
+          sequence: 1,
+        }),
+      ],
+    })
+  )
+
+  assert.equal(text, "first second")
+})
+
+test("adds tool name for unpaired completed tool clipboard text", () => {
+  const text = formatSimulationRunClipboardText(
+    createRun({
+      llmRunId: "turn-run",
+      phase: "turn",
+      chunks: [
+        createChunk({
+          id: 1,
+          kind: "mcp_call_complete",
+          mcpFunctionName: "shuffle_library",
+          mcpFunctionOutput: {
+            ok: true,
+          },
+          sequence: 1,
+        }),
+      ],
+    })
+  )
+
+  assert.equal(
+    text,
+    [
+      "[called shuffle_library]",
+      `[result of shuffle_library]\n${JSON.stringify({ ok: true }, null, 2)}`,
+    ].join("\n\n")
+  )
 })
 
 test("omits whitespace-only formatted reasoning and output blocks", () => {

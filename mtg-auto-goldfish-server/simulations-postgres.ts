@@ -3358,6 +3358,36 @@ export async function getSimulationDebugInfo(
   }
 }
 
+export async function getSimulationLlmRunFullPrompt(
+  deckId: string,
+  simulationId: string,
+  llmRunId: string
+) {
+  const result = await queryDatabase<{ full_prompt: string }>(
+    `
+      SELECT llm_run.full_prompt
+      FROM simulations simulation
+      JOIN (
+        SELECT simulation_id, llm_run_id
+        FROM simulation_opening_hand_llm_runs
+        UNION ALL
+        SELECT simulation_id, llm_run_id
+        FROM simulation_turn_llm_runs
+      ) linked_run
+        ON linked_run.simulation_id = simulation.id
+      JOIN llm_runs llm_run
+        ON llm_run.id = linked_run.llm_run_id
+      WHERE simulation.id = $1
+        AND simulation.deck_id = $2
+        AND linked_run.llm_run_id = $3
+      LIMIT 1
+    `,
+    [simulationId, deckId, llmRunId]
+  )
+
+  return result.rows[0]?.full_prompt ?? null
+}
+
 export async function getSimulationResultsInfo(
   deckId: string,
   simulationId: string

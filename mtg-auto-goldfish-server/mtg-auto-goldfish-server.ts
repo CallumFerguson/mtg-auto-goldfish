@@ -45,6 +45,7 @@ import {
   getOpenRouterGenerationForSimulation,
   getSimulationCreationDecision,
   getSimulationDebugInfo,
+  getSimulationLlmRunFullPrompt,
   getSimulationResultsInfo,
   getSimulationSummary,
   getStartingHandSimulationPromptData,
@@ -267,6 +268,7 @@ type ActiveLlmRunRuntime = {
   flushPromise: Promise<void> | null
   llmRunId: string
   model: string
+  fullPrompt: string
   nextSequence: number
   openrouterGenerations: OpenRouterGeneration[]
   phase: LlmRunPhase
@@ -2687,6 +2689,7 @@ async function runOpeningHandLlmRun({
   config,
   createdAt,
   deckId,
+  fullPrompt,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
@@ -2714,6 +2717,7 @@ async function runOpeningHandLlmRun({
     flushPromise: null,
     llmRunId,
     model: config.model,
+    fullPrompt,
     nextSequence: 1,
     openrouterGenerations: [],
     phase: "opening_hand",
@@ -2887,6 +2891,7 @@ async function runTurnLlmRun({
   config,
   createdAt,
   deckId,
+  fullPrompt,
   llmRunId,
   requestPayload,
   runtimeStreamKey,
@@ -2916,6 +2921,7 @@ async function runTurnLlmRun({
     flushPromise: null,
     llmRunId,
     model: config.model,
+    fullPrompt,
     nextSequence: 1,
     openrouterGenerations: [],
     phase: "turn",
@@ -3658,6 +3664,39 @@ async function main() {
         console.error("Failed to load simulation results:", error)
         res.status(500).json({
           error: "Failed to load simulation results.",
+        })
+      }
+    }
+  )
+
+  app.get(
+    "/decks/:deckId/simulations/:simulationId/llm-runs/:llmRunId/full-prompt",
+    async (req: Request, res: Response) => {
+      const deckId = String(req.params.deckId)
+      const simulationId = String(req.params.simulationId)
+      const llmRunId = String(req.params.llmRunId)
+
+      try {
+        const fullPrompt = await getSimulationLlmRunFullPrompt(
+          deckId,
+          simulationId,
+          llmRunId
+        )
+
+        if (fullPrompt === null) {
+          res.status(404).json({
+            error: "LLM run prompt not found.",
+          })
+          return
+        }
+
+        res.status(200).json({
+          fullPrompt,
+        })
+      } catch (error) {
+        console.error("Failed to load LLM run prompt:", error)
+        res.status(500).json({
+          error: "Failed to load LLM run prompt.",
         })
       }
     }

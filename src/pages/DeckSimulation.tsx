@@ -13,9 +13,12 @@ import {
 } from "react"
 import ReactMarkdown from "react-markdown"
 import {
+  BookCopy,
   Bug,
   Check,
   ChevronRight,
+  ClipboardCheck,
+  ClipboardCopy,
   Dices,
   Eye,
   EyeOff,
@@ -39,6 +42,7 @@ import type {
   CreateSimulationResponse,
   CreateStartingHandResponse,
   DeckCard,
+  LlmRunFullPromptResponse,
   OpenRouterGenerationDetailsResponse,
   SavedSeed,
   SavedSeedsResponse,
@@ -67,6 +71,7 @@ import {
 } from "@/lib/simulation-debug-chunks"
 import { applySimulationResultsStreamEvent } from "@/lib/simulation-results-stream"
 import {
+  formatSimulationRunClipboardText,
   getLoggedTurnAction,
   getSimulationRunActivityBlocks,
   getSimulationRunActiveToolCallName,
@@ -97,6 +102,59 @@ type SimulationResultsAction =
 
 const DEFAULT_TURNS_TO_SIMULATE = "1"
 const ACTIVITY_PANEL_EXIT_FALLBACK_MS = 350
+
+async function writePlainTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Fall through to the textarea path for browsers that block Clipboard API.
+    }
+  }
+
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "")
+  textarea.style.left = "0"
+  textarea.style.opacity = "0"
+  textarea.style.position = "fixed"
+  textarea.style.top = "0"
+
+  document.body.append(textarea)
+  textarea.focus()
+  textarea.select()
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard copy failed.")
+    }
+  } finally {
+    textarea.remove()
+  }
+}
+
+async function loadLlmRunFullPrompt({
+  deckId,
+  llmRunId,
+  simulationId,
+}: {
+  deckId: string
+  llmRunId: string
+  simulationId: string
+}) {
+  const response = await fetch(
+    `${API_BASE_URL}/decks/${deckId}/simulations/${simulationId}/llm-runs/${llmRunId}/full-prompt`
+  )
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Prompt could not be loaded."))
+  }
+
+  const data = (await response.json()) as LlmRunFullPromptResponse
+
+  return data.fullPrompt
+}
 
 function getSimulationLabel(simulation: Simulation) {
   return `${simulation.id.slice(0, 8)} - ${simulation.completedLlmRunCount} runs`
@@ -1993,8 +2051,10 @@ function SimulationDetails({
 
       {activityPanelRun ? (
         <SimulationRunActivityPanel
+          deckId={deckId}
           isOpen={isActivityPanelOpen}
           run={activityPanelRun}
+          simulationId={simulation.id}
           onClose={closeActivityPanel}
           onExited={handleActivityPanelExited}
         />
@@ -2681,23 +2741,33 @@ function SimulationResultThinkingStatus({
 }
 
 function SimulationRunActivityPanel({
+  deckId,
   isOpen,
   onClose,
   onExited,
   run,
+  simulationId,
 }: {
+  deckId: string
   isOpen: boolean
   onClose: () => void
   onExited: () => void
   run: SimulationDebugLlmRun
+  simulationId: string
 }) {
   const activityScrollRef = useRef<HTMLDivElement | null>(null)
   const keepActivityScrolledDownRef = useRef(true)
   const isProgrammaticActivityScrollRef = useRef(false)
   const previousActivityScrollTopRef = useRef(0)
   const exitTimeoutRef = useRef<number | null>(null)
+  const copyResetTimeoutRef = useRef<number | null>(null)
   const hasOpenedRef = useRef(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
+  const [copiedState, setCopiedState] = useState<{
+    llmRunId: string
+    mode: "run_text" | "with_prompt"
+  } | null>(null)
+  const [isCopyingWithPrompt, setIsCopyingWithPrompt] = useState(false)
   const activityBlocks = useMemo(
     () => getSimulationRunActivityBlocks(run.chunks),
     [run.chunks]
@@ -2706,6 +2776,12 @@ function SimulationRunActivityPanel({
     () => getSimulationRunActivityTimelineItems(activityBlocks),
     [activityBlocks]
   )
+  const runClipboardText = useMemo(
+    () => formatSimulationRunClipboardText(run),
+    [run]
+  )
+  const copiedMode =
+    copiedState?.llmRunId === run.llmRunId ? copiedState.mode : null
   const runStartTimeMs = getSimulationRunStartTimeMs(run)
   const runFinishedTimeMs = getSimulationRunFinishedTimeMs(run)
   const durationText =
@@ -2726,6 +2802,15 @@ function SimulationRunActivityPanel({
 
     window.clearTimeout(exitTimeoutRef.current)
     exitTimeoutRef.current = null
+  }, [])
+
+  const clearCopyResetTimeout = useCallback(() => {
+    if (copyResetTimeoutRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(copyResetTimeoutRef.current)
+    copyResetTimeoutRef.current = null
   }, [])
 
   const finishExit = useCallback(() => {
@@ -2773,6 +2858,11 @@ function SimulationRunActivityPanel({
 
     return clearExitTimeout
   }, [clearExitTimeout, finishExit, isOpen])
+
+  useEffect(() => clearCopyResetTimeout, [
+    clearCopyResetTimeout,
+    run.llmRunId,
+  ])
 
   useEffect(() => {
     keepActivityScrolledDownRef.current = true
@@ -2839,6 +2929,40 @@ function SimulationRunActivityPanel({
     previousActivityScrollTopRef.current = activityScrollElement.scrollTop
   }
 
+  async function handleCopyRunText(mode: "run_text" | "with_prompt") {
+    try {
+      let text = runClipboardText
+
+      if (mode === "with_prompt") {
+        setIsCopyingWithPrompt(true)
+        const fullPrompt = await loadLlmRunFullPrompt({
+          deckId,
+          llmRunId: run.llmRunId,
+          simulationId,
+        })
+
+        text = formatSimulationRunClipboardText(run, { fullPrompt })
+      }
+
+      await writePlainTextToClipboard(text)
+      setCopiedState({
+        llmRunId: run.llmRunId,
+        mode,
+      })
+      clearCopyResetTimeout()
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCopiedState(null)
+        copyResetTimeoutRef.current = null
+      }, 1400)
+    } catch (error) {
+      console.error("Failed to copy LLM run text:", error)
+    } finally {
+      if (mode === "with_prompt") {
+        setIsCopyingWithPrompt(false)
+      }
+    }
+  }
+
   function handlePanelTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
     if (
       event.target !== event.currentTarget ||
@@ -2865,16 +2989,60 @@ function SimulationRunActivityPanel({
           <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
             {durationText ? `Activity • ${durationText}` : "Activity"}
           </h3>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Close activity"
-            title="Close activity"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              className={
+                copiedMode === "with_prompt"
+                  ? "text-emerald-300 hover:text-emerald-200"
+                  : "text-muted-foreground hover:text-foreground"
+              }
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Copy activity with prompt"
+              title="Copy activity with prompt"
+              disabled={isCopyingWithPrompt}
+              onClick={() => void handleCopyRunText("with_prompt")}
+            >
+              {isCopyingWithPrompt ? (
+                <LoaderCircle className="animate-spin" />
+              ) : copiedMode === "with_prompt" ? (
+                <ClipboardCheck />
+              ) : (
+                <BookCopy />
+              )}
+            </Button>
+            <Button
+              className={
+                copiedMode === "run_text"
+                  ? "text-emerald-300 hover:text-emerald-200"
+                  : "text-muted-foreground hover:text-foreground"
+              }
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Copy activity text"
+              title="Copy activity text"
+              disabled={runClipboardText.length === 0}
+              onClick={() => void handleCopyRunText("run_text")}
+            >
+              {copiedMode === "run_text" ? (
+                <ClipboardCheck />
+              ) : (
+                <ClipboardCopy />
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close activity"
+              title="Close activity"
+              onClick={onClose}
+            >
+              <X />
+            </Button>
+          </div>
         </header>
 
         <div
