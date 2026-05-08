@@ -2994,15 +2994,6 @@ function TurnEvaluationModal({
                 items={evaluation.evaluationJson.strategicMistakes}
                 title="Strategic mistakes"
               />
-
-              <details className="min-w-0 rounded-md border border-border bg-black/20">
-                <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
-                  Raw evaluation JSON
-                </summary>
-                <pre className="debug-scrollbar-neutral max-h-80 overflow-y-auto border-t border-border p-3 text-xs leading-5 break-words whitespace-pre-wrap text-muted-foreground">
-                  {JSON.stringify(evaluation.evaluationJson, null, 2)}
-                </pre>
-              </details>
             </div>
           ) : (
             <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
