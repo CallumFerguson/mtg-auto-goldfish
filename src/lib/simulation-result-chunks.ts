@@ -1,4 +1,8 @@
 import type { SimulationDebugLlmRunChunk } from "./deck-types"
+export {
+  formatSimulationRunChunksClipboardText,
+  formatSimulationRunClipboardText,
+} from "../../mtg-auto-goldfish-server/simulation-run-text.js"
 
 export type SimulationResultEntry =
   | {
@@ -109,130 +113,6 @@ export function getSimulationRunThinkingPreview(
     .trim()
 
   return preview.length > 0 ? preview : null
-}
-
-export function formatSimulationRunClipboardText(
-  run: { chunks: readonly SimulationDebugLlmRunChunk[] },
-  {
-    fullPrompt = null,
-  }: {
-    fullPrompt?: string | null
-  } = {}
-) {
-  const runText = formatSimulationRunChunksClipboardText(run.chunks)
-
-  if (fullPrompt === null || fullPrompt.length === 0) {
-    return runText
-  }
-
-  if (runText.length === 0) {
-    return fullPrompt
-  }
-
-  return `${fullPrompt}\n\n${runText}`
-}
-
-export function formatSimulationRunChunksClipboardText(
-  chunks: readonly SimulationDebugLlmRunChunk[]
-) {
-  const sortedChunks = [...chunks].sort(
-    (firstChunk, secondChunk) => firstChunk.sequence - secondChunk.sequence
-  )
-  const completedToolCallPairs = getCompletedToolCallPairs(sortedChunks)
-  const completedToolCallStartByCompleteChunk = new Map(
-    completedToolCallPairs.map((pair) => [pair.completeChunk, pair.startChunk])
-  )
-  const blocks: string[] = []
-  let activeDeltaBlockType: "reasoning" | "output" | null = null
-  let activeDeltaBlockText = ""
-
-  function flushActiveDeltaBlock() {
-    if (activeDeltaBlockText.length > 0) {
-      blocks.push(activeDeltaBlockText)
-    }
-
-    activeDeltaBlockType = null
-    activeDeltaBlockText = ""
-  }
-
-  function startDeltaBlock(type: "reasoning" | "output") {
-    flushActiveDeltaBlock()
-    activeDeltaBlockType = type
-  }
-
-  function appendDeltaBlockText(
-    type: "reasoning" | "output",
-    text: string
-  ) {
-    if (activeDeltaBlockType !== type) {
-      flushActiveDeltaBlock()
-      activeDeltaBlockType = type
-    }
-
-    activeDeltaBlockText += text
-  }
-
-  function appendBlock(text: string) {
-    flushActiveDeltaBlock()
-
-    if (text.length > 0) {
-      blocks.push(text)
-    }
-  }
-
-  for (const chunk of sortedChunks) {
-    if (chunk.kind === "reasoning_start") {
-      startDeltaBlock("reasoning")
-      continue
-    }
-
-    if (chunk.kind === "output_start") {
-      startDeltaBlock("output")
-      continue
-    }
-
-    if (chunk.kind === "reasoning_done" || chunk.kind === "output_done") {
-      flushActiveDeltaBlock()
-      continue
-    }
-
-    if (chunk.kind === "reasoning_delta") {
-      appendDeltaBlockText("reasoning", chunk.reasoningDelta ?? "")
-      continue
-    }
-
-    if (chunk.kind === "message_delta") {
-      appendDeltaBlockText("output", chunk.outputDelta ?? "")
-      continue
-    }
-
-    if (chunk.kind === "mcp_call_start") {
-      appendBlock(formatToolCallClipboardText([chunk]))
-      continue
-    }
-
-    if (chunk.kind === "mcp_call_complete") {
-      const startChunk = completedToolCallStartByCompleteChunk.get(chunk)
-      const toolCallChunks = startChunk ? [startChunk, chunk] : [chunk]
-
-      if (!startChunk) {
-        appendBlock(formatToolCallClipboardText([chunk]))
-      }
-
-      appendBlock(
-        `${formatToolResultClipboardText(toolCallChunks)}\n${formatMcpFunctionOutputJson(
-          chunk.mcpFunctionOutput
-        )}`
-      )
-      continue
-    }
-
-    continue
-  }
-
-  flushActiveDeltaBlock()
-
-  return blocks.join("\n\n")
 }
 
 export function getSimulationRunActiveToolCallName(
@@ -573,22 +453,6 @@ function getToolCallActivityName(
   }
 
   return "Unknown tool"
-}
-
-function formatToolCallClipboardText(
-  chunks: readonly SimulationDebugLlmRunChunk[]
-) {
-  return `[called ${getToolCallActivityName(chunks)}]`
-}
-
-function formatToolResultClipboardText(
-  chunks: readonly SimulationDebugLlmRunChunk[]
-) {
-  return `[result of ${getToolCallActivityName(chunks)}]`
-}
-
-function formatMcpFunctionOutputJson(output: unknown) {
-  return JSON.stringify(output, null, 2) ?? "undefined"
 }
 
 function getMcpCallItemId(chunk: SimulationDebugLlmRunChunk) {

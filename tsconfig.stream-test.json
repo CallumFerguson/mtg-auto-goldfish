@@ -15,6 +15,7 @@
     "src/lib/deck-types.ts",
     "src/lib/simulation-debug-chunks.ts",
     "src/lib/simulation-final-output.ts",
+    "mtg-auto-goldfish-server/simulation-run-text.ts",
     "src/lib/simulation-result-chunks.ts",
     "src/lib/simulation-result-tool-labels.ts",
     "src/lib/simulation-results-stream.ts",

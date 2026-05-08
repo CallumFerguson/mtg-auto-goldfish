@@ -166,6 +166,56 @@ export type OpenRouterGeneration = {
   createdAt: string
 }
 
+export type TurnEvaluationJson = {
+  legalTurnPass: boolean
+  reasoningPass: boolean
+  simulationQualityScore: number
+  illegalActions: string[]
+  reasoningMistakes: string[]
+  strategicMistakes: string[]
+}
+
+export type TurnEvaluation = {
+  id: number
+  simulationId: string
+  turnLlmRunId: string
+  legalTurnPass: boolean
+  reasoningPass: boolean
+  simulationQualityScore: number
+  evaluationJson: TurnEvaluationJson
+  createdAt: string
+  updatedAt: string
+}
+
+export const TURN_EVALUATION_UPSERT_SQL = `
+  INSERT INTO simulation_turn_evaluations (
+    simulation_id,
+    turn_llm_run_id,
+    legal_turn_pass,
+    reasoning_pass,
+    simulation_quality_score,
+    evaluation_json
+  )
+  VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+  ON CONFLICT (turn_llm_run_id)
+  DO UPDATE
+  SET legal_turn_pass = EXCLUDED.legal_turn_pass,
+      reasoning_pass = EXCLUDED.reasoning_pass,
+      simulation_quality_score = EXCLUDED.simulation_quality_score,
+      evaluation_json = EXCLUDED.evaluation_json,
+      updated_at = now()
+  RETURNING
+    id,
+    simulation_id,
+    turn_llm_run_id,
+    legal_turn_pass,
+    reasoning_pass,
+    simulation_quality_score::float8 AS simulation_quality_score,
+    evaluation_json,
+    created_at,
+    updated_at
+`
+
 export type SimulationDebugLlmRun = {
   llmRunId: string
   phase: LlmRunPhase
@@ -186,6 +236,7 @@ export type SimulationDebugLlmRun = {
   report?: string
   outdated?: boolean
   openingHandIsValid?: boolean
+  turnEvaluation?: TurnEvaluation | null
   openrouterGenerations: OpenRouterGeneration[]
   chunks: SimulationDebugLlmRunChunk[]
 }
@@ -817,6 +868,27 @@ export async function ensureSimulationsSchema() {
     )
   `)
   await queryDatabase(`
+    CREATE TABLE IF NOT EXISTS simulation_turn_evaluations (
+      id bigserial PRIMARY KEY,
+
+      simulation_id uuid NOT NULL REFERENCES simulations(id) ON DELETE CASCADE,
+      turn_llm_run_id uuid NOT NULL REFERENCES llm_runs(id) ON DELETE CASCADE,
+
+      legal_turn_pass boolean NOT NULL,
+      reasoning_pass boolean NOT NULL,
+      simulation_quality_score numeric(4,2) NOT NULL CHECK (
+        simulation_quality_score >= 0
+        AND simulation_quality_score <= 10
+      ),
+      evaluation_json jsonb NOT NULL CHECK (jsonb_typeof(evaluation_json) = 'object'),
+
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+
+      UNIQUE (turn_llm_run_id)
+    )
+  `)
+  await queryDatabase(`
     CREATE TABLE IF NOT EXISTS simulation_report_llm_runs (
       simulation_id uuid NOT NULL REFERENCES simulations(id) ON DELETE CASCADE,
       llm_run_id uuid NOT NULL REFERENCES llm_runs(id) ON DELETE CASCADE,
@@ -873,6 +945,10 @@ export async function ensureSimulationsSchema() {
   await queryDatabase(`
     CREATE INDEX IF NOT EXISTS simulation_turn_actions_turn_llm_run_id_sequence_idx
       ON simulation_turn_actions (turn_llm_run_id, sequence)
+  `)
+  await queryDatabase(`
+    CREATE INDEX IF NOT EXISTS simulation_turn_evaluations_simulation_id_idx
+      ON simulation_turn_evaluations (simulation_id)
   `)
   await queryDatabase(`
     CREATE INDEX IF NOT EXISTS simulation_report_llm_runs_simulation_id_idx
@@ -3597,6 +3673,7 @@ export async function getSimulationDebugInfo(
       "run.attempt_number, run.turn_number, run.game_state, NULL::text AS report, run.outdated, NULL::boolean AS opening_hand_is_valid",
     orderBy: "run.turn_number ASC, run.attempt_number ASC",
   })
+  await attachTurnEvaluations(turnRuns)
   const reportRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_report_llm_runs",
@@ -3649,6 +3726,135 @@ export async function getSimulationLlmRunFullPrompt(
   return result.rows[0]?.full_prompt ?? null
 }
 
+export async function getTurnLlmRunEvaluationData(
+  deckId: string,
+  simulationId: string,
+  llmRunId: string
+) {
+  const runResult = await queryDatabase<{
+    llm_run_id: string
+    full_prompt: string
+    phase: LlmRunPhase
+    status: LlmRunStatus
+    turn_number: number
+  }>(
+    `
+      SELECT
+        llm_run.id AS llm_run_id,
+        llm_run.full_prompt,
+        llm_run.phase,
+        llm_run.status,
+        turn_run.turn_number
+      FROM simulations simulation
+      JOIN simulation_turn_llm_runs turn_run
+        ON turn_run.simulation_id = simulation.id
+      JOIN llm_runs llm_run
+        ON llm_run.id = turn_run.llm_run_id
+      WHERE simulation.id = $1
+        AND simulation.deck_id = $2
+        AND turn_run.llm_run_id = $3
+      LIMIT 1
+    `,
+    [simulationId, deckId, llmRunId]
+  )
+  const run = runResult.rows[0]
+
+  if (!run) {
+    throw new SimulationValidationError("Turn LLM run not found.")
+  }
+
+  const chunksResult = await queryDatabase<{
+    id: string
+    sequence: number
+    kind: LlmChunkKind
+    mcp_function_name: string | null
+    mcp_function_output: unknown | null
+    reasoning_delta: string | null
+    output_delta: string | null
+    payload: unknown
+    received_at: Date
+  }>(
+    `
+      SELECT
+        id,
+        sequence,
+        kind,
+        mcp_function_name,
+        mcp_function_output,
+        reasoning_delta,
+        output_delta,
+        payload,
+        received_at
+      FROM llm_run_chunks
+      WHERE llm_run_id = $1
+        AND (
+          COALESCE(array_length($2::llm_chunk_kind[], 1), 0) = 0
+          OR kind <> ALL($2::llm_chunk_kind[])
+        )
+      ORDER BY sequence ASC
+    `,
+    [llmRunId, SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS]
+  )
+  const chunks: SimulationDebugLlmRunChunk[] = chunksResult.rows.map((row) => ({
+    id: Number(row.id),
+    sequence: row.sequence,
+    kind: row.kind,
+    mcpFunctionName: row.mcp_function_name,
+    mcpFunctionOutput: row.mcp_function_output,
+    reasoningDelta: row.reasoning_delta,
+    outputDelta: row.output_delta,
+    payload: row.payload,
+    cardMentions: [],
+    receivedAt: row.received_at.toISOString(),
+  }))
+  const cardMentionsByChunkId = await getCardMentionsByLlmRunChunkIds(
+    chunks.map((chunk) => chunk.id)
+  )
+
+  for (const chunk of chunks) {
+    chunk.cardMentions = cardMentionsByChunkId.get(chunk.id) ?? []
+  }
+
+  return {
+    llmRunId: run.llm_run_id,
+    fullPrompt: run.full_prompt,
+    phase: run.phase,
+    status: run.status,
+    turnNumber: run.turn_number,
+    chunks,
+  }
+}
+
+export async function upsertTurnEvaluation({
+  evaluationJson,
+  legalTurnPass,
+  reasoningPass,
+  simulationId,
+  simulationQualityScore,
+  turnLlmRunId,
+}: {
+  simulationId: string
+  turnLlmRunId: string
+  legalTurnPass: boolean
+  reasoningPass: boolean
+  simulationQualityScore: number
+  evaluationJson: TurnEvaluationJson
+}) {
+  const result = await queryDatabase<TurnEvaluationRow>(
+    TURN_EVALUATION_UPSERT_SQL,
+    [
+      simulationId,
+      turnLlmRunId,
+      legalTurnPass,
+      reasoningPass,
+      simulationQualityScore,
+      JSON.stringify(evaluationJson),
+    ]
+  )
+
+  return mapTurnEvaluationRow(result.rows[0])
+}
+
 export async function getSimulationResultsInfo(
   deckId: string,
   simulationId: string
@@ -3691,6 +3897,7 @@ export async function getSimulationResultsInfo(
     excludeChunkKinds: SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
     additionalWhereSql: "run.outdated = false",
   })
+  await attachTurnEvaluations(turnRuns)
   const reportRuns = await getSimulationDebugLlmRuns({
     simulationId,
     tableName: "simulation_report_llm_runs",
@@ -4318,6 +4525,18 @@ type OpenRouterGenerationRow = {
   created_at: Date
 }
 
+type TurnEvaluationRow = {
+  id: string
+  simulation_id: string
+  turn_llm_run_id: string
+  legal_turn_pass: boolean
+  reasoning_pass: boolean
+  simulation_quality_score: number
+  evaluation_json: unknown
+  created_at: Date
+  updated_at: Date
+}
+
 async function getSimulationDebugLlmRuns({
   additionalWhereSql,
   excludeChunkKinds = [],
@@ -4559,6 +4778,63 @@ async function getOpenRouterGenerationsByLlmRunIds(
   }
 
   return generationsByRunId
+}
+
+async function attachTurnEvaluations(runs: SimulationDebugLlmRun[]) {
+  const evaluationsByRunId = await getTurnEvaluationsByLlmRunIds(
+    runs.map((run) => run.llmRunId)
+  )
+
+  for (const run of runs) {
+    run.turnEvaluation = evaluationsByRunId.get(run.llmRunId) ?? null
+  }
+}
+
+async function getTurnEvaluationsByLlmRunIds(llmRunIds: readonly string[]) {
+  const evaluationsByRunId = new Map<string, TurnEvaluation>()
+
+  if (llmRunIds.length === 0) {
+    return evaluationsByRunId
+  }
+
+  const result = await queryDatabase<TurnEvaluationRow>(
+    `
+      SELECT
+        id,
+        simulation_id,
+        turn_llm_run_id,
+        legal_turn_pass,
+        reasoning_pass,
+        simulation_quality_score::float8 AS simulation_quality_score,
+        evaluation_json,
+        created_at,
+        updated_at
+      FROM simulation_turn_evaluations
+      WHERE turn_llm_run_id = ANY($1::uuid[])
+      ORDER BY turn_llm_run_id ASC
+    `,
+    [llmRunIds]
+  )
+
+  for (const row of result.rows) {
+    evaluationsByRunId.set(row.turn_llm_run_id, mapTurnEvaluationRow(row))
+  }
+
+  return evaluationsByRunId
+}
+
+function mapTurnEvaluationRow(row: TurnEvaluationRow): TurnEvaluation {
+  return {
+    id: Number(row.id),
+    simulationId: row.simulation_id,
+    turnLlmRunId: row.turn_llm_run_id,
+    legalTurnPass: row.legal_turn_pass,
+    reasoningPass: row.reasoning_pass,
+    simulationQualityScore: Number(row.simulation_quality_score),
+    evaluationJson: row.evaluation_json as TurnEvaluationJson,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  }
 }
 
 type PromptCardRow = {

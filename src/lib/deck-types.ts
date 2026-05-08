@@ -108,6 +108,27 @@ export type OpenRouterGeneration = {
   createdAt: string
 }
 
+export type TurnEvaluationJson = {
+  legalTurnPass: boolean
+  reasoningPass: boolean
+  simulationQualityScore: number
+  illegalActions: string[]
+  reasoningMistakes: string[]
+  strategicMistakes: string[]
+}
+
+export type TurnEvaluation = {
+  id: number
+  simulationId: string
+  turnLlmRunId: string
+  legalTurnPass: boolean
+  reasoningPass: boolean
+  simulationQualityScore: number
+  evaluationJson: TurnEvaluationJson
+  createdAt: string
+  updatedAt: string
+}
+
 export type SimulationDebugLlmRun = {
   llmRunId: string
   phase: string
@@ -128,6 +149,7 @@ export type SimulationDebugLlmRun = {
   report?: string
   outdated?: boolean
   openingHandIsValid?: boolean
+  turnEvaluation?: TurnEvaluation | null
   openrouterGenerations: OpenRouterGeneration[]
   chunks: SimulationDebugLlmRunChunk[]
 }
@@ -156,6 +178,10 @@ export type OpenRouterGenerationDetailsResponse = {
   providerEntry: unknown | null
   providerSlug: string | null
   result: unknown
+}
+
+export type TurnEvaluationResponse = {
+  evaluation: TurnEvaluation
 }
 
 export type SimulationResultsInfo = SimulationDebugInfo

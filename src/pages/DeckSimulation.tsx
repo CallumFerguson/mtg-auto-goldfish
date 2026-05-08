@@ -59,6 +59,8 @@ import type {
   StartingHand,
   StartingHandsResponse,
   StopSimulationResponse,
+  TurnEvaluation,
+  TurnEvaluationResponse,
 } from "@/lib/deck-types"
 import { getDeckSimulationPath, navigateTo } from "@/lib/navigation"
 import {
@@ -2072,6 +2074,29 @@ function SimulationDetails({
     await stopSimulation()
   }
 
+  function handleTurnEvaluationSaved(evaluation: TurnEvaluation) {
+    setResultsInfo((currentResultsInfo) => {
+      if (!currentResultsInfo) {
+        return currentResultsInfo
+      }
+
+      const updatedResultsInfo = {
+        ...currentResultsInfo,
+        turnLlmRuns: currentResultsInfo.turnLlmRuns.map((run) =>
+          run.llmRunId === evaluation.turnLlmRunId
+            ? {
+                ...run,
+                turnEvaluation: evaluation,
+              }
+            : run
+        ),
+      }
+
+      resultsInfoRef.current = updatedResultsInfo
+      return updatedResultsInfo
+    })
+  }
+
   useEffect(() => {
     const eventSource = new EventSource(
       `${API_BASE_URL}/decks/${deckId}/simulations/${simulation.id}/results/stream`
@@ -2211,6 +2236,7 @@ function SimulationDetails({
 
           {resultsInfo ? (
             <SimulationResultsPanel
+              deckId={deckId}
               isStartingOpeningHandRun={isStartingOpeningHandRun}
               isStartingReportRun={isStartingReportRun}
               isStartingTurnRun={isStartingTurnRun}
@@ -2225,6 +2251,7 @@ function SimulationDetails({
                 void handleStartTurnRun(turnNumber)
               }
               onStopSimulation={() => void handleStopSimulation()}
+              onTurnEvaluationSaved={handleTurnEvaluationSaved}
               openingHandRunError={openingHandRunError}
               reportRunError={reportRunError}
               resultsInfo={resultsInfo}
@@ -2351,6 +2378,7 @@ function SimulationDebugModal({
 }
 
 function SimulationResultsPanel({
+  deckId,
   isStartingOpeningHandRun,
   isStartingReportRun,
   isStartingTurnRun,
@@ -2363,6 +2391,7 @@ function SimulationResultsPanel({
   onStartTurnRun,
   onStartReportRun,
   onStopSimulation,
+  onTurnEvaluationSaved,
   openingHandRunError,
   reportRunError,
   resultsInfo,
@@ -2373,6 +2402,7 @@ function SimulationResultsPanel({
   stopSimulationError,
   turnRunError,
 }: {
+  deckId: string
   isStartingOpeningHandRun: boolean
   isStartingReportRun: boolean
   isStartingTurnRun: boolean
@@ -2385,6 +2415,7 @@ function SimulationResultsPanel({
   onStartTurnRun: (turnNumber: number) => void
   onStartReportRun: () => void
   onStopSimulation: () => void
+  onTurnEvaluationSaved: (evaluation: TurnEvaluation) => void
   openingHandRunError: string | null
   reportRunError: string | null
   resultsInfo: SimulationResultsInfo
@@ -2518,6 +2549,17 @@ function SimulationResultsPanel({
   ])
   const [renderedSimulationAction, setRenderedSimulationAction] =
     useState<SimulationResultsAction | null>(() => simulationAction)
+  const [evaluationRunId, setEvaluationRunId] = useState<string | null>(null)
+  const evaluationRun = useMemo(() => {
+    if (evaluationRunId === null) {
+      return null
+    }
+
+    return (
+      resultsInfo.turnLlmRuns.find((run) => run.llmRunId === evaluationRunId) ??
+      null
+    )
+  }, [evaluationRunId, resultsInfo.turnLlmRuns])
 
   useEffect(() => {
     if (!simulationAction) {
@@ -2549,6 +2591,7 @@ function SimulationResultsPanel({
   const runs = [
     ...resultsInfo.openingHandLlmRuns.map((run) => ({
       ...run,
+      canEvaluate: false,
       canRerun: canStartOpeningHandRun && !isOpeningHandRunning,
       isActive: isActiveLlmRunStatus(run.status),
       resultKind: "opening_hand" as const,
@@ -2561,6 +2604,9 @@ function SimulationResultsPanel({
     })),
     ...resultsInfo.turnLlmRuns.map((run) => ({
       ...run,
+      canEvaluate:
+        run.status === "completed" &&
+        !run.chunks.some((chunk) => chunk.kind === "error"),
       canRerun:
         typeof run.turnNumber === "number" &&
         !activeTurnNumbers.has(run.turnNumber),
@@ -2575,6 +2621,7 @@ function SimulationResultsPanel({
     })),
     ...resultsInfo.reportLlmRuns.map((run) => ({
       ...run,
+      canEvaluate: false,
       canRerun: !isSimulationActionBlocked,
       isActive: isActiveLlmRunStatus(run.status),
       resultKind: "report" as const,
@@ -2588,7 +2635,8 @@ function SimulationResultsPanel({
   ]
 
   return (
-    <div className="grid gap-3">
+    <>
+      <div className="grid gap-3">
       {hasPresetStartingHand ? (
         <SimulationPresetStartingHandBlock
           isLoadingStartingHand={isLoadingStartingHand}
@@ -2650,46 +2698,64 @@ function SimulationResultsPanel({
                   {runMetadata.join(" / ")}
                 </p>
               </div>
-              {run.canRerun ? (
-                <Button
-                  className="shrink-0"
-                  type="button"
-                  variant="outline"
-                  size="icon-sm"
-                  disabled={isStartingSimulationRun}
-                  aria-label={
-                    run.resultKind === "opening_hand"
-                      ? "Rerun opening hand"
-                      : run.resultKind === "report"
-                        ? "Rerun report"
-                        : `Rerun turn ${run.turnNumber}`
-                  }
-                  title={
-                    run.resultKind === "opening_hand"
-                      ? "Rerun opening hand"
-                      : run.resultKind === "report"
-                        ? "Rerun report"
-                        : `Rerun turn ${run.turnNumber}`
-                  }
-                  onClick={() => {
-                    if (run.resultKind === "opening_hand") {
-                      onStartOpeningHandRun()
-                      return
+              <div className="flex shrink-0 items-center gap-1">
+                {run.canEvaluate ? (
+                  <Button
+                    className={
+                      run.turnEvaluation
+                        ? "text-emerald-300 hover:text-emerald-200"
+                        : ""
                     }
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={`Evaluate turn ${run.turnNumber}`}
+                    title={`Evaluate turn ${run.turnNumber}`}
+                    onClick={() => setEvaluationRunId(run.llmRunId)}
+                  >
+                    <ClipboardCheck />
+                  </Button>
+                ) : null}
+                {run.canRerun ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    disabled={isStartingSimulationRun}
+                    aria-label={
+                      run.resultKind === "opening_hand"
+                        ? "Rerun opening hand"
+                        : run.resultKind === "report"
+                          ? "Rerun report"
+                          : `Rerun turn ${run.turnNumber}`
+                    }
+                    title={
+                      run.resultKind === "opening_hand"
+                        ? "Rerun opening hand"
+                        : run.resultKind === "report"
+                          ? "Rerun report"
+                          : `Rerun turn ${run.turnNumber}`
+                    }
+                    onClick={() => {
+                      if (run.resultKind === "opening_hand") {
+                        onStartOpeningHandRun()
+                        return
+                      }
 
-                    if (run.resultKind === "report") {
-                      onStartReportRun()
-                      return
-                    }
+                      if (run.resultKind === "report") {
+                        onStartReportRun()
+                        return
+                      }
 
-                    if (typeof run.turnNumber === "number") {
-                      onStartTurnRun(run.turnNumber)
-                    }
-                  }}
-                >
-                  <RefreshCw />
-                </Button>
-              ) : null}
+                      if (typeof run.turnNumber === "number") {
+                        onStartTurnRun(run.turnNumber)
+                      }
+                    }}
+                  >
+                    <RefreshCw />
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
             {run.gameState && !getSimulationFinalParsedOutput(run) ? (
@@ -2783,8 +2849,266 @@ function SimulationResultsPanel({
           </Button>
         ) : null}
       </div>
+      </div>
+      {evaluationRun ? (
+        <TurnEvaluationModal
+          deckId={deckId}
+          onClose={() => setEvaluationRunId(null)}
+          onSaved={onTurnEvaluationSaved}
+          run={evaluationRun}
+          simulationId={simulation.id}
+        />
+      ) : null}
+    </>
+  )
+}
+
+function TurnEvaluationModal({
+  deckId,
+  onClose,
+  onSaved,
+  run,
+  simulationId,
+}: {
+  deckId: string
+  onClose: () => void
+  onSaved: (evaluation: TurnEvaluation) => void
+  run: SimulationResultsInfo["turnLlmRuns"][number]
+  simulationId: string
+}) {
+  const [evaluation, setEvaluation] = useState<TurnEvaluation | null>(
+    run.turnEvaluation ?? null
+  )
+  const [error, setError] = useState<string | null>(null)
+  const [isEvaluating, setIsEvaluating] = useState(false)
+  const turnNumberText =
+    typeof run.turnNumber === "number" ? String(run.turnNumber) : "?"
+
+  useEffect(() => {
+    setEvaluation(run.turnEvaluation ?? null)
+    setError(null)
+  }, [run.llmRunId, run.turnEvaluation])
+
+  async function handleEvaluate() {
+    if (isEvaluating) {
+      return
+    }
+
+    setIsEvaluating(true)
+    setError(null)
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/decks/${deckId}/simulations/${simulationId}/turn-llm-runs/${run.llmRunId}/evaluation`,
+        {
+          method: "POST",
+        }
+      )
+
+      if (!response.ok) {
+        setError(await readApiError(response, "Turn evaluation failed."))
+        return
+      }
+
+      const data = (await response.json()) as TurnEvaluationResponse
+
+      setEvaluation(data.evaluation)
+      onSaved(data.evaluation)
+    } catch {
+      setError("Turn evaluation could not be sent to the server.")
+    } finally {
+      setIsEvaluating(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-6 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={isEvaluating ? undefined : onClose}
+    >
+      <section
+        aria-labelledby="turn-evaluation-title"
+        className="flex max-h-[calc(100svh-3rem)] w-full max-w-3xl flex-col rounded-lg border border-border bg-card shadow-2xl shadow-black/40"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="min-w-0 space-y-1">
+            <h2 id="turn-evaluation-title" className="text-xl font-semibold">
+              Turn {turnNumberText} evaluation
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Attempt {run.attemptNumber} / {run.model}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+            disabled={isEvaluating}
+          >
+            <X />
+          </Button>
+        </header>
+
+        <div className="simulation-scrollbar grid min-h-0 flex-1 gap-4 overflow-y-auto px-5 py-5">
+          {evaluation ? (
+            <div className="grid gap-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <TurnEvaluationMetric
+                  label="Legal turn"
+                  value={evaluation.legalTurnPass ? "Pass" : "Fail"}
+                  tone={evaluation.legalTurnPass ? "pass" : "fail"}
+                />
+                <TurnEvaluationMetric
+                  label="Reasoning"
+                  value={evaluation.reasoningPass ? "Pass" : "Fail"}
+                  tone={evaluation.reasoningPass ? "pass" : "fail"}
+                />
+                <TurnEvaluationMetric
+                  label="Quality"
+                  value={`${formatEvaluationScore(
+                    evaluation.simulationQualityScore
+                  )}/10`}
+                  tone="neutral"
+                />
+              </div>
+
+              <TurnEvaluationList
+                emptyText="No illegal actions found."
+                items={evaluation.evaluationJson.illegalActions}
+                title="Illegal actions"
+              />
+              <TurnEvaluationList
+                emptyText="No reasoning mistakes found."
+                items={evaluation.evaluationJson.reasoningMistakes}
+                title="Reasoning mistakes"
+              />
+              <TurnEvaluationList
+                emptyText="No strategic mistakes listed."
+                items={evaluation.evaluationJson.strategicMistakes}
+                title="Strategic mistakes"
+              />
+
+              <details className="min-w-0 rounded-md border border-border bg-black/20">
+                <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+                  Raw evaluation JSON
+                </summary>
+                <pre className="debug-scrollbar-neutral max-h-80 overflow-y-auto border-t border-border p-3 text-xs leading-5 break-words whitespace-pre-wrap text-muted-foreground">
+                  {JSON.stringify(evaluation.evaluationJson, null, 2)}
+                </pre>
+              </details>
+            </div>
+          ) : (
+            <p className="rounded-md border border-border bg-background/35 px-3 py-2 text-sm text-muted-foreground">
+              This turn has not been evaluated yet.
+            </p>
+          )}
+
+          {error ? (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              {error}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={isEvaluating}
+          >
+            Close
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void handleEvaluate()}
+            disabled={isEvaluating}
+          >
+            {isEvaluating ? (
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+            ) : (
+              <ClipboardCheck data-icon="inline-start" />
+            )}
+            {isEvaluating
+              ? "Evaluating..."
+              : evaluation
+                ? "Rerun evaluation"
+                : "Run evaluation"}
+          </Button>
+        </footer>
+      </section>
     </div>
   )
+}
+
+function TurnEvaluationMetric({
+  label,
+  tone,
+  value,
+}: {
+  label: string
+  tone: "fail" | "neutral" | "pass"
+  value: string
+}) {
+  const valueClassName =
+    tone === "pass"
+      ? "text-emerald-300"
+      : tone === "fail"
+        ? "text-destructive"
+        : "text-sky-200"
+
+  return (
+    <div className="rounded-md border border-border bg-background/35 px-3 py-2">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-lg font-semibold ${valueClassName}`}>{value}</p>
+    </div>
+  )
+}
+
+function TurnEvaluationList({
+  emptyText,
+  items,
+  title,
+}: {
+  emptyText: string
+  items: readonly string[]
+  title: string
+}) {
+  return (
+    <section className="grid gap-2">
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      {items.length > 0 ? (
+        <ul className="grid gap-2">
+          {items.map((item, index) => (
+            <li
+              key={`${title}-${index}`}
+              className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm leading-6 text-muted-foreground"
+            >
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-md border border-border bg-black/20 px-3 py-2 text-sm text-muted-foreground">
+          {emptyText}
+        </p>
+      )}
+    </section>
+  )
+}
+
+function formatEvaluationScore(score: number) {
+  return Number.isInteger(score) ? String(score) : score.toFixed(1)
 }
 
 const simulationResultChunkSurfaceClassName =

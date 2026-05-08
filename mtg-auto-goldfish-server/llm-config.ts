@@ -78,6 +78,16 @@ export type ResolvedTurnSimulationLlmRunConfig =
   | OpenRouterRunConfig
   | ResolvedLlamaCppRunConfig
 
+export type EvaluationLlmRunConfig =
+  | OpenAiRunConfig
+  | OpenRouterRunConfig
+  | LlamaCppRunConfig
+
+export type ResolvedEvaluationLlmRunConfig =
+  | OpenAiRunConfig
+  | OpenRouterRunConfig
+  | ResolvedLlamaCppRunConfig
+
 export class LlmConfigurationError extends Error {
   constructor(message: string) {
     super(message)
@@ -119,6 +129,12 @@ export function getTurnSimulationLlmRunConfig(
   }
 
   return config
+}
+
+export function getEvaluationLlmRunConfig(
+  environment: Environment = process.env
+): EvaluationLlmRunConfig {
+  return getLlmRunConfig(environment)
 }
 
 export function getOpenRouterApiKey(environment: Environment = process.env) {

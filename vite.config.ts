@@ -8,7 +8,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     watch: {
-      ignored: ["**/mtg-auto-goldfish-server/**"],
+      ignored: (watchPath) =>
+        watchPath.includes("mtg-auto-goldfish-server") &&
+        !watchPath.endsWith("simulation-run-text.ts"),
     },
   },
   resolve: {

@@ -24,6 +24,7 @@ import {
   SIMULATION_RESULTS_EXCLUDED_CHUNK_KINDS,
   STALE_IN_FLIGHT_LLM_RUN_CANCELLATION_MESSAGE,
   STALE_RUNNING_SIMULATION_CANCELLATION_MESSAGE,
+  TURN_EVALUATION_UPSERT_SQL,
   canApplyLateLlmRunTerminalUpdate,
   extractLlmRunChunkCardMentionRequests,
   getOpeningHandCompletionDecision,
@@ -48,9 +49,15 @@ import {
 } from "./openai-pricing.js"
 import {
   LlmConfigurationError,
+  getEvaluationLlmRunConfig,
   getOpeningHandLlmRunConfig,
   getTurnSimulationLlmRunConfig,
 } from "./llm-config.js"
+import {
+  buildTurnEvaluationInputText,
+  getTurnEvaluationIneligibilityMessage,
+  parseTurnEvaluationResponseText,
+} from "./turn-evaluations.js"
 
 test("normalizes valid MCP output JSON", () => {
   const chunk = normalizeOpenAiStreamEvent({
@@ -498,6 +505,18 @@ test("validates provider-specific LLM config requirements", () => {
   assert.equal(config.modelProvider, null)
   assert.equal(config.reasoningEffort, "high")
   assert.equal(config.stopWhenStepCount, 7)
+})
+
+test("evaluation config reuses OpenAI model settings without requiring MCP URLs", () => {
+  const config = getEvaluationLlmRunConfig({
+    LLM_PROVIDER: "openai",
+    OPENAI_API_KEY: "key",
+    OPENAI_MODEL: "gpt-5.4-mini",
+    OPENAI_REASONING_EFFORT: "medium",
+  })
+
+  assert.equal(config.provider, "openai")
+  assert.equal(config.model, "gpt-5.4-mini")
 })
 
 test("validates llama.cpp LLM config requirements", () => {
@@ -971,6 +990,181 @@ test("reports invalid completed turn JSON with an explicit message", () => {
     () => parseTurnSimulationFromResponseText("{"),
     /Turn LLM completed response was not valid JSON\./
   )
+})
+
+test("parses turn evaluation JSON", () => {
+  assert.deepEqual(
+    parseTurnEvaluationResponseText(
+      JSON.stringify({
+        legalTurnPass: true,
+        reasoningPass: false,
+        simulationQualityScore: 7.5,
+        illegalActions: [],
+        reasoningMistakes: ["Assumed Sol Ring taps for colored mana."],
+        strategicMistakes: ["Should have played the untapped land first."],
+      })
+    ),
+    {
+      legalTurnPass: true,
+      reasoningPass: false,
+      simulationQualityScore: 7.5,
+      illegalActions: [],
+      reasoningMistakes: ["Assumed Sol Ring taps for colored mana."],
+      strategicMistakes: ["Should have played the untapped land first."],
+    }
+  )
+})
+
+test("parses turn evaluation JSON after leading text", () => {
+  const parsedEvaluation = parseTurnEvaluationResponseText(
+    [
+      "Here is the evaluation:",
+      JSON.stringify({
+        legalTurnPass: false,
+        reasoningPass: true,
+        simulationQualityScore: 4,
+        illegalActions: ["Played two lands in one turn."],
+        reasoningMistakes: [],
+        strategicMistakes: [],
+      }),
+    ].join("\n")
+  )
+
+  assert.equal(parsedEvaluation.legalTurnPass, false)
+  assert.equal(parsedEvaluation.simulationQualityScore, 4)
+})
+
+test("rejects invalid turn evaluation JSON", () => {
+  assert.throws(
+    () =>
+      parseTurnEvaluationResponseText(
+        JSON.stringify({
+          legalTurnPass: true,
+          reasoningPass: true,
+          simulationQualityScore: 11,
+          illegalActions: [],
+          reasoningMistakes: [],
+          strategicMistakes: [],
+        })
+      ),
+    /Turn evaluation response did not match the expected JSON\./
+  )
+})
+
+test("builds turn evaluation input like copy activity with prompt", () => {
+  const inputText = buildTurnEvaluationInputText({
+    fullPrompt: "Full turn prompt",
+    chunks: [
+      {
+        id: 1,
+        sequence: 1,
+        kind: "reasoning_delta",
+        mcpFunctionName: null,
+        mcpFunctionOutput: null,
+        reasoningDelta: "Reason about the turn.",
+        outputDelta: null,
+        payload: {},
+        cardMentions: [],
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: 2,
+        sequence: 2,
+        kind: "mcp_call_complete",
+        mcpFunctionName: "log_turn_action",
+        mcpFunctionOutput: {
+          data: {
+            loggedActions: ["Play Command Tower."],
+          },
+        },
+        reasoningDelta: null,
+        outputDelta: null,
+        payload: {},
+        cardMentions: [],
+        receivedAt: "2026-01-01T00:00:01.000Z",
+      },
+    ],
+  })
+
+  assert.equal(
+    inputText,
+    [
+      "Full turn prompt",
+      "Reason about the turn.",
+      "[called log_turn_action]",
+      `[result of log_turn_action]\n${JSON.stringify(
+        {
+          data: {
+            loggedActions: ["Play Command Tower."],
+          },
+        },
+        null,
+        2
+      )}`,
+    ].join("\n\n")
+  )
+})
+
+test("validates turn evaluation run eligibility", () => {
+  assert.equal(
+    getTurnEvaluationIneligibilityMessage({
+      phase: "turn",
+      status: "completed",
+      chunks: [],
+    }),
+    null
+  )
+  assert.equal(
+    getTurnEvaluationIneligibilityMessage({
+      phase: "report",
+      status: "completed",
+      chunks: [],
+    }),
+    "Only turn LLM runs can be evaluated."
+  )
+  assert.equal(
+    getTurnEvaluationIneligibilityMessage({
+      phase: "turn",
+      status: "streaming",
+      chunks: [],
+    }),
+    "Only completed turn LLM runs can be evaluated."
+  )
+  assert.equal(
+    getTurnEvaluationIneligibilityMessage({
+      phase: "turn",
+      status: "completed",
+      chunks: [
+        {
+          kind: "error",
+        },
+      ],
+    }),
+    "Turn LLM runs with errors cannot be evaluated."
+  )
+})
+
+test("turn evaluation upsert overwrites existing evaluation columns", () => {
+  const normalizedSql = TURN_EVALUATION_UPSERT_SQL.replace(/\s+/g, " ").trim()
+
+  assert.match(
+    normalizedSql,
+    /ON CONFLICT \(turn_llm_run_id\) DO UPDATE/
+  )
+
+  for (const column of [
+    "legal_turn_pass",
+    "reasoning_pass",
+    "simulation_quality_score",
+    "evaluation_json",
+  ]) {
+    assert.match(
+      normalizedSql,
+      new RegExp(`${column} = EXCLUDED\\.${column}`)
+    )
+  }
+
+  assert.match(normalizedSql, /updated_at = now\(\)/)
 })
 
 test("normal results exclude only raw and completed chunks", () => {
