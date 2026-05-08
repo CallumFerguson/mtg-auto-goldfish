@@ -4255,7 +4255,7 @@ async function main() {
         if (error instanceof SimulationValidationError) {
           const status =
             error.message === "Opening-hand LLM run not found." ||
-            error.message === "Simulation not found."
+              error.message === "Simulation not found."
               ? 404
               : 400
 
@@ -4407,7 +4407,7 @@ async function main() {
         if (error instanceof SimulationValidationError) {
           const status =
             error.message === "Turn LLM run not found." ||
-            error.message === "Simulation not found."
+              error.message === "Simulation not found."
               ? 404
               : 400
 
@@ -5743,7 +5743,7 @@ The report should help the deck user understand:
 - what each simulated turn accomplished
 - a short overall takeaway
 
-Keep the report practical and focused.
+Keep the report practical and focused. The goal is not to sumarize everything that happened.
 
 === Opening Hand ===
 
