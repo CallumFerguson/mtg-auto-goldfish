@@ -4284,26 +4284,19 @@ function SimulationResultLoggedTurnActionEvent({
     return <SimulationResultPhaseChangeEvent action={actions[0]} />
   }
 
-  const hasMultipleActions = chunks.length > 1 || actions.length > 1
-  const title = hasFailure
-    ? "Turn action log failed"
-    : hasMultipleActions
-      ? "Turn actions logged"
-      : "Turn action logged"
+  const title = hasFailure ? "Turn action log failed" : null
 
   return (
     <div className={`grid gap-2 p-3 ${simulationResultChunkSurfaceClassName}`}>
-      <p className="text-sm font-medium text-muted-foreground">{title}</p>
-      {hasMultipleActions && actions.length > 0 ? (
+      {title ? (
+        <p className="text-sm font-medium text-muted-foreground">{title}</p>
+      ) : null}
+      {actions.length > 0 ? (
         <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-foreground/90">
           {actions.map((action, index) => (
             <li key={`${action.action}-${index}`}>{action.action}</li>
           ))}
         </ul>
-      ) : actions.length === 1 ? (
-        <p className="text-sm leading-6 text-foreground/90">
-          {actions[0].action}
-        </p>
       ) : (
         <p className="text-sm leading-6 text-muted-foreground">
           {getTurnActionLogFallbackText(chunks)}
