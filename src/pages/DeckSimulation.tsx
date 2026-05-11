@@ -2902,6 +2902,8 @@ function SimulationResultsPanel({
                           : `Rerun turn ${run.turnNumber}`
                     }
                     onClick={() => {
+                      onKeepResultsScrolledToBottom()
+
                       if (run.resultKind === "opening_hand") {
                         onStartOpeningHandRun()
                         return
