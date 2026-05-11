@@ -1244,6 +1244,85 @@ test("omits output lifecycle text from activity blocks", () => {
   )
 })
 
+test("separates activity reasoning blocks by summary part index", () => {
+  const blocks = getSimulationRunActivityBlocks([
+    createChunk({
+      id: 1,
+      kind: "reasoning_delta",
+      reasoningDelta: "I am checking mana for the signet.",
+      payload: createReasoningSummaryDeltaPayload(0),
+      sequence: 1,
+    }),
+    createChunk({
+      id: 2,
+      kind: "reasoning_delta",
+      reasoningDelta: "Calculating available mana\n\nSol Ring can pay for it.",
+      payload: createReasoningSummaryDeltaPayload(1),
+      sequence: 2,
+    }),
+    createChunk({
+      id: 3,
+      kind: "reasoning_delta",
+      reasoningDelta: "Reviewing mana options\n\nThe signet can make red.",
+      payload: createReasoningSummaryDeltaPayload(2),
+      sequence: 3,
+    }),
+  ])
+
+  assert.deepEqual(
+    blocks.map((block) => block.type),
+    ["reasoning", "reasoning", "reasoning"]
+  )
+  assert.deepEqual(
+    blocks.map((block) => (block.type === "reasoning" ? block.text : "")),
+    [
+      "I am checking mana for the signet.",
+      "Calculating available mana\n\nSol Ring can pay for it.",
+      "Reviewing mana options\n\nThe signet can make red.",
+    ]
+  )
+})
+
+test("separates clipboard reasoning blocks by summary part index", () => {
+  const text = formatSimulationRunClipboardText(
+    createRun({
+      llmRunId: "turn-run",
+      phase: "turn",
+      chunks: [
+        createChunk({
+          id: 1,
+          kind: "reasoning_delta",
+          reasoningDelta: "I am checking mana for the signet.",
+          payload: createReasoningSummaryDeltaPayload(0),
+          sequence: 1,
+        }),
+        createChunk({
+          id: 2,
+          kind: "reasoning_delta",
+          reasoningDelta: "Calculating available mana",
+          payload: createReasoningSummaryDeltaPayload(1),
+          sequence: 2,
+        }),
+        createChunk({
+          id: 3,
+          kind: "reasoning_delta",
+          reasoningDelta: " after Sol Ring.",
+          payload: createReasoningSummaryDeltaPayload(1),
+          sequence: 3,
+        }),
+      ],
+    })
+  )
+
+  assert.equal(
+    text,
+    [
+      "I am checking mana for the signet.",
+      "Calculating available mana after Sol Ring.",
+    ].join("\n\n")
+  )
+})
+
 test("omits output deltas and keeps them as activity block boundaries", () => {
   const blocks = getSimulationRunActivityBlocks([
     createChunk({
@@ -1622,5 +1701,14 @@ function createChunk(overrides: {
     payload: overrides.payload ?? {},
     cardMentions: overrides.cardMentions ?? [],
     receivedAt: "2026-01-01T00:00:00.000Z",
+  }
+}
+
+function createReasoningSummaryDeltaPayload(summaryIndex: number) {
+  return {
+    type: "response.reasoning_summary_text.delta",
+    item_id: "rs_1",
+    output_index: 0,
+    summary_index: summaryIndex,
   }
 }

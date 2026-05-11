@@ -141,6 +141,34 @@ test("normalizes OpenAI reasoning and output item lifecycle events", () => {
   assert.equal(outputDoneChunk.kind, "output_done")
 })
 
+test("normalizes OpenAI reasoning summary part lifecycle events", () => {
+  const summaryStartChunk = normalizeOpenAiStreamEvent({
+    type: "response.reasoning_summary_part.added",
+    item_id: "rs_1",
+    output_index: 0,
+    part: {
+      text: "",
+      type: "summary_text",
+    },
+    sequence_number: 1,
+    summary_index: 0,
+  })
+  const summaryDoneChunk = normalizeOpenAiStreamEvent({
+    type: "response.reasoning_summary_part.done",
+    item_id: "rs_1",
+    output_index: 0,
+    part: {
+      text: "Checking mana.",
+      type: "summary_text",
+    },
+    sequence_number: 2,
+    summary_index: 0,
+  })
+
+  assert.equal(summaryStartChunk.kind, "reasoning_start")
+  assert.equal(summaryDoneChunk.kind, "reasoning_done")
+})
+
 test("extracts card mentions from draw tool output data", () => {
   assert.deepEqual(
     extractLlmRunChunkCardMentionRequests({
@@ -840,6 +868,31 @@ test("normalizes OpenRouter reasoning and output item lifecycle events", () => {
   assert.equal(outputDoneChunk.kind, "output_done")
 })
 
+test("normalizes OpenRouter reasoning summary part lifecycle events", () => {
+  const summaryStartChunk = normalizeOpenRouterStreamEvent({
+    type: "response.reasoning_summary_part.added",
+    itemId: "rs_1",
+    outputIndex: 0,
+    part: {
+      text: "",
+      type: "summary_text",
+    },
+    sequenceNumber: 1,
+    summaryIndex: 0,
+  })
+  const summaryTextDoneChunk = normalizeOpenRouterStreamEvent({
+    type: "response.reasoning_summary_text.done",
+    itemId: "rs_1",
+    outputIndex: 0,
+    sequenceNumber: 2,
+    summaryIndex: 0,
+    text: "Checking mana.",
+  })
+
+  assert.equal(summaryStartChunk.kind, "reasoning_start")
+  assert.equal(summaryTextDoneChunk.kind, "reasoning_done")
+})
+
 test("normalizes OpenRouter function calls and tool results", () => {
   const toolCallNamesById = new Map<string, string>()
   const startChunk = normalizeOpenRouterStreamEvent(
@@ -1256,10 +1309,7 @@ test("opening-hand evaluation upsert overwrites existing evaluation columns", ()
     "simulation_quality_score",
     "evaluation_json",
   ]) {
-    assert.match(
-      normalizedSql,
-      new RegExp(`${column} = EXCLUDED\\.${column}`)
-    )
+    assert.match(normalizedSql, new RegExp(`${column} = EXCLUDED\\.${column}`))
   }
 
   assert.match(normalizedSql, /updated_at = now\(\)/)
@@ -1424,10 +1474,7 @@ test("validates turn evaluation run eligibility", () => {
 test("turn evaluation upsert overwrites existing evaluation columns", () => {
   const normalizedSql = TURN_EVALUATION_UPSERT_SQL.replace(/\s+/g, " ").trim()
 
-  assert.match(
-    normalizedSql,
-    /ON CONFLICT \(turn_llm_run_id\) DO UPDATE/
-  )
+  assert.match(normalizedSql, /ON CONFLICT \(turn_llm_run_id\) DO UPDATE/)
 
   for (const column of [
     "legal_turn_pass",
@@ -1435,10 +1482,7 @@ test("turn evaluation upsert overwrites existing evaluation columns", () => {
     "simulation_quality_score",
     "evaluation_json",
   ]) {
-    assert.match(
-      normalizedSql,
-      new RegExp(`${column} = EXCLUDED\\.${column}`)
-    )
+    assert.match(normalizedSql, new RegExp(`${column} = EXCLUDED\\.${column}`))
   }
 
   assert.match(normalizedSql, /updated_at = now\(\)/)

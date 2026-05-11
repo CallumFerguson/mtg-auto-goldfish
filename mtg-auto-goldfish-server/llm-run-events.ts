@@ -54,6 +54,18 @@ export function normalizeOpenAiStreamEvent(
     })
   }
 
+  if (isReasoningSummaryPartAddedEvent(eventType)) {
+    return createChunk("reasoning_start", {
+      payload,
+    })
+  }
+
+  if (isReasoningSummaryPartDoneEvent(eventType)) {
+    return createChunk("reasoning_done", {
+      payload,
+    })
+  }
+
   if (eventType === "response.completed") {
     return createChunk("completed", {
       payload,
@@ -139,6 +151,18 @@ export function normalizeOpenRouterStreamEvent(
   ) {
     return createChunk("reasoning_delta", {
       reasoningDelta: getStringProperty(eventRecord, "delta"),
+      payload,
+    })
+  }
+
+  if (isReasoningSummaryPartAddedEvent(eventType)) {
+    return createChunk("reasoning_start", {
+      payload,
+    })
+  }
+
+  if (isReasoningSummaryPartDoneEvent(eventType)) {
+    return createChunk("reasoning_done", {
       payload,
     })
   }
@@ -658,6 +682,17 @@ function getOutputItemLifecycleChunkKind(
   }
 
   return null
+}
+
+function isReasoningSummaryPartAddedEvent(eventType: string | null) {
+  return eventType === "response.reasoning_summary_part.added"
+}
+
+function isReasoningSummaryPartDoneEvent(eventType: string | null) {
+  return (
+    eventType === "response.reasoning_summary_part.done" ||
+    eventType === "response.reasoning_summary_text.done"
+  )
 }
 
 function getOutputTextParts(content: unknown[]) {

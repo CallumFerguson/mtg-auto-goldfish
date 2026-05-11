@@ -134,7 +134,9 @@ export function getSimulationRunThinkingPreview(
   chunks: readonly SimulationDebugLlmRunChunk[]
 ) {
   const preview = [...chunks]
-    .sort((firstChunk, secondChunk) => firstChunk.sequence - secondChunk.sequence)
+    .sort(
+      (firstChunk, secondChunk) => firstChunk.sequence - secondChunk.sequence
+    )
     .filter(isDeltaChunk)
     .slice(-THINKING_PREVIEW_MAX_DELTA_CHUNKS)
     .map(getDeltaText)
@@ -169,9 +171,11 @@ export function getSimulationRunActivityBlocks(
     SimulationRunActivityBlock,
     { type: "reasoning" }
   > | null = null
+  let activeReasoningPartKey: string | null = null
 
   function closeActiveDeltaBlock() {
     activeDeltaBlock = null
+    activeReasoningPartKey = null
   }
 
   function startReasoningBlock(chunk: SimulationDebugLlmRunChunk) {
@@ -184,16 +188,32 @@ export function getSimulationRunActivityBlocks(
 
     blocks.push(block)
     activeDeltaBlock = block
+    activeReasoningPartKey = getReasoningDeltaPartKey(chunk)
 
     return block
   }
 
   function appendReasoningDeltaChunk(chunk: SimulationDebugLlmRunChunk) {
     const deltaText = getDeltaText(chunk)
+    const reasoningPartKey = getReasoningDeltaPartKey(chunk)
+
+    if (
+      activeDeltaBlock !== null &&
+      activeReasoningPartKey !== null &&
+      reasoningPartKey !== null &&
+      activeReasoningPartKey !== reasoningPartKey
+    ) {
+      closeActiveDeltaBlock()
+    }
+
     const block = activeDeltaBlock ?? startReasoningBlock(chunk)
 
     if (block.chunks[block.chunks.length - 1] !== chunk) {
       block.chunks.push(chunk)
+    }
+
+    if (reasoningPartKey !== null) {
+      activeReasoningPartKey = reasoningPartKey
     }
 
     block.text += deltaText
@@ -578,4 +598,71 @@ function getPayloadString(value: unknown, property: string) {
   const propertyValue = asPayloadRecord(value)[property]
 
   return typeof propertyValue === "string" ? propertyValue : null
+}
+
+function getPayloadNumber(value: unknown, property: string) {
+  const propertyValue = asPayloadRecord(value)[property]
+
+  return typeof propertyValue === "number" ? propertyValue : null
+}
+
+function getPayloadStringVariant(
+  value: unknown,
+  firstProperty: string,
+  secondProperty: string
+) {
+  return (
+    getPayloadString(value, firstProperty) ??
+    getPayloadString(value, secondProperty)
+  )
+}
+
+function getPayloadNumberVariant(
+  value: unknown,
+  firstProperty: string,
+  secondProperty: string
+) {
+  return (
+    getPayloadNumber(value, firstProperty) ??
+    getPayloadNumber(value, secondProperty)
+  )
+}
+
+function getReasoningDeltaPartKey(chunk: SimulationDebugLlmRunChunk) {
+  if (chunk.kind !== "reasoning_delta") {
+    return null
+  }
+
+  const payloadRecord = asPayloadRecord(chunk.payload)
+  const itemId = getPayloadStringVariant(payloadRecord, "item_id", "itemId")
+  const outputIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "output_index",
+    "outputIndex"
+  )
+  const summaryIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "summary_index",
+    "summaryIndex"
+  )
+  const contentIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "content_index",
+    "contentIndex"
+  )
+
+  if (summaryIndex !== null) {
+    return ["summary", itemId ?? "", outputIndex ?? "", summaryIndex].join(":")
+  }
+
+  if (contentIndex !== null) {
+    return [
+      "reasoning-text",
+      itemId ?? "",
+      outputIndex ?? "",
+      contentIndex,
+    ].join(":")
+  }
+
+  return null
 }

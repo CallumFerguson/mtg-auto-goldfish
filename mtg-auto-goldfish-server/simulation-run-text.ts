@@ -43,6 +43,7 @@ export function formatSimulationRunChunksClipboardText(
   const blocks: string[] = []
   let activeDeltaBlockType: "reasoning" | "output" | null = null
   let activeDeltaBlockText = ""
+  let activeReasoningPartKey: string | null = null
 
   function flushActiveDeltaBlock() {
     if (activeDeltaBlockText.length > 0) {
@@ -51,6 +52,7 @@ export function formatSimulationRunChunksClipboardText(
 
     activeDeltaBlockType = null
     activeDeltaBlockText = ""
+    activeReasoningPartKey = null
   }
 
   function startDeltaBlock(type: "reasoning" | "output") {
@@ -58,10 +60,31 @@ export function formatSimulationRunChunksClipboardText(
     activeDeltaBlockType = type
   }
 
-  function appendDeltaBlockText(type: "reasoning" | "output", text: string) {
+  function appendDeltaBlockText(
+    type: "reasoning" | "output",
+    chunk: SimulationRunTextChunk,
+    text: string
+  ) {
+    const reasoningPartKey =
+      type === "reasoning" ? getReasoningDeltaPartKey(chunk) : null
+
     if (activeDeltaBlockType !== type) {
       flushActiveDeltaBlock()
       activeDeltaBlockType = type
+    }
+
+    if (
+      type === "reasoning" &&
+      activeReasoningPartKey !== null &&
+      reasoningPartKey !== null &&
+      activeReasoningPartKey !== reasoningPartKey
+    ) {
+      flushActiveDeltaBlock()
+      activeDeltaBlockType = type
+    }
+
+    if (reasoningPartKey !== null) {
+      activeReasoningPartKey = reasoningPartKey
     }
 
     activeDeltaBlockText += text
@@ -92,12 +115,12 @@ export function formatSimulationRunChunksClipboardText(
     }
 
     if (chunk.kind === "reasoning_delta") {
-      appendDeltaBlockText("reasoning", chunk.reasoningDelta ?? "")
+      appendDeltaBlockText("reasoning", chunk, chunk.reasoningDelta ?? "")
       continue
     }
 
     if (chunk.kind === "message_delta") {
-      appendDeltaBlockText("output", chunk.outputDelta ?? "")
+      appendDeltaBlockText("output", chunk, chunk.outputDelta ?? "")
       continue
     }
 
@@ -209,7 +232,9 @@ function getToolCallActivityName(chunks: readonly SimulationRunTextChunk[]) {
   return "Unknown tool"
 }
 
-function formatToolCallClipboardText(chunks: readonly SimulationRunTextChunk[]) {
+function formatToolCallClipboardText(
+  chunks: readonly SimulationRunTextChunk[]
+) {
   return `[called ${getToolCallActivityName(chunks)}]`
 }
 
@@ -249,4 +274,71 @@ function getPayloadString(value: unknown, property: string) {
   const propertyValue = asPayloadRecord(value)[property]
 
   return typeof propertyValue === "string" ? propertyValue : null
+}
+
+function getPayloadNumber(value: unknown, property: string) {
+  const propertyValue = asPayloadRecord(value)[property]
+
+  return typeof propertyValue === "number" ? propertyValue : null
+}
+
+function getPayloadStringVariant(
+  value: unknown,
+  firstProperty: string,
+  secondProperty: string
+) {
+  return (
+    getPayloadString(value, firstProperty) ??
+    getPayloadString(value, secondProperty)
+  )
+}
+
+function getPayloadNumberVariant(
+  value: unknown,
+  firstProperty: string,
+  secondProperty: string
+) {
+  return (
+    getPayloadNumber(value, firstProperty) ??
+    getPayloadNumber(value, secondProperty)
+  )
+}
+
+function getReasoningDeltaPartKey(chunk: SimulationRunTextChunk) {
+  if (chunk.kind !== "reasoning_delta") {
+    return null
+  }
+
+  const payloadRecord = asPayloadRecord(chunk.payload)
+  const itemId = getPayloadStringVariant(payloadRecord, "item_id", "itemId")
+  const outputIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "output_index",
+    "outputIndex"
+  )
+  const summaryIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "summary_index",
+    "summaryIndex"
+  )
+  const contentIndex = getPayloadNumberVariant(
+    payloadRecord,
+    "content_index",
+    "contentIndex"
+  )
+
+  if (summaryIndex !== null) {
+    return ["summary", itemId ?? "", outputIndex ?? "", summaryIndex].join(":")
+  }
+
+  if (contentIndex !== null) {
+    return [
+      "reasoning-text",
+      itemId ?? "",
+      outputIndex ?? "",
+      contentIndex,
+    ].join(":")
+  }
+
+  return null
 }
