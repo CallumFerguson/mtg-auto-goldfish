@@ -1783,6 +1783,7 @@ function buildOpeningHandOpenAiRequestPayload(
   return {
     model: config.model,
     input: fullPrompt,
+    max_output_tokens: config.maxOutputTokens,
     stream: true as const,
     metadata: {
       simulationId,
@@ -1814,6 +1815,7 @@ function buildTurnSimulationOpenAiRequestPayload(
   return {
     model: config.model,
     input: fullPrompt,
+    max_output_tokens: config.maxOutputTokens,
     stream: true as const,
     metadata: {
       simulationId,
@@ -1845,6 +1847,7 @@ function buildReportOpenAiRequestPayload(
   return {
     model: config.model,
     input: fullPrompt,
+    max_output_tokens: config.maxOutputTokens,
     stream: true as const,
     metadata: {
       simulationId,
@@ -1866,6 +1869,7 @@ function buildOpeningHandOpenRouterRequestPayload(
     providerType: "openrouter" as const,
     model: config.model,
     input: fullPrompt,
+    maxOutputTokens: config.maxOutputTokens,
     metadata: {
       simulationId,
       phase: "opening_hand",
@@ -1889,6 +1893,7 @@ function buildReportOpenRouterRequestPayload(
     providerType: "openrouter" as const,
     model: config.model,
     input: fullPrompt,
+    maxOutputTokens: config.maxOutputTokens,
     metadata: {
       simulationId,
       phase: "report",
@@ -1911,6 +1916,7 @@ function buildOpeningHandLlamaCppRequestPayload(
   return {
     providerType: "llamacpp",
     model: config.model,
+    max_tokens: config.maxOutputTokens,
     messages: [
       {
         role: "user",
@@ -1935,6 +1941,7 @@ function buildReportLlamaCppRequestPayload(
   return {
     providerType: "llamacpp",
     model: config.model,
+    max_tokens: config.maxOutputTokens,
     messages: [
       {
         role: "user",
@@ -1961,6 +1968,7 @@ function buildTurnSimulationOpenRouterRequestPayload(
     providerType: "openrouter" as const,
     model: config.model,
     input: fullPrompt,
+    maxOutputTokens: config.maxOutputTokens,
     metadata: {
       simulationId,
       phase: "turn",
@@ -1985,6 +1993,7 @@ function buildTurnSimulationLlamaCppRequestPayload(
   return {
     providerType: "llamacpp",
     model: config.model,
+    max_tokens: config.maxOutputTokens,
     messages: [
       {
         role: "user",
@@ -2723,6 +2732,7 @@ async function collectOpenRouterLlmStream({
       {
         model: requestPayload.model,
         input: requestPayload.input,
+        maxOutputTokens: requestPayload.maxOutputTokens,
         metadata: requestPayload.metadata,
         reasoning: requestPayload.reasoning,
         parallelToolCalls: requestPayload.parallelToolCalls,
@@ -2960,6 +2970,7 @@ async function collectRunEvaluationCompletion({
     const response = await client.responses.create({
       model: config.model,
       input: prompt,
+      max_output_tokens: config.maxOutputTokens,
       metadata,
       reasoning: {
         effort: config.reasoningEffort,
@@ -2989,6 +3000,7 @@ async function collectRunEvaluationCompletion({
       apiKey: config.apiKey,
       body: {
         model: config.model,
+        max_completion_tokens: config.maxOutputTokens,
         messages: [
           {
             role: "user",
@@ -3026,6 +3038,7 @@ async function collectRunEvaluationCompletion({
   })
   const result = await client.chat.completions.create({
     model: config.model,
+    max_tokens: config.maxOutputTokens,
     messages: [
       {
         role: "user",

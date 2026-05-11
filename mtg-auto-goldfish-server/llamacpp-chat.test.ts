@@ -124,6 +124,10 @@ test("collects a llama.cpp opening-hand tool loop", async () => {
     total_tokens: 125,
   })
   assert.equal(chatRequests.length, 2)
+  assert.deepEqual(
+    chatRequests.map((request) => request.max_tokens),
+    [2000, 2000]
+  )
   assert.equal(chatRequests[1]?.messages.length, 3)
 })
 
@@ -422,6 +426,7 @@ function createRequestPayload(
   return {
     providerType: "llamacpp",
     model: "local-model",
+    max_tokens: 2000,
     messages: [
       {
         role: "user",

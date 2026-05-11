@@ -17,6 +17,7 @@ type Environment = Record<string, string | undefined>
 
 type BaseLlmRunConfig = {
   apiKey: string
+  maxOutputTokens: number
   provider: LlmProvider
 }
 
@@ -145,10 +146,15 @@ function getLlmRunConfig(
   environment: Environment
 ): OpenAiRunConfig | OpenRouterRunConfig | LlamaCppRunConfig {
   const provider = getLlmProvider(environment)
+  const maxOutputTokens = getRequiredPositiveIntegerEnvironmentVariable(
+    environment,
+    "LLM_MAX_OUTPUT_TOKENS"
+  )
 
   if (provider === "openai") {
     return {
       apiKey: getRequiredEnvironmentVariable(environment, "OPENAI_API_KEY"),
+      maxOutputTokens,
       model: getRequiredEnvironmentVariable(environment, "OPENAI_MODEL"),
       provider,
       reasoningEffort: getRequiredReasoningEffort(
@@ -164,6 +170,7 @@ function getLlmRunConfig(
         getOptionalEnvironmentVariable(environment, "LLAMACPP_API_KEY") ??
         "not-needed",
       baseUrl: getRequiredEnvironmentVariable(environment, "LLAMACPP_BASE_URL"),
+      maxOutputTokens,
       model: null,
       provider,
       reasoningEffort: null,
@@ -176,6 +183,7 @@ function getLlmRunConfig(
 
   return {
     apiKey: getRequiredEnvironmentVariable(environment, "OPENROUTER_API_KEY"),
+    maxOutputTokens,
     model: getRequiredEnvironmentVariable(environment, "OPENROUTER_MODEL"),
     modelProvider: getOptionalEnvironmentVariable(
       environment,

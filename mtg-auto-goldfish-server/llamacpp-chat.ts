@@ -31,6 +31,7 @@ export type LlamaCppToolDefinition = {
 export type LlamaCppChatCompletionRequestPayload = {
   providerType: "llamacpp"
   model: string
+  max_tokens: number
   messages: ChatCompletionMessageParam[]
   metadata: Record<string, string>
   parallel_tool_calls: false
@@ -346,6 +347,7 @@ function createChatCompletionApiPayload(
 ): ChatCompletionCreateParamsStreaming {
   const payload: ChatCompletionCreateParamsStreaming = {
     model: requestPayload.model,
+    max_tokens: requestPayload.max_tokens,
     messages,
     metadata: requestPayload.metadata,
     parallel_tool_calls: requestPayload.parallel_tool_calls,
