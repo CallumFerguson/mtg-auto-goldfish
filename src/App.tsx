@@ -44,6 +44,16 @@ export function App() {
     )
   }
 
+  if (!session.data.user.emailVerified) {
+    return (
+      <AuthPage
+        initialEmail={session.data.user.email}
+        initialMode="verify-email"
+        onAuthenticated={handleAuthenticated}
+      />
+    )
+  }
+
   const user = toAuthUser(session.data.user)
   const handleSignedOut = () => {
     void session.refetch()
@@ -108,9 +118,15 @@ function getAuthModeFromLocation(pathname: string): AuthMode | null {
   return null
 }
 
-function toAuthUser(user: { email: string; id: string; name?: string | null }) {
+function toAuthUser(user: {
+  email: string
+  emailVerified: boolean
+  id: string
+  name?: string | null
+}) {
   return {
     email: user.email,
+    emailVerified: user.emailVerified,
     id: user.id,
     name: user.name ?? "",
   } satisfies AuthUser

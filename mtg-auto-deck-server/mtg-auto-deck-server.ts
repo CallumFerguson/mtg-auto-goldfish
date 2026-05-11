@@ -11,7 +11,11 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto"
 import OpenAI from "openai"
 import { z } from "zod/v4"
 import { auth, ensureAuthSchema } from "./auth.js"
-import { closeDatabasePool, verifyDatabaseConnection } from "./db.js"
+import {
+  closeDatabasePool,
+  queryDatabase,
+  verifyDatabaseConnection,
+} from "./db.js"
 import {
   DRAW_STARTING_HAND_PROMPT,
   GENERIC_GAME_RULES_REFERENCE,
@@ -213,6 +217,7 @@ const OPENING_HAND_MCP_PATH = "/mcp/opening-hand"
 const TURN_SIMULATION_MCP_PATH = "/mcp/turn-simulation"
 const SIMULATION_MCP_PATH = "/mcp/simulation"
 const AUTH_PATH_PREFIX = "/api/auth"
+const APP_SIGN_UP_PATH = "/api/app-auth/sign-up"
 const OPENING_HAND_MCP_SERVER_LABEL = "opening_hand"
 const TURN_SIMULATION_MCP_SERVER_LABEL = "turn_simulation"
 const STREAM_FLUSH_INTERVAL_MS = 1000
@@ -266,6 +271,10 @@ const createDeckSchema = z.object({
       quantity: z.number().int().positive(),
     })
   ),
+})
+const appSignUpSchema = z.object({
+  email: z.email(),
+  password: z.string().min(8).max(128),
 })
 const updateDeckDetailsSchema = z.object({
   name: z.string().trim().min(1),
@@ -330,6 +339,7 @@ type ActiveLlmRunRuntime = {
 
 type AuthenticatedUser = {
   email: string
+  emailVerified: boolean
   id: string
 }
 
@@ -4486,6 +4496,45 @@ async function main() {
     })
   })
 
+  app.post(APP_SIGN_UP_PATH, async (req: Request, res: Response) => {
+    const signUpInput = parseAppSignUpBody(req.body)
+
+    if (!signUpInput) {
+      res.status(400).json({
+        error:
+          "Email and password are required. Password must be between 8 and 128 characters.",
+      })
+      return
+    }
+
+    try {
+      if (await userEmailExists(signUpInput.email)) {
+        res.status(409).json({
+          error: "An account with this email already exists.",
+        })
+        return
+      }
+
+      await auth.api.signUpEmail({
+        body: {
+          email: signUpInput.email,
+          name: signUpInput.email,
+          password: signUpInput.password,
+        },
+        headers: fromNodeHeaders(req.headers),
+      })
+
+      res.status(201).json({
+        email: signUpInput.email,
+      })
+    } catch (error) {
+      console.error("Failed to create account:", error)
+      res.status(500).json({
+        error: "Account could not be created.",
+      })
+    }
+  })
+
   app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({
       ok: true,
@@ -4517,9 +4566,17 @@ async function main() {
         return
       }
 
+      if (!session.user.emailVerified) {
+        res.status(403).json({
+          error: "Email verification required.",
+        })
+        return
+      }
+
       authenticatedUsersByRequest.set(req, {
         id: session.user.id,
         email: session.user.email,
+        emailVerified: session.user.emailVerified,
       })
       next()
     } catch (error) {
@@ -5952,6 +6009,37 @@ function getAuthenticatedUser(req: Request) {
   }
 
   return user
+}
+
+function parseAppSignUpBody(body: unknown) {
+  if (!body || typeof body !== "object") {
+    return null
+  }
+
+  const record = body as Record<string, unknown>
+  const parsedBody = appSignUpSchema.safeParse({
+    email:
+      typeof record.email === "string"
+        ? record.email.trim().toLowerCase()
+        : record.email,
+    password: record.password,
+  })
+
+  return parsedBody.success ? parsedBody.data : null
+}
+
+async function userEmailExists(email: string) {
+  const result = await queryDatabase(
+    `
+      SELECT 1
+      FROM "user"
+      WHERE lower(email) = lower($1)
+      LIMIT 1
+    `,
+    [email]
+  )
+
+  return (result.rowCount ?? 0) > 0
 }
 
 function isAuthPath(path: string) {

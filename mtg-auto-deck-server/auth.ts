@@ -1,8 +1,12 @@
 import { betterAuth } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
+import { emailOTP } from "better-auth/plugins"
 
 import { getDatabasePool } from "./db.js"
-import { sendPasswordResetEmail } from "./email.js"
+import {
+  sendPasswordResetEmail,
+  sendVerificationCodeEmail,
+} from "./email.js"
 
 export const auth = betterAuth({
   appName: "MTG Auto Deck",
@@ -10,6 +14,7 @@ export const auth = betterAuth({
   database: getDatabasePool(),
   emailAndPassword: {
     enabled: true,
+    requireEmailVerification: true,
     revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {
       void sendPasswordResetEmail({
@@ -21,6 +26,30 @@ export const auth = betterAuth({
       })
     },
   },
+  emailVerification: {
+    autoSignInAfterVerification: true,
+    sendOnSignUp: true,
+    sendOnSignIn: true,
+  },
+  plugins: [
+    emailOTP({
+      allowedAttempts: 3,
+      expiresIn: 5 * 60,
+      otpLength: 6,
+      overrideDefaultEmailVerification: true,
+      resendStrategy: "rotate",
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type !== "email-verification") {
+          throw new Error(`Unsupported email OTP type: ${type}`)
+        }
+
+        await sendVerificationCodeEmail({
+          code: otp,
+          to: email,
+        })
+      },
+    }),
+  ],
   secret: getRequiredEnvironmentVariable("BETTER_AUTH_SECRET"),
   trustedOrigins: getTrustedOrigins(),
 })

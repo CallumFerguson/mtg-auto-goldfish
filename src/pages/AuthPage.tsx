@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react"
-import { KeyRound, LogIn, UserPlus } from "lucide-react"
+import { KeyRound, LogIn, MailCheck, RotateCcw, UserPlus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { navigateTo } from "@/lib/navigation"
 
@@ -10,18 +11,23 @@ export type AuthMode =
   | "reset-password"
   | "sign-in"
   | "sign-up"
+  | "verify-email"
 
 export function AuthPage({
+  initialEmail = "",
   initialMode = "sign-in",
   onAuthenticated,
 }: {
+  initialEmail?: string
   initialMode?: AuthMode
   onAuthenticated: () => Promise<void> | void
 }) {
   const [mode, setMode] = useState<AuthMode>(initialMode)
   const [error, setError] = useState<string | null>(getInitialError())
   const [notice, setNotice] = useState<string | null>(getInitialNotice())
+  const [verificationEmail, setVerificationEmail] = useState(initialEmail)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isResendingCode, setIsResendingCode] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -32,6 +38,7 @@ export function AuthPage({
     const formData = new FormData(event.currentTarget)
     const email = String(formData.get("email") ?? "").trim()
     const password = String(formData.get("password") ?? "")
+    const otp = String(formData.get("otp") ?? "").trim()
 
     try {
       if (mode === "sign-in") {
@@ -42,6 +49,13 @@ export function AuthPage({
         })
 
         if (result.error) {
+          if (isEmailNotVerifiedError(result.error)) {
+            setVerificationEmail(email)
+            setMode("verify-email")
+            setNotice("A verification code has been sent to your email.")
+            return
+          }
+
           setError(getAuthErrorMessage(result.error, "Sign in failed."))
           return
         }
@@ -60,15 +74,33 @@ export function AuthPage({
       }
 
       if (mode === "sign-up") {
-        const result = await authClient.signUp.email({
-          name: email,
-          email,
-          password,
+        const result = await createAccount({ email, password })
+
+        if (result.error) {
+          setError(result.error)
+          return
+        }
+
+        setVerificationEmail(email)
+        setMode("verify-email")
+        setNotice("Account created. Enter the verification code we emailed you.")
+        return
+      }
+
+      if (mode === "verify-email") {
+        if (!verificationEmail) {
+          setError("Email address is missing. Start sign in again.")
+          return
+        }
+
+        const result = await authClient.emailOtp.verifyEmail({
+          email: verificationEmail,
+          otp,
         })
 
         if (result.error) {
           setError(
-            getAuthErrorMessage(result.error, "Account could not be created.")
+            getAuthErrorMessage(result.error, "Verification code failed.")
           )
           return
         }
@@ -77,7 +109,7 @@ export function AuthPage({
 
         if (!session) {
           setError(
-            "Account created, but the browser did not keep the session cookie. Open the app using the same host as APP_PUBLIC_URL, then sign in."
+            "Email verified, but the browser did not keep the session cookie. Open the app using the same host as APP_PUBLIC_URL, then sign in."
           )
           setMode("sign-in")
           return
@@ -132,10 +164,42 @@ export function AuthPage({
     }
   }
 
+  async function handleResendVerificationCode() {
+    if (!verificationEmail) {
+      setError("Email address is missing. Start sign in again.")
+      return
+    }
+
+    setError(null)
+    setNotice(null)
+    setIsResendingCode(true)
+
+    try {
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: verificationEmail,
+        type: "email-verification",
+      })
+
+      if (result.error) {
+        setError(
+          getAuthErrorMessage(result.error, "Verification code could not be sent.")
+        )
+        return
+      }
+
+      setNotice("A new verification code has been sent.")
+    } catch {
+      setError("Verification code could not be sent.")
+    } finally {
+      setIsResendingCode(false)
+    }
+  }
+
   const isSignIn = mode === "sign-in"
   const isSignUp = mode === "sign-up"
   const isForgotPassword = mode === "forgot-password"
   const isResetPassword = mode === "reset-password"
+  const isVerifyEmail = mode === "verify-email"
 
   return (
     <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
@@ -151,12 +215,20 @@ export function AuthPage({
                 ? "Create account"
                 : isForgotPassword
                   ? "Reset password"
-                  : "Choose a new password"}
+                  : isVerifyEmail
+                    ? "Verify email"
+                    : "Choose a new password"}
           </h1>
         </header>
 
         <form className="grid gap-4 px-6 py-6" onSubmit={handleSubmit}>
-          {!isResetPassword ? (
+          {isVerifyEmail ? (
+            <div className="rounded-md border border-sky-300/25 bg-sky-400/10 px-3 py-2 text-sm text-sky-100">
+              {verificationEmail}
+            </div>
+          ) : null}
+
+          {!isResetPassword && !isVerifyEmail ? (
             <label className="grid gap-2 text-sm font-medium">
               <span>Email</span>
               <input
@@ -169,7 +241,7 @@ export function AuthPage({
             </label>
           ) : null}
 
-          {!isForgotPassword ? (
+          {!isForgotPassword && !isVerifyEmail ? (
             <label className="grid gap-2 text-sm font-medium">
               <span>{isResetPassword ? "New password" : "Password"}</span>
               <input
@@ -177,6 +249,21 @@ export function AuthPage({
                 name="password"
                 type="password"
                 autoComplete={isSignIn ? "current-password" : "new-password"}
+                disabled={isSubmitting}
+              />
+            </label>
+          ) : null}
+
+          {isVerifyEmail ? (
+            <label className="grid gap-2 text-sm font-medium">
+              <span>Verification code</span>
+              <input
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm tracking-[0.18em] text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
+                name="otp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
                 disabled={isSubmitting}
               />
             </label>
@@ -205,6 +292,8 @@ export function AuthPage({
               <LogIn data-icon="inline-start" />
             ) : isSignUp ? (
               <UserPlus data-icon="inline-start" />
+            ) : isVerifyEmail ? (
+              <MailCheck data-icon="inline-start" />
             ) : (
               <KeyRound data-icon="inline-start" />
             )}
@@ -214,9 +303,11 @@ export function AuthPage({
                 ? "Sign in"
                 : isSignUp
                   ? "Create account"
-                  : isForgotPassword
-                    ? "Send reset link"
-                    : "Reset password"}
+                  : isVerifyEmail
+                    ? "Verify email"
+                    : isForgotPassword
+                      ? "Send reset link"
+                      : "Reset password"}
           </Button>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4 text-sm">
@@ -231,7 +322,17 @@ export function AuthPage({
             >
               {isSignIn ? "Create account" : "Sign in"}
             </button>
-            {!isResetPassword ? (
+            {isVerifyEmail ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleResendVerificationCode}
+                disabled={isResendingCode}
+              >
+                <RotateCcw data-icon="inline-start" />
+                {isResendingCode ? "Sending..." : "Resend code"}
+              </Button>
+            ) : !isResetPassword ? (
               <button
                 className="text-muted-foreground transition hover:text-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
                 type="button"
@@ -251,6 +352,49 @@ export function AuthPage({
   )
 }
 
+async function createAccount({
+  email,
+  password,
+}: {
+  email: string
+  password: string
+}) {
+  const response = await apiFetch(`${API_BASE_URL}/api/app-auth/sign-up`, {
+    body: JSON.stringify({ email, password }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  })
+
+  if (response.ok) {
+    return { error: null }
+  }
+
+  return {
+    error: await getApiErrorMessage(response, "Account could not be created."),
+  }
+}
+
+async function getApiErrorMessage(response: Response, fallbackMessage: string) {
+  try {
+    const body = (await response.json()) as unknown
+
+    if (body && typeof body === "object") {
+      const record = body as Record<string, unknown>
+      const message = record.error ?? record.message
+
+      if (typeof message === "string" && message.trim()) {
+        return message
+      }
+    }
+  } catch {
+    return fallbackMessage
+  }
+
+  return fallbackMessage
+}
+
 function getInitialError() {
   const error = new URLSearchParams(window.location.search).get("error")
 
@@ -266,17 +410,45 @@ function getInitialNotice() {
 }
 
 function getAuthErrorMessage(error: unknown, fallbackMessage: string) {
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim()
-  ) {
-    return error.message
+  const message = getStringErrorProperty(error, "message")
+
+  return message?.trim() ? message : fallbackMessage
+}
+
+function isEmailNotVerifiedError(error: unknown) {
+  const status = getNumberErrorProperty(error, "status")
+  const code = getStringErrorProperty(error, "code")
+  const message = getStringErrorProperty(error, "message")
+
+  return (
+    status === 403 ||
+    code === "EMAIL_NOT_VERIFIED" ||
+    message?.toLowerCase().includes("email not verified") === true
+  )
+}
+
+function getStringErrorProperty(error: unknown, property: string) {
+  if (error && typeof error === "object") {
+    const value = (error as Record<string, unknown>)[property]
+
+    if (typeof value === "string") {
+      return value
+    }
   }
 
-  return fallbackMessage
+  return null
+}
+
+function getNumberErrorProperty(error: unknown, property: string) {
+  if (error && typeof error === "object") {
+    const value = (error as Record<string, unknown>)[property]
+
+    if (typeof value === "number") {
+      return value
+    }
+  }
+
+  return null
 }
 
 async function waitForSession() {

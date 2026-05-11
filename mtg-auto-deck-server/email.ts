@@ -6,28 +6,21 @@ type SendPasswordResetEmailInput = {
   userName: string
 }
 
+type SendVerificationCodeEmailInput = {
+  code: string
+  to: string
+}
+
 export async function sendPasswordResetEmail({
   resetUrl,
   to,
   userName,
 }: SendPasswordResetEmailInput) {
-  const smtpConfig = getSmtpConfig()
-  const transporter = createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure,
-    auth:
-      smtpConfig.user && smtpConfig.password
-        ? {
-            user: smtpConfig.user,
-            pass: smtpConfig.password,
-          }
-        : undefined,
-  })
+  const { from, transporter } = getEmailTransport()
   const displayName = userName.trim() || "there"
 
   await transporter.sendMail({
-    from: smtpConfig.from,
+    from,
     to,
     subject: "Reset your MTG Auto Deck password",
     text: `Hi ${displayName},
@@ -38,6 +31,44 @@ ${resetUrl}
 
 If you did not request this, you can ignore this email.`,
   })
+}
+
+export async function sendVerificationCodeEmail({
+  code,
+  to,
+}: SendVerificationCodeEmailInput) {
+  const { from, transporter } = getEmailTransport()
+
+  await transporter.sendMail({
+    from,
+    to,
+    subject: "Verify your MTG Auto Deck email",
+    text: `Use this code to verify your MTG Auto Deck account:
+
+${code}
+
+This code expires in 5 minutes. If you did not request this, you can ignore this email.`,
+  })
+}
+
+function getEmailTransport() {
+  const smtpConfig = getSmtpConfig()
+
+  return {
+    from: smtpConfig.from,
+    transporter: createTransport({
+      host: smtpConfig.host,
+      port: smtpConfig.port,
+      secure: smtpConfig.secure,
+      auth:
+        smtpConfig.user && smtpConfig.password
+          ? {
+              user: smtpConfig.user,
+              pass: smtpConfig.password,
+            }
+          : undefined,
+    }),
+  }
 }
 
 function getSmtpConfig() {
