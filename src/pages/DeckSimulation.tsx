@@ -545,7 +545,13 @@ export function DeckSimulation({
   const [detailsSimulationId, setDetailsSimulationId] = useState<string | null>(
     null
   )
+  const [deleteSimulationId, setDeleteSimulationId] = useState<string | null>(
+    null
+  )
   const [deletingSimulationId, setDeletingSimulationId] = useState<
+    string | null
+  >(null)
+  const [deleteSimulationError, setDeleteSimulationError] = useState<
     string | null
   >(null)
   const [isSimulationListScrolled, setIsSimulationListScrolled] =
@@ -575,6 +581,12 @@ export function DeckSimulation({
       simulations.find((simulation) => simulation.id === detailsSimulationId) ??
       null,
     [detailsSimulationId, simulations]
+  )
+  const deleteSimulation = useMemo(
+    () =>
+      simulations.find((simulation) => simulation.id === deleteSimulationId) ??
+      null,
+    [deleteSimulationId, simulations]
   )
   const detailsSimulationStartingHand = useMemo(
     () =>
@@ -888,7 +900,7 @@ export function DeckSimulation({
     }
 
     setDeletingSimulationId(simulationId)
-    setSimulationLoadError(null)
+    setDeleteSimulationError(null)
 
     try {
       const response = await fetch(
@@ -899,7 +911,7 @@ export function DeckSimulation({
       )
 
       if (!response.ok) {
-        setSimulationLoadError(
+        setDeleteSimulationError(
           await readApiError(response, "Simulation could not be deleted.")
         )
         return
@@ -911,6 +923,7 @@ export function DeckSimulation({
         )
       )
       setOpenSimulationMenuId(null)
+      setDeleteSimulationId(null)
       setDetailsSimulationId((currentSimulationId) =>
         currentSimulationId === simulationId ? null : currentSimulationId
       )
@@ -921,7 +934,7 @@ export function DeckSimulation({
         navigateTo(getDeckSimulationPath(deckId))
       }
     } catch {
-      setSimulationLoadError("Simulation could not be deleted.")
+      setDeleteSimulationError("Simulation could not be deleted.")
     } finally {
       setDeletingSimulationId(null)
     }
@@ -1085,14 +1098,14 @@ export function DeckSimulation({
                               </SimulationMenuButton>
                               <SimulationMenuButton
                                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                onClick={() =>
-                                  void handleDeleteSimulation(simulation.id)
-                                }
+                                onClick={() => {
+                                  setOpenSimulationMenuId(null)
+                                  setDeleteSimulationError(null)
+                                  setDeleteSimulationId(simulation.id)
+                                }}
                               >
                                 <Trash2 data-icon="inline-start" />
-                                {deletingSimulationId === simulation.id
-                                  ? "Deleting..."
-                                  : "Delete simulation"}
+                                Delete simulation
                               </SimulationMenuButton>
                             </div>
                           </>
@@ -1470,6 +1483,21 @@ export function DeckSimulation({
           startingHand={detailsSimulationStartingHand}
         />
       ) : null}
+
+      {deleteSimulation ? (
+        <DeleteSimulationModal
+          error={deleteSimulationError}
+          isDeleting={deletingSimulationId === deleteSimulation.id}
+          onClose={() => {
+            if (!deletingSimulationId) {
+              setDeleteSimulationId(null)
+              setDeleteSimulationError(null)
+            }
+          }}
+          onConfirm={() => void handleDeleteSimulation(deleteSimulation.id)}
+          simulation={deleteSimulation}
+        />
+      ) : null}
     </>
   )
 }
@@ -1491,6 +1519,97 @@ function SimulationMenuButton({
     >
       {children}
     </button>
+  )
+}
+
+function DeleteSimulationModal({
+  error,
+  isDeleting,
+  onClose,
+  onConfirm,
+  simulation,
+}: {
+  error: string | null
+  isDeleting: boolean
+  onClose: () => void
+  onConfirm: () => void
+  simulation: Simulation
+}) {
+  const simulationLabel = getSimulationLabel(simulation)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-6 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={isDeleting ? undefined : onClose}
+    >
+      <section
+        aria-labelledby="delete-simulation-title"
+        className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl shadow-black/40"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="space-y-1">
+            <h2 id="delete-simulation-title" className="text-xl font-semibold">
+              Delete simulation
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              This will permanently delete {simulationLabel}.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+            disabled={isDeleting}
+          >
+            <X />
+          </Button>
+        </header>
+
+        <div className="grid gap-4 px-5 py-5">
+          {simulation.activeLlmRunCount > 0 ? (
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              This simulation still has active runs.
+            </p>
+          ) : null}
+
+          {error ? (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={onConfirm}
+              disabled={isDeleting}
+            >
+              <Trash2 data-icon="inline-start" />
+              {isDeleting ? "Deleting..." : "Delete simulation"}
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
   )
 }
 
