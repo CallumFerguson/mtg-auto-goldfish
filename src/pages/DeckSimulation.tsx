@@ -4756,9 +4756,9 @@ function SimulationResultCompletedCardToolEvent({
         {getMcpCallCompleteTitle(chunk)}
       </p>
       <div className="grid gap-3 border-t border-border p-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
           <Button
-            className="border-emerald-500/30 bg-emerald-950/20 text-emerald-100 hover:bg-emerald-900/35 hover:text-emerald-50"
+            className="shrink-0 border-emerald-500/30 bg-emerald-950/20 text-emerald-100 hover:bg-emerald-900/35 hover:text-emerald-50"
             size="xs"
             type="button"
             variant="outline"
@@ -4767,28 +4767,40 @@ function SimulationResultCompletedCardToolEvent({
             {showCardImages ? <EyeOff /> : <Eye />}
             {showCardImages ? "Hide cards" : "Show cards"}
           </Button>
-          {!showCardImages
-            ? chunk.cardMentions.map((mention, index) => (
-                <a
-                  key={`${mention.requestedName}-${index}`}
-                  className="max-w-full rounded-full border border-sky-500/30 bg-sky-950/30 px-2.5 py-1 text-xs font-medium text-sky-100 transition-colors hover:border-sky-300/60 hover:bg-sky-900/40 hover:text-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
-                  href={getCardMentionScryfallUrl(mention)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={getCardMentionDisplayName(mention)}
-                >
-                  <span className="block truncate">
-                    {getCardMentionDisplayName(mention)}
-                  </span>
-                </a>
-              ))
-            : null}
+          {!showCardImages ? (
+            <SimulationResultCardTextLinks mentions={chunk.cardMentions} />
+          ) : null}
         </div>
 
         {showCardImages ? (
           <SimulationResultCardImageLinks mentions={chunk.cardMentions} />
         ) : null}
       </div>
+    </div>
+  )
+}
+
+function SimulationResultCardTextLinks({
+  mentions,
+}: {
+  mentions: SimulationResultCardMention[]
+}) {
+  return (
+    <div className="flex w-max max-w-full min-w-0 shrink-0 flex-wrap items-center gap-2">
+      {mentions.map((mention, index) => (
+        <a
+          key={`${mention.requestedName}-${index}`}
+          className="max-w-full rounded-full border border-sky-500/30 bg-sky-950/30 px-2.5 py-1 text-xs font-medium text-sky-100 transition-colors hover:border-sky-300/60 hover:bg-sky-900/40 hover:text-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none"
+          href={getCardMentionScryfallUrl(mention)}
+          target="_blank"
+          rel="noreferrer"
+          title={getCardMentionDisplayName(mention)}
+        >
+          <span className="block truncate">
+            {getCardMentionDisplayName(mention)}
+          </span>
+        </a>
+      ))}
     </div>
   )
 }
