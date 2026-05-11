@@ -330,7 +330,7 @@ OUTPUT
 When the hand is finalized successfully, include a JSON object with exactly this shape:
 {
   "keptHand": ["Card Name", "Card Name"],
-  "summary": "Short summary."
+  "summary": "User-facing summary. Markdown and newlines are allowed."
 }
 
 If the unrecoverable error rule applies, do not include keptHand or summary. Return only:
@@ -339,7 +339,7 @@ If the unrecoverable error rule applies, do not include keptHand or summary. Ret
 }
 
 keptHand must be the exact final hand after all mulligans and any cards bottomed to the library.
-summary must briefly state:
+summary must be written for the user, not as an internal log. It may use Markdown and newline characters for readability. It must briefly state:
 1. whether you kept or mulliganed at each decision point and why
 2. how many mulligans you took
 3. if you bottomed cards, which cards you put on the bottom and why
@@ -694,13 +694,13 @@ OUTPUT RULES
 - If the turn completed successfully, include a JSON object with exactly this shape:
 {
   "gameState": "Complete end-of-turn game state as a readable string.",
-  "summary": "Short summary."
+  "summary": "User-facing summary. Markdown and newlines are allowed."
 }
 - If the unrecoverable error rule applies, do not include gameState or summary. Return only:
 {
   "error": "Short explanation of the unrecoverable mistake."
 }
-- summary should briefly say what you played, what changed on the battlefield, and any important resulting game-state facts.
+- summary should be written for the user, not as an internal log. It may use Markdown and newline characters for readability. It should briefly say what you played, what changed on the battlefield, and any important resulting game-state facts.
 - gameState is the serialized state dump; summary is only a brief recap.
 
 ABSOLUTE PRIORITIES
