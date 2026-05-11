@@ -98,6 +98,7 @@ import {
 import {
   getKnownSimulationResultToolLabel,
   getKnownSimulationResultToolLabelForChunk,
+  getSimulationResultToolReasonForChunk,
 } from "@/lib/simulation-result-tool-labels"
 
 type OpeningHandCardOption = {
@@ -4643,11 +4644,10 @@ function SimulationResultEvent({
       }) ?? `Tool started: ${chunk.mcpFunctionName ?? "unknown tool"}`
 
     return (
-      <div
-        className={`${simulationResultChunkSurfaceClassName} px-3 py-2 text-sm text-muted-foreground`}
-      >
-        {title}
-      </div>
+      <SimulationResultToolLabelEvent
+        title={title}
+        reason={getSimulationResultToolReasonForChunk({ chunk })}
+      />
     )
   }
 
@@ -4671,6 +4671,7 @@ function SimulationResultEvent({
       <SimulationResultToolLabelEvent
         icon={getMcpCallCompleteIcon(chunk)}
         title={getMcpCallCompleteTitle(chunk)}
+        reason={getSimulationResultToolReasonForChunk({ chunk })}
       />
     )
   }
@@ -4724,22 +4725,39 @@ function isCountedReportRun(
 
 function SimulationResultToolLabelEvent({
   icon,
+  reason,
   title,
 }: {
   icon?: ReactNode
+  reason?: string | null
   title: string
 }) {
   return (
     <div
-      className={`${simulationResultChunkSurfaceClassName} flex min-w-0 items-center gap-2 px-3 py-2 text-sm text-muted-foreground`}
+      className={`${simulationResultChunkSurfaceClassName} flex min-w-0 items-start gap-2 px-3 py-2 text-sm text-muted-foreground`}
     >
       {icon ? (
-        <span className="shrink-0 text-sky-300" aria-hidden="true">
+        <span className="mt-0.5 shrink-0 text-sky-300" aria-hidden="true">
           {icon}
         </span>
       ) : null}
-      <span className="min-w-0 truncate">{title}</span>
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="min-w-0 truncate">{title}</span>
+        <SimulationResultToolReasonText reason={reason ?? null} />
+      </span>
     </div>
+  )
+}
+
+function SimulationResultToolReasonText({ reason }: { reason: string | null }) {
+  if (reason === null) {
+    return null
+  }
+
+  return (
+    <span className="text-xs leading-5 break-words text-muted-foreground/80">
+      {reason}
+    </span>
   )
 }
 
@@ -4752,9 +4770,12 @@ function SimulationResultCompletedCardToolEvent({
 
   return (
     <div className={simulationResultChunkSurfaceClassName}>
-      <p className="px-3 py-2 text-sm text-muted-foreground">
-        {getMcpCallCompleteTitle(chunk)}
-      </p>
+      <div className="grid gap-1 px-3 py-2 text-muted-foreground">
+        <p className="text-sm">{getMcpCallCompleteTitle(chunk)}</p>
+        <SimulationResultToolReasonText
+          reason={getSimulationResultToolReasonForChunk({ chunk })}
+        />
+      </div>
       <div className="grid gap-3 border-t border-border p-3">
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <Button

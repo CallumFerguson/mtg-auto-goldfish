@@ -15,6 +15,7 @@ import {
 import {
   getKnownSimulationResultToolLabel,
   getKnownSimulationResultToolLabelForChunk,
+  getSimulationResultToolReasonForChunk,
 } from "../src/lib/simulation-result-tool-labels.js"
 import { applySimulationResultsStreamEvent } from "../src/lib/simulation-results-stream.js"
 import type {
@@ -1608,6 +1609,49 @@ test("formats known failed tool events without raw tool names", () => {
       state: "failed",
     }),
     "Could not draw card from top of deck"
+  )
+})
+
+test("extracts MCP function reasons for simulation result tool events", () => {
+  assert.equal(
+    getSimulationResultToolReasonForChunk({
+      chunk: createChunk({
+        id: 1,
+        kind: "mcp_call_complete",
+        mcpFunctionName: "draw_card_from_top",
+        mcpFunctionReason: " Drawing for turn ",
+        sequence: 1,
+      }),
+    }),
+    "Drawing for turn"
+  )
+  assert.equal(
+    getSimulationResultToolReasonForChunk({
+      chunk: createChunk({
+        id: 2,
+        kind: "mcp_call_complete",
+        mcpFunctionName: "return_cards_to_library",
+        mcpFunctionOutput: {
+          data: {
+            reason: "Bottoming after a mulligan",
+          },
+        },
+        sequence: 2,
+      }),
+    }),
+    "Bottoming after a mulligan"
+  )
+  assert.equal(
+    getSimulationResultToolReasonForChunk({
+      chunk: createChunk({
+        id: 3,
+        kind: "mcp_call_complete",
+        mcpFunctionName: "log_turn_action",
+        mcpFunctionReason: "Do not show this.",
+        sequence: 3,
+      }),
+    }),
+    null
   )
 })
 

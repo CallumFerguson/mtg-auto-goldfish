@@ -62,6 +62,51 @@ export function getKnownSimulationResultToolLabelForChunk({
   })
 }
 
+export function getSimulationResultToolReason({
+  mcpFunctionName,
+  mcpFunctionOutput = null,
+  mcpFunctionReason = null,
+}: {
+  mcpFunctionName: string | null
+  mcpFunctionOutput?: unknown | null
+  mcpFunctionReason?: string | null
+}) {
+  if (mcpFunctionName === null || mcpFunctionName === "log_turn_action") {
+    return null
+  }
+
+  const storedReason = getTrimmedString(mcpFunctionReason)
+
+  if (storedReason !== null) {
+    return storedReason
+  }
+
+  const resolvedOutput = parseJsonObjectPayload(mcpFunctionOutput)
+  const outputRecord = asRecord(resolvedOutput)
+  const directReason = getTrimmedString(outputRecord.reason)
+
+  if (directReason !== null) {
+    return directReason
+  }
+
+  return getTrimmedString(asRecord(outputRecord.data).reason)
+}
+
+export function getSimulationResultToolReasonForChunk({
+  chunk,
+}: {
+  chunk: Pick<
+    SimulationDebugLlmRunChunk,
+    "mcpFunctionName" | "mcpFunctionOutput" | "mcpFunctionReason"
+  >
+}) {
+  return getSimulationResultToolReason({
+    mcpFunctionName: chunk.mcpFunctionName,
+    mcpFunctionOutput: chunk.mcpFunctionOutput,
+    mcpFunctionReason: chunk.mcpFunctionReason,
+  })
+}
+
 function getDrawStartingHandLabel(state: SimulationResultToolLabelState) {
   switch (state) {
     case "active":
@@ -365,6 +410,16 @@ function getString(value: unknown, property: string) {
   const propertyValue = asRecord(value)[property]
 
   return typeof propertyValue === "string" ? propertyValue : null
+}
+
+function getTrimmedString(value: unknown) {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const trimmedValue = value.trim()
+
+  return trimmedValue.length > 0 ? trimmedValue : null
 }
 
 function formatCardCount(count: number | null) {
