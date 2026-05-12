@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react"
 import {
   ArrowLeft,
   CheckCircle2,
   LayoutDashboard,
+  MoreVertical,
   RefreshCw,
   ShieldAlert,
+  Trash2,
   UserRound,
   UsersRound,
+  X,
   XCircle,
 } from "lucide-react"
 
@@ -78,7 +88,7 @@ export function AdminDashboardPage({
             </div>
 
             {activeSection?.id === "users" ? (
-              <AdminUsersSection />
+              <AdminUsersSection currentUserId={user.id} />
             ) : (
               <UnknownAdminSection />
             )}
@@ -229,11 +239,15 @@ function AdminSectionNav({
   )
 }
 
-function AdminUsersSection() {
+function AdminUsersSection({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [openUserMenuId, setOpenUserMenuId] = useState<string | null>(null)
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null)
+  const [deleteUserError, setDeleteUserError] = useState<string | null>(null)
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null)
 
   const loadUsers = useCallback(async () => {
     setIsLoading(true)
@@ -260,6 +274,41 @@ function AdminUsersSection() {
   useEffect(() => {
     void loadUsers()
   }, [loadUsers])
+
+  async function handleDeleteUser() {
+    if (!userToDelete) {
+      return
+    }
+
+    setDeletingUserId(userToDelete.id)
+    setDeleteUserError(null)
+
+    try {
+      const response = await apiFetch(
+        `${API_BASE_URL}/admin/users/${encodeURIComponent(userToDelete.id)}`,
+        {
+          method: "DELETE",
+        }
+      )
+
+      if (!response.ok) {
+        setDeleteUserError(
+          await readApiError(response, "User could not be deleted.")
+        )
+        return
+      }
+
+      setUsers((currentUsers) =>
+        currentUsers.filter((user) => user.id !== userToDelete.id)
+      )
+      setTotal((currentTotal) => Math.max(0, currentTotal - 1))
+      setUserToDelete(null)
+    } catch {
+      setDeleteUserError("User could not be deleted.")
+    } finally {
+      setDeletingUserId(null)
+    }
+  }
 
   return (
     <section className="min-w-0 space-y-4">
@@ -315,6 +364,9 @@ function AdminUsersSection() {
                   <TableHeader>Role</TableHeader>
                   <TableHeader>Created</TableHeader>
                   <TableHeader>Updated</TableHeader>
+                  <TableHeader>
+                    <span className="sr-only">Actions</span>
+                  </TableHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -341,6 +393,19 @@ function AdminUsersSection() {
                     </TableCell>
                     <TableCell>{formatDateTime(user.createdAt)}</TableCell>
                     <TableCell>{formatDateTime(user.updatedAt)}</TableCell>
+                    <TableCell>
+                      <AdminUserActionsMenu
+                        currentUserId={currentUserId}
+                        deletingUserId={deletingUserId}
+                        openUserMenuId={openUserMenuId}
+                        setOpenUserMenuId={setOpenUserMenuId}
+                        user={user}
+                        onDeleteUser={(selectedUser) => {
+                          setDeleteUserError(null)
+                          setUserToDelete(selectedUser)
+                        }}
+                      />
+                    </TableCell>
                   </tr>
                 ))}
               </tbody>
@@ -362,7 +427,20 @@ function AdminUsersSection() {
                       {getDisplayName(user)}
                     </p>
                   </div>
-                  <RoleBadge role={user.role} />
+                  <div className="flex shrink-0 items-center gap-2">
+                    <RoleBadge role={user.role} />
+                    <AdminUserActionsMenu
+                      currentUserId={currentUserId}
+                      deletingUserId={deletingUserId}
+                      openUserMenuId={openUserMenuId}
+                      setOpenUserMenuId={setOpenUserMenuId}
+                      user={user}
+                      onDeleteUser={(selectedUser) => {
+                        setDeleteUserError(null)
+                        setUserToDelete(selectedUser)
+                      }}
+                    />
+                  </div>
                 </div>
 
                 <dl className="mt-4 grid gap-3 text-sm">
@@ -383,6 +461,19 @@ function AdminUsersSection() {
       ) : (
         <AdminPanelMessage>No users found.</AdminPanelMessage>
       )}
+
+      {userToDelete ? (
+        <DeleteAdminUserModal
+          error={deleteUserError}
+          isDeleting={deletingUserId === userToDelete.id}
+          user={userToDelete}
+          onClose={() => {
+            setUserToDelete(null)
+            setDeleteUserError(null)
+          }}
+          onConfirm={() => void handleDeleteUser()}
+        />
+      ) : null}
     </section>
   )
 }
@@ -408,6 +499,176 @@ function UnknownAdminSection() {
         </div>
       </div>
     </section>
+  )
+}
+
+function AdminUserActionsMenu({
+  currentUserId,
+  deletingUserId,
+  onDeleteUser,
+  openUserMenuId,
+  setOpenUserMenuId,
+  user,
+}: {
+  currentUserId: string
+  deletingUserId: string | null
+  onDeleteUser: (user: AdminUser) => void
+  openUserMenuId: string | null
+  setOpenUserMenuId: Dispatch<SetStateAction<string | null>>
+  user: AdminUser
+}) {
+  const isCurrentUser = user.id === currentUserId
+  const isDeleting = deletingUserId === user.id
+  const isOpen = openUserMenuId === user.id
+
+  return (
+    <div className="relative flex justify-end">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Open actions for ${user.email}`}
+        aria-expanded={isOpen}
+        title="User actions"
+        disabled={isDeleting}
+        onClick={() =>
+          setOpenUserMenuId((currentUserMenuId) =>
+            currentUserMenuId === user.id ? null : user.id
+          )
+        }
+      >
+        <MoreVertical />
+      </Button>
+
+      {isOpen ? (
+        <>
+          <button
+            className="fixed inset-0 z-10 cursor-default"
+            type="button"
+            aria-label="Close user actions"
+            onClick={() => setOpenUserMenuId(null)}
+          />
+          <div className="absolute top-9 right-0 z-20 w-52 overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-2xl shadow-black/40">
+            {isCurrentUser ? (
+              <button
+                className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground opacity-70"
+                type="button"
+                disabled
+              >
+                <UserRound data-icon="inline-start" />
+                Current account
+              </button>
+            ) : (
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => {
+                  setOpenUserMenuId(null)
+                  onDeleteUser(user)
+                }}
+              >
+                <Trash2 data-icon="inline-start" />
+                Delete user
+              </button>
+            )}
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+function DeleteAdminUserModal({
+  error,
+  isDeleting,
+  onClose,
+  onConfirm,
+  user,
+}: {
+  error: string | null
+  isDeleting: boolean
+  onClose: () => void
+  onConfirm: () => void
+  user: AdminUser
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-6 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={isDeleting ? undefined : onClose}
+    >
+      <section
+        aria-labelledby="delete-user-title"
+        className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl shadow-black/40"
+        role="alertdialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10 text-destructive">
+                <Trash2 className="size-4" aria-hidden="true" />
+              </div>
+              <h2 id="delete-user-title" className="text-xl font-semibold">
+                Delete user
+              </h2>
+            </div>
+            <p className="text-sm break-words text-muted-foreground">
+              This will permanently delete {user.email}.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+            disabled={isDeleting}
+          >
+            <X />
+          </Button>
+        </header>
+
+        <div className="grid gap-4 px-5 py-5">
+          <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
+            Their decks, simulations, runs, saved seeds, and starting hands will
+            be permanently removed.
+          </p>
+
+          {error ? (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={onConfirm}
+              disabled={isDeleting}
+            >
+              <Trash2 data-icon="inline-start" />
+              {isDeleting ? "Deleting..." : "Delete user"}
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
   )
 }
 

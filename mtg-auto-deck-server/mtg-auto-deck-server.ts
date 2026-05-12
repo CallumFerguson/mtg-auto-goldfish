@@ -15,7 +15,11 @@ import {
   ensureAuthSchema,
   isPasswordResetTokenValid,
 } from "./auth.js"
-import { listAdminUsers } from "./admin-users-postgres.js"
+import {
+  deleteAdminUser,
+  listActiveAdminUserSimulations,
+  listAdminUsers,
+} from "./admin-users-postgres.js"
 import {
   closeDatabasePool,
   queryDatabase,
@@ -4468,6 +4472,17 @@ async function runReportLlmRun({
   }
 }
 
+async function stopActiveAdminUserSimulations(userId: string) {
+  const activeSimulations = await listActiveAdminUserSimulations(userId)
+
+  for (const simulation of activeSimulations) {
+    await stopActiveSimulationLlmRuns(
+      simulation.deckId,
+      simulation.simulationId
+    )
+  }
+}
+
 async function stopActiveSimulationLlmRuns(
   deckId: string,
   simulationId: string
@@ -4838,6 +4853,62 @@ async function main() {
       console.error("Failed to list admin users:", error)
       res.status(500).json({
         error: "Failed to list users.",
+      })
+    }
+  })
+
+  app.delete("/admin/users/:userId", async (req: Request, res: Response) => {
+    const adminUser = requireAdminUser(req, res)
+
+    if (!adminUser) {
+      return
+    }
+
+    const userId = String(req.params.userId).trim()
+
+    if (!userId) {
+      res.status(400).json({
+        error: "User ID is required.",
+      })
+      return
+    }
+
+    if (userId === adminUser.id) {
+      res.status(400).json({
+        error: "You cannot delete your own account.",
+      })
+      return
+    }
+
+    try {
+      await stopActiveAdminUserSimulations(userId)
+
+      const deletion = await deleteAdminUser(userId)
+
+      if (!deletion) {
+        res.status(404).json({
+          error: "User not found.",
+        })
+        return
+      }
+
+      for (const simulationId of deletion.deletedSimulationIds) {
+        simulationResultsBroadcaster.closeSimulation(simulationId)
+      }
+
+      nudgeLlmRunQueue()
+      res.status(204).send()
+    } catch (error) {
+      if (error instanceof SimulationStopTimeoutError) {
+        res.status(504).json({
+          error: error.message,
+        })
+        return
+      }
+
+      console.error("Failed to delete admin user:", error)
+      res.status(500).json({
+        error: "Failed to delete user.",
       })
     }
   })
