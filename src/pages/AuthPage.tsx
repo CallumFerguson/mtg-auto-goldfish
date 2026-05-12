@@ -98,6 +98,7 @@ export function AuthPage({
     const formData = new FormData(event.currentTarget)
     const email = String(formData.get("email") ?? "").trim()
     const password = String(formData.get("password") ?? "")
+    const confirmPassword = String(formData.get("confirmPassword") ?? "")
     const otp = String(formData.get("otp") ?? "").trim()
 
     if (mode === "reset-password" && resetLinkStatus !== "valid") {
@@ -109,7 +110,11 @@ export function AuthPage({
       return
     }
 
-    const passwordError = getPreSubmitPasswordError(mode, password)
+    const passwordError = getPreSubmitPasswordError(
+      mode,
+      password,
+      confirmPassword
+    )
 
     if (passwordError) {
       setError(passwordError)
@@ -345,6 +350,19 @@ export function AuthPage({
             </label>
           ) : null}
 
+          {isResetPassword && canUseResetLink ? (
+            <label className="grid gap-2 text-sm font-medium">
+              <span>Confirm new password</span>
+              <input
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
+                name="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                disabled={isSubmitting}
+              />
+            </label>
+          ) : null}
+
           {isCheckingResetLink ? (
             <p
               className="rounded-md border border-sky-300/30 bg-sky-400/10 px-3 py-2 text-sm text-sky-100"
@@ -549,13 +567,20 @@ function getInitialNotice() {
     : null
 }
 
-function getPreSubmitPasswordError(mode: AuthMode, password: string) {
+function getPreSubmitPasswordError(
+  mode: AuthMode,
+  password: string,
+  confirmPassword: string
+) {
   if (mode === "sign-up") {
     return getPasswordRangeError(password)
   }
 
   if (mode === "reset-password") {
-    return getPasswordRangeError(password, "New password")
+    return (
+      getPasswordRangeError(password, "New password") ??
+      (password !== confirmPassword ? "New passwords do not match." : null)
+    )
   }
 
   return null
