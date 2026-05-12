@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { authClient, type AuthUser } from "@/lib/auth-client"
 import { navigateTo } from "@/lib/navigation"
+import { getPasswordRangeError } from "@/lib/password-validation"
 
 export function AccountMenu({
   adminOptionsEnabled,
@@ -175,9 +176,10 @@ function ChangePasswordModal({
     const formData = new FormData(event.currentTarget)
     const currentPassword = String(formData.get("currentPassword") ?? "")
     const newPassword = String(formData.get("newPassword") ?? "")
+    const passwordError = getPasswordRangeError(newPassword, "New password")
 
-    if (newPassword.length < 8) {
-      setError("New password must be at least 8 characters.")
+    if (passwordError) {
+      setError(passwordError)
       return
     }
 

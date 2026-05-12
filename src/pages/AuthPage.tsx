@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { navigateTo } from "@/lib/navigation"
+import { getPasswordRangeError } from "@/lib/password-validation"
 
 export type AuthMode =
   | "forgot-password"
@@ -33,12 +34,19 @@ export function AuthPage({
     event.preventDefault()
     setError(null)
     setNotice(null)
-    setIsSubmitting(true)
 
     const formData = new FormData(event.currentTarget)
     const email = String(formData.get("email") ?? "").trim()
     const password = String(formData.get("password") ?? "")
     const otp = String(formData.get("otp") ?? "").trim()
+    const passwordError = getPreSubmitPasswordError(mode, password)
+
+    if (passwordError) {
+      setError(passwordError)
+      return
+    }
+
+    setIsSubmitting(true)
 
     try {
       if (mode === "sign-in") {
@@ -83,7 +91,9 @@ export function AuthPage({
 
         setVerificationEmail(email)
         setMode("verify-email")
-        setNotice("Account created. Enter the verification code we emailed you.")
+        setNotice(
+          "Account created. Enter the verification code we emailed you."
+        )
         return
       }
 
@@ -182,7 +192,10 @@ export function AuthPage({
 
       if (result.error) {
         setError(
-          getAuthErrorMessage(result.error, "Verification code could not be sent.")
+          getAuthErrorMessage(
+            result.error,
+            "Verification code could not be sent."
+          )
         )
         return
       }
@@ -407,6 +420,18 @@ function getInitialNotice() {
   return reset === "success"
     ? "Password reset. Sign in with your new password."
     : null
+}
+
+function getPreSubmitPasswordError(mode: AuthMode, password: string) {
+  if (mode === "sign-up") {
+    return getPasswordRangeError(password)
+  }
+
+  if (mode === "reset-password") {
+    return getPasswordRangeError(password, "New password")
+  }
+
+  return null
 }
 
 function getAuthErrorMessage(error: unknown, fallbackMessage: string) {
