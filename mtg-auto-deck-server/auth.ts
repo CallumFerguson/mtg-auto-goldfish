@@ -38,7 +38,6 @@ export const auth = betterAuth({
   database: getDatabasePool(),
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: true,
     resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_EXPIRES_IN_SECONDS,
     revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {

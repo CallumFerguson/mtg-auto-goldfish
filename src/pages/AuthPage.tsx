@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { KeyRound, LogIn, MailCheck, RotateCcw, UserPlus } from "lucide-react"
+import {
+  KeyRound,
+  LogIn,
+  LogOut,
+  MailCheck,
+  RotateCcw,
+  UserPlus,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { API_BASE_URL, apiFetch } from "@/lib/api"
@@ -23,24 +30,33 @@ const INVALID_PASSWORD_RESET_LINK_MESSAGE =
 export function AuthPage({
   initialEmail = "",
   initialMode = "sign-in",
+  initialNotice,
+  isVerificationWall = false,
   onAuthenticated,
+  onSignedOut,
 }: {
   initialEmail?: string
   initialMode?: AuthMode
+  initialNotice?: string
+  isVerificationWall?: boolean
   onAuthenticated: () => Promise<void> | void
+  onSignedOut?: () => Promise<void> | void
 }) {
   const initialResetLinkStatus = getInitialResetLinkStatus(initialMode)
   const [mode, setMode] = useState<AuthMode>(initialMode)
   const [error, setError] = useState<string | null>(
     getInitialError(initialMode, initialResetLinkStatus)
   )
-  const [notice, setNotice] = useState<string | null>(getInitialNotice())
+  const [notice, setNotice] = useState<string | null>(
+    initialNotice ?? getInitialNotice()
+  )
   const [resetLinkStatus, setResetLinkStatus] = useState<ResetLinkStatus>(
     initialResetLinkStatus
   )
   const [verificationEmail, setVerificationEmail] = useState(initialEmail)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isResendingCode, setIsResendingCode] = useState(false)
+  const [isSigningOut, setIsSigningOut] = useState(false)
 
   useEffect(() => {
     if (mode !== "reset-password") {
@@ -139,7 +155,10 @@ export function AuthPage({
           if (isEmailNotVerifiedError(result.error)) {
             setVerificationEmail(email)
             setMode("verify-email")
-            setNotice("A verification code has been sent to your email.")
+            await sendVerificationCode(
+              email,
+              "A verification code has been sent to your email."
+            )
             return
           }
 
@@ -156,6 +175,17 @@ export function AuthPage({
           return
         }
 
+        if (!session.user.emailVerified) {
+          const emailToVerify = session.user.email || email
+
+          setVerificationEmail(emailToVerify)
+          setMode("verify-email")
+          await sendVerificationCode(
+            emailToVerify,
+            "A verification code has been sent to your email."
+          )
+        }
+
         await onAuthenticated()
         return
       }
@@ -168,11 +198,24 @@ export function AuthPage({
           return
         }
 
-        setVerificationEmail(email)
-        setMode("verify-email")
-        setNotice(
-          "Account created. Enter the verification code we emailed you."
-        )
+        const session = await waitForSession()
+
+        if (!session) {
+          setError(
+            "Account created, but the browser did not keep the session cookie. Open the app using the same host as APP_PUBLIC_URL, then sign in."
+          )
+          return
+        }
+
+        if (!session.user.emailVerified) {
+          setVerificationEmail(session.user.email || email)
+          setMode("verify-email")
+          setNotice(
+            "Account created. Enter the verification code we emailed you."
+          )
+        }
+
+        await onAuthenticated()
         return
       }
 
@@ -270,8 +313,35 @@ export function AuthPage({
     setIsResendingCode(true)
 
     try {
+      await sendVerificationCode(
+        verificationEmail,
+        "A new verification code has been sent."
+      )
+    } finally {
+      setIsResendingCode(false)
+    }
+  }
+
+  async function handleSignOut() {
+    setError(null)
+    setNotice(null)
+    setIsSigningOut(true)
+
+    try {
+      await authClient.signOut()
+      await onSignedOut?.()
+      navigateTo("/sign-in")
+    } catch {
+      setError("Sign out failed.")
+    } finally {
+      setIsSigningOut(false)
+    }
+  }
+
+  async function sendVerificationCode(email: string, successMessage: string) {
+    try {
       const result = await authClient.emailOtp.sendVerificationOtp({
-        email: verificationEmail,
+        email,
         type: "email-verification",
       })
 
@@ -282,14 +352,14 @@ export function AuthPage({
             "Verification code could not be sent."
           )
         )
-        return
+        return false
       }
 
-      setNotice("A new verification code has been sent.")
+      setNotice(successMessage)
+      return true
     } catch {
       setError("Verification code could not be sent.")
-    } finally {
-      setIsResendingCode(false)
+      return false
     }
   }
 
@@ -300,6 +370,7 @@ export function AuthPage({
   const isVerifyEmail = mode === "verify-email"
   const canUseResetLink = !isResetPassword || resetLinkStatus === "valid"
   const isCheckingResetLink = isResetPassword && resetLinkStatus === "checking"
+  const footerAlignment = isVerificationWall ? "justify-end" : "justify-between"
 
   return (
     <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
@@ -434,34 +505,51 @@ export function AuthPage({
             </Button>
           ) : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4 text-sm">
-            <button
-              className="text-sky-300 transition hover:text-sky-200 focus:ring-2 focus:ring-ring/40 focus:outline-none"
-              type="button"
-              onClick={(event) => {
-                const form = event.currentTarget.form
-
-                if (form) {
-                  clearPasswordInputs(form)
-                }
-
-                setError(null)
-                setNotice(null)
-                setMode(isSignIn ? "sign-up" : "sign-in")
-              }}
-            >
-              {isSignIn ? "Create account" : "Sign in"}
-            </button>
-            {isVerifyEmail ? (
-              <Button
+          <div
+            className={`flex flex-wrap items-center ${footerAlignment} gap-2 border-t border-border pt-4 text-sm`}
+          >
+            {!isVerificationWall ? (
+              <button
+                className="text-sky-300 transition hover:text-sky-200 focus:ring-2 focus:ring-ring/40 focus:outline-none"
                 type="button"
-                variant="outline"
-                onClick={handleResendVerificationCode}
-                disabled={isResendingCode}
+                onClick={(event) => {
+                  const form = event.currentTarget.form
+
+                  if (form) {
+                    clearPasswordInputs(form)
+                  }
+
+                  setError(null)
+                  setNotice(null)
+                  setMode(isSignIn ? "sign-up" : "sign-in")
+                }}
               >
-                <RotateCcw data-icon="inline-start" />
-                {isResendingCode ? "Sending..." : "Resend code"}
-              </Button>
+                {isSignIn ? "Create account" : "Sign in"}
+              </button>
+            ) : null}
+            {isVerifyEmail ? (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleResendVerificationCode}
+                  disabled={isResendingCode || isSigningOut}
+                >
+                  <RotateCcw data-icon="inline-start" />
+                  {isResendingCode ? "Sending..." : "Resend code"}
+                </Button>
+                {isVerificationWall ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => void handleSignOut()}
+                    disabled={isSubmitting || isResendingCode || isSigningOut}
+                  >
+                    <LogOut data-icon="inline-start" />
+                    {isSigningOut ? "Signing out..." : "Sign out"}
+                  </Button>
+                ) : null}
+              </div>
             ) : !isResetPassword ? (
               <button
                 className="text-muted-foreground transition hover:text-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"

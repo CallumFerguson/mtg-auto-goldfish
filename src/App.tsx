@@ -32,6 +32,9 @@ export function App() {
     await session.refetch()
     navigateTo("/")
   }
+  const handleSignedOut = () => {
+    void session.refetch()
+  }
 
   if (session.isPending) {
     return (
@@ -61,15 +64,15 @@ export function App() {
       <AuthPage
         initialEmail={session.data.user.email}
         initialMode="verify-email"
+        initialNotice="Enter the verification code we emailed you."
+        isVerificationWall
         onAuthenticated={handleAuthenticated}
+        onSignedOut={handleSignedOut}
       />
     )
   }
 
   const user = toAuthUser(session.data.user)
-  const handleSignedOut = () => {
-    void session.refetch()
-  }
   const handleAdminOptionsEnabledChange = (isEnabled: boolean) => {
     setAdminOptionsEnabled(isEnabled)
     storeAdminOptionsEnabled(isEnabled)

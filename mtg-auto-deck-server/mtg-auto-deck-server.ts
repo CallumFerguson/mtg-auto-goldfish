@@ -4744,14 +4744,18 @@ async function main() {
         return
       }
 
-      await auth.api.signUpEmail({
+      const signUpResult = await auth.api.signUpEmail({
         body: {
           email: signUpInput.email,
           name: signUpInput.email,
           password: signUpInput.password,
+          rememberMe: true,
         },
         headers: fromNodeHeaders(req.headers),
+        returnHeaders: true,
       })
+
+      forwardResponseCookies(res, signUpResult.headers)
 
       res.status(201).json({
         email: signUpInput.email,
@@ -6407,6 +6411,20 @@ async function userEmailExists(email: string) {
   )
 
   return (result.rowCount ?? 0) > 0
+}
+
+function forwardResponseCookies(res: Response, headers: Headers) {
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] })
+    .getSetCookie
+  const setCookieHeaders = getSetCookie
+    ? getSetCookie.call(headers)
+    : headers.get("set-cookie")
+      ? [headers.get("set-cookie") as string]
+      : []
+
+  if (setCookieHeaders.length > 0) {
+    res.append("Set-Cookie", setCookieHeaders)
+  }
 }
 
 function isAuthPath(path: string) {
