@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { navigateTo } from "@/lib/navigation"
+import { clearPasswordInputs } from "@/lib/password-form"
 import { getPasswordRangeError } from "@/lib/password-validation"
 
 export type AuthMode =
@@ -92,16 +93,18 @@ export function AuthPage({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const form = event.currentTarget
     setError(null)
     setNotice(null)
 
-    const formData = new FormData(event.currentTarget)
+    const formData = new FormData(form)
     const email = String(formData.get("email") ?? "").trim()
     const password = String(formData.get("password") ?? "")
     const confirmPassword = String(formData.get("confirmPassword") ?? "")
     const otp = String(formData.get("otp") ?? "").trim()
 
     if (mode === "reset-password" && resetLinkStatus !== "valid") {
+      clearPasswordInputs(form)
       setError(
         resetLinkStatus === "checking"
           ? "Password reset link is still being checked."
@@ -117,6 +120,7 @@ export function AuthPage({
     )
 
     if (passwordError) {
+      clearPasswordInputs(form)
       setError(passwordError)
       return
     }
@@ -250,6 +254,7 @@ export function AuthPage({
     } catch {
       setError("Authentication request failed.")
     } finally {
+      clearPasswordInputs(form)
       setIsSubmitting(false)
     }
   }
@@ -294,8 +299,7 @@ export function AuthPage({
   const isResetPassword = mode === "reset-password"
   const isVerifyEmail = mode === "verify-email"
   const canUseResetLink = !isResetPassword || resetLinkStatus === "valid"
-  const isCheckingResetLink =
-    isResetPassword && resetLinkStatus === "checking"
+  const isCheckingResetLink = isResetPassword && resetLinkStatus === "checking"
 
   return (
     <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 text-foreground">
@@ -434,7 +438,13 @@ export function AuthPage({
             <button
               className="text-sky-300 transition hover:text-sky-200 focus:ring-2 focus:ring-ring/40 focus:outline-none"
               type="button"
-              onClick={() => {
+              onClick={(event) => {
+                const form = event.currentTarget.form
+
+                if (form) {
+                  clearPasswordInputs(form)
+                }
+
                 setError(null)
                 setNotice(null)
                 setMode(isSignIn ? "sign-up" : "sign-in")
@@ -456,7 +466,13 @@ export function AuthPage({
               <button
                 className="text-muted-foreground transition hover:text-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
                 type="button"
-                onClick={() => {
+                onClick={(event) => {
+                  const form = event.currentTarget.form
+
+                  if (form) {
+                    clearPasswordInputs(form)
+                  }
+
                   setError(null)
                   setNotice(null)
                   setMode(isForgotPassword ? "sign-in" : "forgot-password")
@@ -511,8 +527,8 @@ async function verifyPasswordResetToken(token: string) {
 
   return Boolean(
     body &&
-      typeof body === "object" &&
-      (body as Record<string, unknown>).valid === true
+    typeof body === "object" &&
+    (body as Record<string, unknown>).valid === true
   )
 }
 

@@ -4,9 +4,9 @@ import { ArrowLeft, KeyRound, LogOut, Mail, Settings, X } from "lucide-react"
 import { AccountMenu } from "@/components/AccountMenu"
 import { SignOutConfirmModal } from "@/components/SignOutConfirmModal"
 import { Button } from "@/components/ui/button"
-import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { authClient, type AuthUser } from "@/lib/auth-client"
 import { navigateTo } from "@/lib/navigation"
+import { clearPasswordInputs } from "@/lib/password-form"
 import { getPasswordRangeError } from "@/lib/password-validation"
 
 type SettingsPageProps = {
@@ -15,8 +15,6 @@ type SettingsPageProps = {
   onSignedOut: () => void
   user: AuthUser
 }
-
-type ChangePasswordStep = "current-password" | "new-password"
 
 export function SettingsPage({
   adminOptionsEnabled,
@@ -187,66 +185,35 @@ function ChangePasswordModal({
   onClose: () => void
   onPasswordChanged: () => void
 }) {
-  const [step, setStep] = useState<ChangePasswordStep>("current-password")
-  const [verifiedCurrentPassword, setVerifiedCurrentPassword] = useState("")
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [newPassword, setNewPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const [isVerifying, setIsVerifying] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const isBusy = isVerifying || isSaving
 
-  async function handleCurrentPasswordSubmit(
-    event: FormEvent<HTMLFormElement>
-  ) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const currentPassword = String(formData.get("currentPassword") ?? "")
+    const newPassword = String(formData.get("newPassword") ?? "")
+    const confirmPassword = String(formData.get("confirmPassword") ?? "")
+    let shouldCloseAfterSave = false
 
     if (!currentPassword) {
+      clearPasswordInputs(form)
       setError("Current password is required.")
       return
     }
 
-    setError(null)
-    setIsVerifying(true)
-
-    try {
-      const result = await verifyCurrentPassword(currentPassword)
-
-      if (result.error) {
-        setError(result.error)
-        return
-      }
-
-      setVerifiedCurrentPassword(currentPassword)
-      setCurrentPassword("")
-      setStep("new-password")
-    } catch {
-      setError("Current password could not be verified.")
-    } finally {
-      setIsVerifying(false)
-    }
-  }
-
-  async function handleNewPasswordSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    let shouldCloseAfterSave = false
-
     const passwordError = getPasswordRangeError(newPassword, "New password")
 
     if (passwordError) {
+      clearPasswordInputs(form)
       setError(passwordError)
       return
     }
 
     if (newPassword !== confirmPassword) {
+      clearPasswordInputs(form)
       setError("New passwords do not match.")
-      return
-    }
-
-    if (!verifiedCurrentPassword) {
-      resetPasswordFlow()
-      setError("Current password must be verified again.")
       return
     }
 
@@ -255,7 +222,7 @@ function ChangePasswordModal({
 
     try {
       const result = await authClient.changePassword({
-        currentPassword: verifiedCurrentPassword,
+        currentPassword,
         newPassword,
         revokeOtherSessions: true,
       })
@@ -267,18 +234,19 @@ function ChangePasswordModal({
         )
 
         if (isInvalidPasswordError(result.error)) {
-          resetPasswordFlow()
+          setError("Current password could not be verified.")
+          return
         }
 
         setError(message)
         return
       }
 
-      resetPasswordFlow()
       shouldCloseAfterSave = true
     } catch {
       setError("Password could not be changed.")
     } finally {
+      clearPasswordInputs(form)
       setIsSaving(false)
     }
 
@@ -287,20 +255,11 @@ function ChangePasswordModal({
     }
   }
 
-  function resetPasswordFlow() {
-    setStep("current-password")
-    setVerifiedCurrentPassword("")
-    setCurrentPassword("")
-    setNewPassword("")
-    setConfirmPassword("")
-    setError(null)
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 py-6 backdrop-blur-sm"
       role="presentation"
-      onMouseDown={isBusy ? undefined : onClose}
+      onMouseDown={isSaving ? undefined : onClose}
     >
       <section
         aria-labelledby="change-password-title"
@@ -328,88 +287,61 @@ function ChangePasswordModal({
             aria-label="Close"
             title="Close"
             onClick={onClose}
-            disabled={isBusy}
+            disabled={isSaving}
           >
             <X />
           </Button>
         </header>
 
         <div className="grid gap-5 px-5 py-5">
-          {step === "current-password" ? (
-            <form className="grid gap-4" onSubmit={handleCurrentPasswordSubmit}>
-              <label className="grid gap-2 text-sm font-medium">
-                <span>Current password</span>
-                <input
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
-                  name="currentPassword"
-                  type="password"
-                  autoComplete="current-password"
-                  value={currentPassword}
-                  onChange={(event) => setCurrentPassword(event.target.value)}
-                  disabled={isVerifying}
-                />
-              </label>
+          <form className="grid gap-4" onSubmit={handleSubmit}>
+            <label className="grid gap-2 text-sm font-medium">
+              <span>Current password</span>
+              <input
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
+                name="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                disabled={isSaving}
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
+              <span>New password</span>
+              <input
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
+                name="newPassword"
+                type="password"
+                autoComplete="new-password"
+                disabled={isSaving}
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
+              <span>Confirm new password</span>
+              <input
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
+                name="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                disabled={isSaving}
+              />
+            </label>
 
-              <ErrorMessage error={error} />
+            <ErrorMessage error={error} />
 
-              <div className="flex justify-end gap-2 border-t border-border pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={onClose}
-                  disabled={isVerifying}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isVerifying}>
-                  {isVerifying ? "Verifying..." : "Continue"}
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <form className="grid gap-4" onSubmit={handleNewPasswordSubmit}>
-              <label className="grid gap-2 text-sm font-medium">
-                <span>New password</span>
-                <input
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
-                  name="newPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  disabled={isSaving}
-                />
-              </label>
-              <label className="grid gap-2 text-sm font-medium">
-                <span>Confirm new password</span>
-                <input
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground transition outline-none focus:border-ring focus:ring-3 focus:ring-ring/25"
-                  name="confirmPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  disabled={isSaving}
-                />
-              </label>
-
-              <ErrorMessage error={error} />
-
-              <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={onClose}
-                  disabled={isSaving}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save password"}
-                </Button>
-              </div>
-            </form>
-          )}
+            <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save password"}
+              </Button>
+            </div>
+          </form>
         </div>
       </section>
     </div>
@@ -425,38 +357,6 @@ function ErrorMessage({ error }: { error: string | null }) {
       {error}
     </p>
   ) : null
-}
-
-async function verifyCurrentPassword(password: string) {
-  const response = await apiFetch(`${API_BASE_URL}/api/auth/verify-password`, {
-    body: JSON.stringify({ password }),
-    headers: {
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  })
-
-  if (response.ok) {
-    return { error: null }
-  }
-
-  return {
-    error: await getApiErrorMessage(
-      response,
-      "Current password could not be verified."
-    ),
-  }
-}
-
-async function getApiErrorMessage(response: Response, fallbackMessage: string) {
-  try {
-    const body = (await response.json()) as unknown
-    const message = getStringErrorProperty(body, "message")
-
-    return message?.trim() ? message : fallbackMessage
-  } catch {
-    return fallbackMessage
-  }
 }
 
 function getAuthErrorMessage(error: unknown, fallbackMessage: string) {
