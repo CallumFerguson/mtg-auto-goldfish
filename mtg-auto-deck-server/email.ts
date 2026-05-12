@@ -90,7 +90,7 @@ This is a confirmation that the password for your MTG Auto Deck account was chan
 
 If this was you, no action is needed.
 
-If you did not make this change, reset your password immediately and review any other places where you use the same password.`
+If you did not make this change, reset your password immediately.`
 }
 
 function renderVerificationCodeText({ code }: { code: string }) {
@@ -158,7 +158,7 @@ function renderPasswordChangedHtml({
       })}
       ${renderInfoPanel({
         title: "If this was not you",
-        body: "Reset your password immediately and review any other places where you use the same password.",
+        body: "Reset your password immediately.",
       })}
     `,
   })
