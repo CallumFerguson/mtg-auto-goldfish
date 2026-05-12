@@ -84,6 +84,10 @@ import {
 } from "@/lib/simulation-debug-chunks"
 import { applySimulationResultsStreamEvent } from "@/lib/simulation-results-stream"
 import {
+  getSimulationRunStartTimeMs,
+  parseTimestampMs,
+} from "@/lib/simulation-run-timing"
+import {
   formatSimulationRunClipboardText,
   getLoggedTurnAction,
   getSimulationRunActivityBlocks,
@@ -278,10 +282,6 @@ function isActiveLlmRunStatus(status: string) {
   )
 }
 
-function getSimulationRunStartTimeMs(run: SimulationDebugLlmRun) {
-  return parseTimestampMs(run.startedAt) ?? parseTimestampMs(run.createdAt)
-}
-
 function getSimulationRunFinishedTimeMs(run: SimulationDebugLlmRun) {
   return (
     parseTimestampMs(run.completedAt) ??
@@ -299,16 +299,6 @@ function getSimulationRunFinishedDurationText(run: SimulationDebugLlmRun) {
   }
 
   return formatMinutesSeconds(finishedTimeMs - startTimeMs)
-}
-
-function parseTimestampMs(timestamp: string | null | undefined) {
-  if (!timestamp) {
-    return null
-  }
-
-  const timeMs = Date.parse(timestamp)
-
-  return Number.isNaN(timeMs) ? null : timeMs
 }
 
 function formatMinutesSeconds(durationMs: number) {
@@ -2978,6 +2968,7 @@ function SimulationResultsPanel({
               activeToolCallName={null}
               canStopSimulation={false}
               finishedDurationText={finishedDurationText}
+              isPending={false}
               isFinishedSuccessfully={run.status === "completed"}
               isFinished={true}
               isActivitySelected={selectedActivityRunId === run.llmRunId}
@@ -3124,6 +3115,7 @@ function SimulationResultsPanel({
                   activeToolCallName={run.activeToolCallName}
                   canStopSimulation={run.status !== "cancel_requested"}
                   finishedDurationText={null}
+                  isPending={run.status === "pending"}
                   isFinishedSuccessfully={false}
                   isFinished={false}
                   isActivitySelected={selectedActivityRunId === run.llmRunId}
@@ -3742,6 +3734,7 @@ function SimulationResultThinkingStatus({
   activeToolCallName,
   canStopSimulation,
   finishedDurationText,
+  isPending,
   isFinished,
   isFinishedSuccessfully,
   isActivitySelected,
@@ -3754,6 +3747,7 @@ function SimulationResultThinkingStatus({
   activeToolCallName: string | null
   canStopSimulation: boolean
   finishedDurationText: string | null
+  isPending: boolean
   isFinished: boolean
   isFinishedSuccessfully: boolean
   isActivitySelected: boolean
@@ -3766,7 +3760,7 @@ function SimulationResultThinkingStatus({
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now())
 
   useEffect(() => {
-    if (isFinished) {
+    if (isFinished || isPending) {
       return
     }
 
@@ -3777,7 +3771,7 @@ function SimulationResultThinkingStatus({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [isFinished])
+  }, [isFinished, isPending])
 
   const activeToolCallLabel =
     activeToolCallName === null
@@ -3787,13 +3781,15 @@ function SimulationResultThinkingStatus({
           state: "active",
         })
   const activeElapsedText =
-    runStartTimeMs === null || isFinished
+    runStartTimeMs === null || isFinished || isPending
       ? null
       : formatMinutesSeconds(currentTimeMs - runStartTimeMs)
   const statusLabel = isFinished
     ? finishedDurationText
       ? `Thought for ${finishedDurationText}`
       : "Thought"
+    : isPending
+      ? "Pending"
     : activeToolCallName
       ? (activeToolCallLabel ?? `Calling tool: ${activeToolCallName}`)
       : "Thinking"
@@ -3807,8 +3803,12 @@ function SimulationResultThinkingStatus({
           aria-pressed={isActivitySelected}
           title={
             isActivitySelected
-              ? "Close thinking activity"
-              : "View thinking activity"
+              ? isPending
+                ? "Close pending activity"
+                : "Close thinking activity"
+              : isPending
+                ? "View pending activity"
+                : "View thinking activity"
           }
           onClick={onViewActivity}
         >
@@ -3993,7 +3993,7 @@ function SimulationRunActivityPanel({
   }, [run.llmRunId, scrollActivityToBottom])
 
   useEffect(() => {
-    if (runFinishedTimeMs !== null) {
+    if (runFinishedTimeMs !== null || runStartTimeMs === null) {
       return
     }
 
@@ -4004,7 +4004,7 @@ function SimulationRunActivityPanel({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [run.llmRunId, runFinishedTimeMs])
+  }, [run.llmRunId, runFinishedTimeMs, runStartTimeMs])
 
   useLayoutEffect(() => {
     if (keepActivityScrolledDownRef.current) {

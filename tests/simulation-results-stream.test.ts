@@ -18,6 +18,7 @@ import {
   getSimulationResultToolReasonForChunk,
 } from "../src/lib/simulation-result-tool-labels.js"
 import { applySimulationResultsStreamEvent } from "../src/lib/simulation-results-stream.js"
+import { getSimulationRunStartTimeMs } from "../src/lib/simulation-run-timing.js"
 import type {
   SimulationDebugLlmRun,
   SimulationDebugLlmRunChunk,
@@ -278,6 +279,69 @@ test("adds auto-advanced turn runs", () => {
 
   assert.equal(updatedResults?.turnLlmRunCount, 1)
   assert.equal(updatedResults?.turnLlmRuns[0].llmRunId, "turn-run")
+})
+
+test("updates queued pending runs when they start streaming", () => {
+  let results: SimulationResultsInfo | null = createResults()
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "llm_run_updated",
+    run: createRun({
+      llmRunId: "turn-run",
+      phase: "turn",
+      startedAt: null,
+      status: "pending",
+      turnNumber: 1,
+    }),
+  })
+
+  assert.equal(results?.turnLlmRunCount, 1)
+  assert.equal(results?.turnLlmRuns[0].status, "pending")
+  assert.equal(results?.turnLlmRuns[0].startedAt, null)
+
+  results = applySimulationResultsStreamEvent(results, {
+    type: "llm_run_updated",
+    run: createRun({
+      llmRunId: "turn-run",
+      phase: "turn",
+      startedAt: "2026-01-01T00:00:05.000Z",
+      status: "streaming",
+      turnNumber: 1,
+    }),
+  })
+
+  assert.equal(results?.turnLlmRunCount, 1)
+  assert.equal(results?.turnLlmRuns[0].status, "streaming")
+  assert.equal(results?.turnLlmRuns[0].startedAt, "2026-01-01T00:00:05.000Z")
+})
+
+test("uses started time, not created time, for run activity timing", () => {
+  assert.equal(
+    getSimulationRunStartTimeMs(
+      createRun({
+        llmRunId: "pending-run",
+        phase: "turn",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: null,
+        status: "pending",
+        turnNumber: 1,
+      })
+    ),
+    null
+  )
+  assert.equal(
+    getSimulationRunStartTimeMs(
+      createRun({
+        llmRunId: "streaming-run",
+        phase: "turn",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        startedAt: "2026-01-01T00:00:05.000Z",
+        status: "streaming",
+        turnNumber: 1,
+      })
+    ),
+    Date.parse("2026-01-01T00:00:05.000Z")
+  )
 })
 
 test("streams report runs and keeps report attempts sorted", () => {
@@ -1810,7 +1874,10 @@ function createRun(overrides: {
     runtimeStreamKey: null,
     attemptNumber: overrides.attemptNumber ?? 1,
     createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
-    startedAt: overrides.startedAt ?? "2026-01-01T00:00:01.000Z",
+    startedAt:
+      "startedAt" in overrides
+        ? (overrides.startedAt ?? null)
+        : "2026-01-01T00:00:01.000Z",
     completedAt: overrides.completedAt ?? null,
     failedAt: overrides.failedAt ?? null,
     cancelledAt: overrides.cancelledAt ?? null,

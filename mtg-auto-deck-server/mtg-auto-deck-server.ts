@@ -37,6 +37,7 @@ import {
   cancelLlmRun,
   cancelReportLlmRun,
   cancelStaleInFlightLlmRuns,
+  claimNextQueuedLlmRun,
   completeOpeningHandLlmRun,
   completeReportLlmRun,
   completeTurnLlmRun,
@@ -65,10 +66,11 @@ import {
   getStartingHandSimulationPromptData,
   getTurnLlmRunEvaluationData,
   getTurnSimulationPromptData,
+  isLlmRunStreaming,
   listActiveSimulationLlmRuns,
   listSimulationsForDeck,
   logTurnAction,
-  markLlmRunStreaming,
+  markLlmRunQueued,
   markSimulationCancelled,
   markSimulationCompleted,
   markSimulationFailed,
@@ -97,6 +99,7 @@ import type {
   LlmRunMcpTokenPhase,
   LlmRunPhase,
   LlmRunStatus,
+  ClaimedQueuedLlmRun,
   OpenRouterGeneration,
   SimulationDebugLlmRunChunk,
   SimulationDebugLlmRun,
@@ -160,6 +163,7 @@ import {
   LlmConfigurationError,
   getOpenRouterApiKey,
   getEvaluationLlmRunConfig,
+  getLlmRunQueueConfig,
   getOpeningHandLlmRunConfig,
   getTurnSimulationLlmRunConfig,
   type EvaluationLlmRunConfig,
@@ -173,6 +177,7 @@ import {
   type ResolvedTurnSimulationLlmRunConfig,
   type TurnSimulationLlmRunConfig,
   type TurnSimulationOpenAiRunConfig,
+  type LlmRunQueueConfig,
 } from "./llm-config.js"
 import {
   SimulationStopTimeoutError,
@@ -223,11 +228,13 @@ const TURN_SIMULATION_MCP_SERVER_LABEL = "turn_simulation"
 const STREAM_FLUSH_INTERVAL_MS = 1000
 const STREAM_RECENT_CHUNK_LIMIT = 500
 const SSE_KEEPALIVE_INTERVAL_MS = 15000
+const LLM_RUN_QUEUE_POLL_INTERVAL_MS = 1000
 const MCP_RUN_TOKEN_TTL_MS = 6 * 60 * 60 * 1000
 const OPENROUTER_GENERATION_ENDPOINT = "https://openrouter.ai/api/v1/generation"
 const OPENROUTER_PROVIDERS_ENDPOINT = "https://openrouter.ai/api/v1/providers"
 const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT =
   "https://openrouter.ai/api/v1/chat/completions"
+const QUEUED_MCP_RUN_TOKEN_PLACEHOLDER = "queued"
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -353,6 +360,9 @@ type GeneratedMcpRunToken = {
 const activeLlmRunRuntimes = new Map<string, ActiveLlmRunRuntime>()
 const simulationResultsBroadcaster = new SimulationResultsBroadcaster()
 const authenticatedUsersByRequest = new WeakMap<Request, AuthenticatedUser>()
+let llmRunQueueConfig: LlmRunQueueConfig | null = null
+let llmRunQueueDrainTimer: NodeJS.Timeout | null = null
+let llmRunQueueDrainPromise: Promise<void> | null = null
 
 function createRuntimeCompletion() {
   let resolveCompletion: () => void = () => { }
@@ -681,13 +691,6 @@ async function getSimulationResultsStreamSnapshot(
     simulation,
     results,
   }
-}
-
-function publishRuntimeStarted(runtime: ActiveLlmRunRuntime) {
-  simulationResultsBroadcaster.publish(runtime.simulationId, {
-    type: "llm_run_started",
-    run: createStreamRunFromRuntime(runtime, []),
-  })
 }
 
 function publishRuntimeChunk(
@@ -2608,16 +2611,6 @@ async function prepareAndStartOpeningHandLlmRun({
       requestPayload: {},
     })
     createdLlmRunId = openingHandRun.llmRunId
-    const mcpRunToken = generateMcpRunToken()
-
-    await createLlmRunMcpToken({
-      deckId,
-      llmRunId: openingHandRun.llmRunId,
-      simulationId,
-      phase: "opening_hand",
-      tokenHash: mcpRunToken.tokenHash,
-      expiresAt: mcpRunToken.expiresAt,
-    })
 
     const fullPrompt = await buildStartingHandSimulationPrompt({
       llmRunId: openingHandRun.llmRunId,
@@ -2625,7 +2618,7 @@ async function prepareAndStartOpeningHandLlmRun({
     const requestPayload = buildOpeningHandLlmRequestPayload(
       llmConfig,
       fullPrompt,
-      mcpRunToken.token,
+      QUEUED_MCP_RUN_TOKEN_PLACEHOLDER,
       simulationId
     )
 
@@ -2635,30 +2628,19 @@ async function prepareAndStartOpeningHandLlmRun({
       requestPayload: getPersistableLlmRequestPayload(requestPayload),
     })
 
-    startOpeningHandLlmRun({
-      config: llmConfig,
-      createdAt: openingHandRun.createdAt,
+    if (!(await markLlmRunQueued(openingHandRun.llmRunId))) {
+      throw new Error("Opening-hand LLM run could not be queued.")
+    }
+    await publishSimulationResultsState({
       deckId,
-      fullPrompt,
-      attemptNumber: openingHandRun.attemptNumber,
       llmRunId: openingHandRun.llmRunId,
-      mcpRunToken: mcpRunToken.token,
-      requestPayload,
-      runtimeStreamKey: openingHandRun.runtimeStreamKey,
       simulationId,
     })
+    nudgeLlmRunQueue()
 
     return openingHandRun
   } catch (error) {
     if (createdLlmRunId !== null) {
-      await revokeLlmRunMcpToken(createdLlmRunId).catch(
-        (revokeError: unknown) => {
-          console.error(
-            "Failed to revoke opening-hand MCP run token:",
-            revokeError
-          )
-        }
-      )
       await failLlmRun(createdLlmRunId, getErrorMessage(error)).catch(
         (failError: unknown) => {
           console.error(
@@ -2701,16 +2683,6 @@ async function prepareAndStartTurnLlmRun({
       requireAutoSimulateNextStep,
     })
     createdLlmRunId = turnRun.llmRunId
-    const mcpRunToken = generateMcpRunToken()
-
-    await createLlmRunMcpToken({
-      deckId,
-      llmRunId: turnRun.llmRunId,
-      simulationId,
-      phase: "turn",
-      tokenHash: mcpRunToken.tokenHash,
-      expiresAt: mcpRunToken.expiresAt,
-    })
 
     const fullPrompt =
       turnNumber === 1
@@ -2722,7 +2694,7 @@ async function prepareAndStartTurnLlmRun({
     const requestPayload = buildTurnSimulationLlmRequestPayload(
       llmConfig,
       fullPrompt,
-      mcpRunToken.token,
+      QUEUED_MCP_RUN_TOKEN_PLACEHOLDER,
       simulationId,
       turnNumber
     )
@@ -2733,28 +2705,19 @@ async function prepareAndStartTurnLlmRun({
       requestPayload: getPersistableLlmRequestPayload(requestPayload),
     })
 
-    startTurnLlmRun({
-      config: llmConfig,
-      createdAt: turnRun.createdAt,
+    if (!(await markLlmRunQueued(turnRun.llmRunId))) {
+      throw new Error("Turn LLM run could not be queued.")
+    }
+    await publishSimulationResultsState({
       deckId,
-      fullPrompt,
-      attemptNumber: turnRun.attemptNumber,
       llmRunId: turnRun.llmRunId,
-      mcpRunToken: mcpRunToken.token,
-      requestPayload,
-      runtimeStreamKey: turnRun.runtimeStreamKey,
       simulationId,
-      turnNumber: turnRun.turnNumber,
     })
+    nudgeLlmRunQueue()
 
     return turnRun
   } catch (error) {
     if (createdLlmRunId !== null) {
-      await revokeLlmRunMcpToken(createdLlmRunId).catch(
-        (revokeError: unknown) => {
-          console.error("Failed to revoke turn MCP run token:", revokeError)
-        }
-      )
       await failLlmRun(createdLlmRunId, getErrorMessage(error)).catch(
         (failError: unknown) => {
           console.error("Failed to mark turn LLM run failed:", failError)
@@ -2803,17 +2766,15 @@ async function prepareAndStartReportLlmRun({
     })
     createdLlmRunId = reportRun.llmRunId
 
-    startReportLlmRun({
-      config: llmConfig,
-      createdAt: reportRun.createdAt,
+    if (!(await markLlmRunQueued(reportRun.llmRunId))) {
+      throw new Error("Report LLM run could not be queued.")
+    }
+    await publishSimulationResultsState({
       deckId,
-      fullPrompt,
-      attemptNumber: reportRun.attemptNumber,
       llmRunId: reportRun.llmRunId,
-      requestPayload,
-      runtimeStreamKey: reportRun.runtimeStreamKey,
       simulationId,
     })
+    nudgeLlmRunQueue()
 
     return reportRun
   } catch (error) {
@@ -2914,6 +2875,211 @@ async function handleSimulationCompletionNextStep(
       simulationId: completion.simulationId,
     })
   }
+}
+
+function startLlmRunQueue(config: LlmRunQueueConfig) {
+  llmRunQueueConfig = config
+
+  if (!llmRunQueueDrainTimer) {
+    llmRunQueueDrainTimer = setInterval(
+      nudgeLlmRunQueue,
+      LLM_RUN_QUEUE_POLL_INTERVAL_MS
+    )
+  }
+
+  nudgeLlmRunQueue()
+}
+
+function stopLlmRunQueue() {
+  if (!llmRunQueueDrainTimer) {
+    return
+  }
+
+  clearInterval(llmRunQueueDrainTimer)
+  llmRunQueueDrainTimer = null
+}
+
+function nudgeLlmRunQueue() {
+  if (!llmRunQueueConfig || llmRunQueueDrainPromise) {
+    return
+  }
+
+  llmRunQueueDrainPromise = drainLlmRunQueue(llmRunQueueConfig)
+    .catch((error: unknown) => {
+      console.error("Failed to drain queued LLM runs:", error)
+    })
+    .finally(() => {
+      llmRunQueueDrainPromise = null
+    })
+}
+
+async function drainLlmRunQueue(config: LlmRunQueueConfig) {
+  while (true) {
+    const claimedRun = await claimNextQueuedLlmRun({
+      maxConcurrentRuns: config.maxConcurrentRuns,
+      maxConcurrentRunsPerUser: config.maxConcurrentRunsPerUser,
+    })
+
+    if (!claimedRun) {
+      return
+    }
+
+    await startClaimedQueuedLlmRun(claimedRun)
+  }
+}
+
+async function startClaimedQueuedLlmRun(run: ClaimedQueuedLlmRun) {
+  try {
+    if (run.phase === "opening_hand") {
+      const config = await resolveLlmRunConfigModel(
+        getOpeningHandLlmRunConfig()
+      )
+
+      assertClaimedRunMatchesConfig(run, config)
+
+      if (!(await isLlmRunStreaming(run.llmRunId))) {
+        return
+      }
+
+      startOpeningHandLlmRun({
+        attemptNumber: run.attemptNumber,
+        config,
+        createdAt: run.createdAt,
+        deckId: run.deckId,
+        fullPrompt: run.fullPrompt,
+        llmRunId: run.llmRunId,
+        runtimeStreamKey: run.runtimeStreamKey,
+        simulationId: run.simulationId,
+        startedAt: run.startedAt,
+      })
+      return
+    }
+
+    const config = await resolveLlmRunConfigModel(
+      getTurnSimulationLlmRunConfig()
+    )
+
+    assertClaimedRunMatchesConfig(run, config)
+
+    if (!(await isLlmRunStreaming(run.llmRunId))) {
+      return
+    }
+
+    if (run.phase === "turn") {
+      if (typeof run.turnNumber !== "number") {
+        throw new Error("Queued turn LLM run is missing its turn number.")
+      }
+
+      startTurnLlmRun({
+        attemptNumber: run.attemptNumber,
+        config,
+        createdAt: run.createdAt,
+        deckId: run.deckId,
+        fullPrompt: run.fullPrompt,
+        llmRunId: run.llmRunId,
+        runtimeStreamKey: run.runtimeStreamKey,
+        simulationId: run.simulationId,
+        startedAt: run.startedAt,
+        turnNumber: run.turnNumber,
+      })
+      return
+    }
+
+    startReportLlmRun({
+      attemptNumber: run.attemptNumber,
+      config,
+      createdAt: run.createdAt,
+      deckId: run.deckId,
+      fullPrompt: run.fullPrompt,
+      llmRunId: run.llmRunId,
+      runtimeStreamKey: run.runtimeStreamKey,
+      simulationId: run.simulationId,
+      startedAt: run.startedAt,
+    })
+  } catch (error) {
+    console.error("Failed to start queued LLM run:", error)
+    await failClaimedQueuedLlmRun(run, getErrorMessage(error))
+  }
+}
+
+function assertClaimedRunMatchesConfig(
+  run: ClaimedQueuedLlmRun,
+  config: ResolvedOpeningHandLlmRunConfig | ResolvedTurnSimulationLlmRunConfig
+) {
+  const currentOpenRouterModelProvider =
+    getLlmRunOpenRouterModelProvider(config)
+
+  if (
+    run.provider === config.provider &&
+    run.model === config.model &&
+    run.openrouterModelProvider === currentOpenRouterModelProvider &&
+    run.reasoningEffort === config.reasoningEffort
+  ) {
+    return
+  }
+
+  throw new Error(
+    `${formatLlmRunPhase(run.phase)} LLM run was queued for ${formatQueuedRunConfig(run)}, but current configuration is ${formatLlmRunConfig(config)}.`
+  )
+}
+
+function formatQueuedRunConfig(run: ClaimedQueuedLlmRun) {
+  return formatLlmRunConfigParts({
+    model: run.model,
+    openrouterModelProvider: run.openrouterModelProvider,
+    provider: run.provider,
+    reasoningEffort: run.reasoningEffort,
+  })
+}
+
+function formatLlmRunConfig(
+  config: ResolvedOpeningHandLlmRunConfig | ResolvedTurnSimulationLlmRunConfig
+) {
+  return formatLlmRunConfigParts({
+    model: config.model,
+    openrouterModelProvider: getLlmRunOpenRouterModelProvider(config),
+    provider: config.provider,
+    reasoningEffort: config.reasoningEffort,
+  })
+}
+
+function formatLlmRunConfigParts({
+  model,
+  openrouterModelProvider,
+  provider,
+  reasoningEffort,
+}: {
+  model: string
+  openrouterModelProvider: string | null
+  provider: string
+  reasoningEffort: string | null
+}) {
+  return [
+    `provider=${provider}`,
+    `model=${model}`,
+    openrouterModelProvider ? `modelProvider=${openrouterModelProvider}` : null,
+    reasoningEffort ? `reasoningEffort=${reasoningEffort}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
+}
+
+async function failClaimedQueuedLlmRun(
+  run: ClaimedQueuedLlmRun,
+  failureMessage: string
+) {
+  if (run.phase === "report") {
+    await failReportLlmRun(run.llmRunId, failureMessage)
+  } else {
+    await failLlmRun(run.llmRunId, failureMessage)
+  }
+
+  await publishSimulationResultsState({
+    deckId: run.deckId,
+    llmRunId: run.llmRunId,
+    simulationId: run.simulationId,
+  })
+  nudgeLlmRunQueue()
 }
 
 function isBenignAutoAdvanceAbortError(error: unknown) {
@@ -3612,10 +3778,9 @@ function startOpeningHandLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  mcpRunToken,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
 }: {
   attemptNumber: number
   config: ResolvedOpeningHandLlmRunConfig
@@ -3623,10 +3788,9 @@ function startOpeningHandLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  mcpRunToken: string
-  requestPayload: OpeningHandLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
 }) {
   void runOpeningHandLlmRun({
     attemptNumber,
@@ -3635,10 +3799,9 @@ function startOpeningHandLlmRun({
     deckId,
     fullPrompt,
     llmRunId,
-    mcpRunToken,
-    requestPayload,
     runtimeStreamKey,
     simulationId,
+    startedAt,
   })
 }
 
@@ -3649,10 +3812,9 @@ async function runOpeningHandLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  mcpRunToken,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
 }: {
   attemptNumber: number
   config: ResolvedOpeningHandLlmRunConfig
@@ -3660,10 +3822,9 @@ async function runOpeningHandLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  mcpRunToken: string
-  requestPayload: OpeningHandLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
 }) {
   const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
@@ -3687,23 +3848,42 @@ async function runOpeningHandLlmRun({
     resolveCompletion: completion.resolveCompletion,
     runtimeStreamKey,
     simulationId,
-    startedAt: null,
+    startedAt,
     status: "streaming",
   }
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
-  publishRuntimeStarted(runtime)
 
   try {
     throwIfRuntimeAborted(runtime.abortController.signal)
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
 
-    if (!(await markLlmRunStreaming(llmRunId))) {
-      throw createRuntimeAbortError(
-        "Opening-hand LLM run was cancelled before it started streaming."
-      )
-    }
-    runtime.startedAt = new Date().toISOString()
+    const mcpRunToken = generateMcpRunToken()
+    await createLlmRunMcpToken({
+      deckId,
+      llmRunId,
+      simulationId,
+      phase: "opening_hand",
+      tokenHash: mcpRunToken.tokenHash,
+      expiresAt: mcpRunToken.expiresAt,
+    })
+    throwIfRuntimeAborted(runtime.abortController.signal)
+    const requestPayload = buildOpeningHandLlmRequestPayload(
+      config,
+      fullPrompt,
+      mcpRunToken.token,
+      simulationId
+    )
 
+    await updateLlmRunRequestData({
+      llmRunId,
+      fullPrompt,
+      requestPayload: getPersistableLlmRequestPayload(requestPayload),
+    })
     throwIfRuntimeAborted(runtime.abortController.signal)
 
     const streamResult =
@@ -3722,7 +3902,7 @@ async function runOpeningHandLlmRun({
             llmRunId,
             mcpPath: appendMcpRunTokenToPath(
               OPENING_HAND_MCP_PATH,
-              mcpRunToken
+              mcpRunToken.token
             ),
             phase: "opening_hand",
             requestPayload: requireOpenRouterRequestPayload(requestPayload),
@@ -3733,7 +3913,7 @@ async function runOpeningHandLlmRun({
             llmRunId,
             mcpPath: appendMcpRunTokenToPath(
               OPENING_HAND_MCP_PATH,
-              mcpRunToken
+              mcpRunToken.token
             ),
             phase: "opening_hand",
             requestPayload: requireLlamaCppRequestPayload(requestPayload),
@@ -3825,6 +4005,7 @@ async function runOpeningHandLlmRun({
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
     runtime.resolveCompletion()
+    nudgeLlmRunQueue()
   }
 }
 
@@ -3835,10 +4016,9 @@ function startTurnLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  mcpRunToken,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
   turnNumber,
 }: {
   attemptNumber: number
@@ -3847,10 +4027,9 @@ function startTurnLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  mcpRunToken: string
-  requestPayload: TurnSimulationLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
   turnNumber: number
 }) {
   void runTurnLlmRun({
@@ -3860,10 +4039,9 @@ function startTurnLlmRun({
     deckId,
     fullPrompt,
     llmRunId,
-    mcpRunToken,
-    requestPayload,
     runtimeStreamKey,
     simulationId,
+    startedAt,
     turnNumber,
   })
 }
@@ -3875,10 +4053,9 @@ async function runTurnLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  mcpRunToken,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
   turnNumber,
 }: {
   attemptNumber: number
@@ -3887,10 +4064,9 @@ async function runTurnLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  mcpRunToken: string
-  requestPayload: TurnSimulationLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
   turnNumber: number
 }) {
   const completion = createRuntimeCompletion()
@@ -3915,24 +4091,44 @@ async function runTurnLlmRun({
     resolveCompletion: completion.resolveCompletion,
     runtimeStreamKey,
     simulationId,
-    startedAt: null,
+    startedAt,
     status: "streaming",
     turnNumber,
   }
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
-  publishRuntimeStarted(runtime)
 
   try {
     throwIfRuntimeAborted(runtime.abortController.signal)
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
 
-    if (!(await markLlmRunStreaming(llmRunId))) {
-      throw createRuntimeAbortError(
-        "Turn LLM run was cancelled before it started streaming."
-      )
-    }
-    runtime.startedAt = new Date().toISOString()
+    const mcpRunToken = generateMcpRunToken()
+    await createLlmRunMcpToken({
+      deckId,
+      llmRunId,
+      simulationId,
+      phase: "turn",
+      tokenHash: mcpRunToken.tokenHash,
+      expiresAt: mcpRunToken.expiresAt,
+    })
+    throwIfRuntimeAborted(runtime.abortController.signal)
+    const requestPayload = buildTurnSimulationLlmRequestPayload(
+      config,
+      fullPrompt,
+      mcpRunToken.token,
+      simulationId,
+      turnNumber
+    )
 
+    await updateLlmRunRequestData({
+      llmRunId,
+      fullPrompt,
+      requestPayload: getPersistableLlmRequestPayload(requestPayload),
+    })
     throwIfRuntimeAborted(runtime.abortController.signal)
 
     const streamResult =
@@ -3951,7 +4147,7 @@ async function runTurnLlmRun({
             llmRunId,
             mcpPath: appendMcpRunTokenToPath(
               TURN_SIMULATION_MCP_PATH,
-              mcpRunToken
+              mcpRunToken.token
             ),
             phase: "turn",
             requestPayload: requireOpenRouterRequestPayload(requestPayload),
@@ -3962,7 +4158,7 @@ async function runTurnLlmRun({
             llmRunId,
             mcpPath: appendMcpRunTokenToPath(
               TURN_SIMULATION_MCP_PATH,
-              mcpRunToken
+              mcpRunToken.token
             ),
             phase: "turn",
             requestPayload: requireLlamaCppRequestPayload(requestPayload),
@@ -4057,6 +4253,7 @@ async function runTurnLlmRun({
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
     runtime.resolveCompletion()
+    nudgeLlmRunQueue()
   }
 }
 
@@ -4067,9 +4264,9 @@ function startReportLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
 }: {
   attemptNumber: number
   config: ResolvedTurnSimulationLlmRunConfig
@@ -4077,9 +4274,9 @@ function startReportLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  requestPayload: ReportLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
 }) {
   void runReportLlmRun({
     attemptNumber,
@@ -4088,9 +4285,9 @@ function startReportLlmRun({
     deckId,
     fullPrompt,
     llmRunId,
-    requestPayload,
     runtimeStreamKey,
     simulationId,
+    startedAt,
   })
 }
 
@@ -4101,9 +4298,9 @@ async function runReportLlmRun({
   deckId,
   fullPrompt,
   llmRunId,
-  requestPayload,
   runtimeStreamKey,
   simulationId,
+  startedAt,
 }: {
   attemptNumber: number
   config: ResolvedTurnSimulationLlmRunConfig
@@ -4111,9 +4308,9 @@ async function runReportLlmRun({
   deckId: string
   fullPrompt: string
   llmRunId: string
-  requestPayload: ReportLlmRequestPayload
   runtimeStreamKey: string
   simulationId: string
+  startedAt: string
 }) {
   const completion = createRuntimeCompletion()
   const runtime: ActiveLlmRunRuntime = {
@@ -4137,23 +4334,30 @@ async function runReportLlmRun({
     resolveCompletion: completion.resolveCompletion,
     runtimeStreamKey,
     simulationId,
-    startedAt: null,
+    startedAt,
     status: "streaming",
   }
 
   activeLlmRunRuntimes.set(runtimeStreamKey, runtime)
-  publishRuntimeStarted(runtime)
 
   try {
     throwIfRuntimeAborted(runtime.abortController.signal)
+    await publishSimulationResultsState({
+      deckId,
+      llmRunId,
+      simulationId,
+    })
 
-    if (!(await markLlmRunStreaming(llmRunId))) {
-      throw createRuntimeAbortError(
-        "Report LLM run was cancelled before it started streaming."
-      )
-    }
-    runtime.startedAt = new Date().toISOString()
-
+    const requestPayload = buildReportLlmRequestPayload(
+      config,
+      fullPrompt,
+      simulationId
+    )
+    await updateLlmRunRequestData({
+      llmRunId,
+      fullPrompt,
+      requestPayload: getPersistableLlmRequestPayload(requestPayload),
+    })
     throwIfRuntimeAborted(runtime.abortController.signal)
 
     const streamResult =
@@ -4253,6 +4457,7 @@ async function runReportLlmRun({
     clearRuntimeFlushTimer(runtime)
     activeLlmRunRuntimes.delete(runtimeStreamKey)
     runtime.resolveCompletion()
+    nudgeLlmRunQueue()
   }
 }
 
@@ -4439,6 +4644,7 @@ function clearRuntimeFlushTimer(runtime: ActiveLlmRunRuntime) {
 
 async function main() {
   registerShutdownHandlers()
+  const queueConfig = getLlmRunQueueConfig()
   await verifyDatabaseConnection()
   await ensureAuthSchema()
   await ensureFreshScryfallOracleCards()
@@ -5777,6 +5983,7 @@ async function main() {
         `Simulation MCP test endpoint available at http://${host}:${port}${SIMULATION_MCP_PATH}`
       )
     }
+    startLlmRunQueue(queueConfig)
   })
 }
 
@@ -5798,6 +6005,7 @@ function getExactMatchOracleId(
 function registerShutdownHandlers() {
   const shutdown = (signal: NodeJS.Signals) => {
     void (async () => {
+      stopLlmRunQueue()
       console.error(`Received ${signal}. Closing database pool...`)
       await closeDatabasePool()
       process.exit(0)

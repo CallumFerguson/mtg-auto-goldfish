@@ -89,6 +89,11 @@ export type ResolvedEvaluationLlmRunConfig =
   | OpenRouterRunConfig
   | ResolvedLlamaCppRunConfig
 
+export type LlmRunQueueConfig = {
+  maxConcurrentRuns: number
+  maxConcurrentRunsPerUser: number
+}
+
 export class LlmConfigurationError extends Error {
   constructor(message: string) {
     super(message)
@@ -140,6 +145,21 @@ export function getEvaluationLlmRunConfig(
 
 export function getOpenRouterApiKey(environment: Environment = process.env) {
   return getRequiredEnvironmentVariable(environment, "OPENROUTER_API_KEY")
+}
+
+export function getLlmRunQueueConfig(
+  environment: Environment = process.env
+): LlmRunQueueConfig {
+  return {
+    maxConcurrentRuns: getRequiredPositiveIntegerEnvironmentVariable(
+      environment,
+      "LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS"
+    ),
+    maxConcurrentRunsPerUser: getRequiredPositiveIntegerEnvironmentVariable(
+      environment,
+      "LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS_PER_USER"
+    ),
+  }
 }
 
 function getLlmRunConfig(

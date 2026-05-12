@@ -103,6 +103,23 @@ export type PreparedTurnLlmRun = TurnLlmRun & {
   previousGameState: string | null
 }
 
+export type ClaimedQueuedLlmRun = {
+  simulationId: string
+  deckId: string
+  llmRunId: string
+  phase: Extract<LlmRunPhase, "opening_hand" | "turn" | "report">
+  provider: string
+  model: string
+  openrouterModelProvider: string | null
+  reasoningEffort: string | null
+  runtimeStreamKey: string
+  attemptNumber: number
+  createdAt: string
+  startedAt: string
+  fullPrompt: string
+  turnNumber?: number
+}
+
 export type UpdateLlmRunRequestDataInput = {
   llmRunId: string
   fullPrompt: string
@@ -753,9 +770,11 @@ export async function ensureSimulationsSchema() {
       model text NOT NULL,
       openrouter_model_provider text,
       reasoning_effort text,
+      owner_user_id text REFERENCES "user"(id) ON DELETE SET NULL,
 
       status llm_run_status NOT NULL DEFAULT 'pending',
       runtime_stream_key text UNIQUE,
+      queued_at timestamptz,
 
       full_prompt text NOT NULL DEFAULT '',
       request_payload jsonb NOT NULL DEFAULT '{}',
@@ -805,6 +824,36 @@ export async function ensureSimulationsSchema() {
   await queryDatabase(`
     ALTER TABLE llm_runs
     ADD COLUMN IF NOT EXISTS reasoning_effort text
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    ADD COLUMN IF NOT EXISTS owner_user_id text REFERENCES "user"(id) ON DELETE SET NULL
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    ADD COLUMN IF NOT EXISTS queued_at timestamptz
+  `)
+  await queryDatabase(`
+    UPDATE llm_runs llm_run
+    SET owner_user_id = deck.owner_user_id,
+        updated_at = now()
+    FROM (
+      SELECT simulation_id, llm_run_id
+      FROM simulation_opening_hand_llm_runs
+      UNION
+      SELECT simulation_id, llm_run_id
+      FROM simulation_turn_llm_runs
+      UNION
+      SELECT simulation_id, llm_run_id
+      FROM simulation_report_llm_runs
+    ) linked_run
+    JOIN simulations simulation
+      ON simulation.id = linked_run.simulation_id
+    JOIN decks deck
+      ON deck.id = simulation.deck_id
+    WHERE llm_run.id = linked_run.llm_run_id
+      AND llm_run.owner_user_id IS NULL
+      AND deck.owner_user_id IS NOT NULL
   `)
   await queryDatabase(`
     ALTER TABLE llm_runs
@@ -1056,6 +1105,16 @@ export async function ensureSimulationsSchema() {
   await queryDatabase(`
     CREATE INDEX IF NOT EXISTS llm_runs_provider_model_idx
       ON llm_runs (provider, model)
+  `)
+  await queryDatabase(`
+    CREATE INDEX IF NOT EXISTS llm_runs_queue_idx
+      ON llm_runs (status, queued_at, id)
+      WHERE status = 'pending' AND queued_at IS NOT NULL
+  `)
+  await queryDatabase(`
+    CREATE INDEX IF NOT EXISTS llm_runs_streaming_owner_idx
+      ON llm_runs (owner_user_id)
+      WHERE status = 'streaming'
   `)
   await queryDatabase(`
     CREATE INDEX IF NOT EXISTS llm_run_mcp_tokens_hash_phase_idx
@@ -1913,12 +1972,18 @@ export async function createOpeningHandLlmRun(
     const simulationResult = await client.query<{
       id: string
       starting_hand_id: string | null
+      owner_user_id: string | null
     }>(
       `
-        SELECT id, starting_hand_id
-        FROM simulations
-        WHERE id = $1
-          AND deck_id = $2
+        SELECT
+          simulation.id,
+          simulation.starting_hand_id,
+          deck.owner_user_id
+        FROM simulations simulation
+        JOIN decks deck
+          ON deck.id = simulation.deck_id
+        WHERE simulation.id = $1
+          AND simulation.deck_id = $2
         FOR UPDATE
       `,
       [input.simulationId, deckId]
@@ -1959,6 +2024,7 @@ export async function createOpeningHandLlmRun(
           model,
           openrouter_model_provider,
           reasoning_effort,
+          owner_user_id,
           runtime_stream_key,
           full_prompt,
           request_payload
@@ -1971,7 +2037,8 @@ export async function createOpeningHandLlmRun(
           $4,
           $5,
           $6,
-          $7::jsonb
+          $7,
+          $8::jsonb
         )
         RETURNING id, status, runtime_stream_key, created_at
       `,
@@ -1980,6 +2047,7 @@ export async function createOpeningHandLlmRun(
         input.model,
         openrouterModelProvider,
         input.reasoningEffort,
+        simulationResult.rows[0].owner_user_id,
         input.runtimeStreamKey,
         input.fullPrompt,
         JSON.stringify(input.requestPayload),
@@ -2127,18 +2195,22 @@ export async function createTurnLlmRun(
       starting_hand_id: string | null
       status: SimulationStatus
       auto_simulate_next_step: boolean
+      owner_user_id: string | null
     }>(
       `
         SELECT
-          id,
-          deck_id,
-          seed,
-          starting_hand_id,
-          status,
-          auto_simulate_next_step
-        FROM simulations
-        WHERE id = $1
-          AND deck_id = $2
+          simulation.id,
+          simulation.deck_id,
+          simulation.seed,
+          simulation.starting_hand_id,
+          simulation.status,
+          simulation.auto_simulate_next_step,
+          deck.owner_user_id
+        FROM simulations simulation
+        JOIN decks deck
+          ON deck.id = simulation.deck_id
+        WHERE simulation.id = $1
+          AND simulation.deck_id = $2
         FOR UPDATE
       `,
       [input.simulationId, deckId]
@@ -2209,6 +2281,7 @@ export async function createTurnLlmRun(
           model,
           openrouter_model_provider,
           reasoning_effort,
+          owner_user_id,
           runtime_stream_key
         )
         VALUES (
@@ -2217,7 +2290,8 @@ export async function createTurnLlmRun(
           $2,
           $3,
           $4,
-          $5
+          $5,
+          $6
         )
         RETURNING id, status, runtime_stream_key, created_at
       `,
@@ -2226,6 +2300,7 @@ export async function createTurnLlmRun(
         input.model,
         openrouterModelProvider,
         input.reasoningEffort,
+        simulation.owner_user_id,
         input.runtimeStreamKey,
       ]
     )
@@ -2267,14 +2342,18 @@ export async function createReportLlmRun(
     const simulationResult = await client.query<{
       id: string
       auto_simulate_next_step: boolean
+      owner_user_id: string | null
     }>(
       `
         SELECT
-          id,
-          auto_simulate_next_step
-        FROM simulations
-        WHERE id = $1
-          AND deck_id = $2
+          simulation.id,
+          simulation.auto_simulate_next_step,
+          deck.owner_user_id
+        FROM simulations simulation
+        JOIN decks deck
+          ON deck.id = simulation.deck_id
+        WHERE simulation.id = $1
+          AND simulation.deck_id = $2
         FOR UPDATE
       `,
       [input.simulationId, deckId]
@@ -2321,6 +2400,7 @@ export async function createReportLlmRun(
           model,
           openrouter_model_provider,
           reasoning_effort,
+          owner_user_id,
           runtime_stream_key,
           full_prompt,
           request_payload
@@ -2333,7 +2413,8 @@ export async function createReportLlmRun(
           $4,
           $5,
           $6,
-          $7::jsonb
+          $7,
+          $8::jsonb
         )
         RETURNING id, status, runtime_stream_key, created_at
       `,
@@ -2342,6 +2423,7 @@ export async function createReportLlmRun(
         input.model,
         openrouterModelProvider,
         input.reasoningEffort,
+        simulation.owner_user_id,
         input.runtimeStreamKey,
         input.fullPrompt,
         JSON.stringify(input.requestPayload),
@@ -2391,6 +2473,22 @@ export async function updateLlmRunRequestData({
   if (result.rowCount === 0) {
     throw new SimulationValidationError("LLM run not found.")
   }
+}
+
+export async function markLlmRunQueued(llmRunId: string) {
+  const result = await queryDatabase(
+    `
+      UPDATE llm_runs
+      SET queued_at = COALESCE(queued_at, now()),
+          updated_at = now()
+      WHERE id = $1
+        AND status = 'pending'
+      RETURNING id
+    `,
+    [llmRunId]
+  )
+
+  return (result.rowCount ?? 0) > 0
 }
 
 export async function createLlmRunMcpToken({
@@ -3062,6 +3160,155 @@ function asUnknownRecord(value: unknown): Record<string, unknown> {
     : EMPTY_RECORD
 }
 
+const LLM_RUN_QUEUE_ADVISORY_LOCK_ID = 836_417_052
+
+export async function claimNextQueuedLlmRun({
+  maxConcurrentRuns,
+  maxConcurrentRunsPerUser,
+}: {
+  maxConcurrentRuns: number
+  maxConcurrentRunsPerUser: number
+}): Promise<ClaimedQueuedLlmRun | null> {
+  return withDatabaseTransaction(async (client) => {
+    const lockResult = await client.query<{ acquired: boolean }>(
+      "SELECT pg_try_advisory_xact_lock($1) AS acquired",
+      [LLM_RUN_QUEUE_ADVISORY_LOCK_ID]
+    )
+
+    if (!lockResult.rows[0]?.acquired) {
+      return null
+    }
+
+    const result = await client.query<{
+      simulation_id: string
+      deck_id: string
+      llm_run_id: string
+      phase: Extract<LlmRunPhase, "opening_hand" | "turn" | "report">
+      provider: string
+      model: string
+      openrouter_model_provider: string | null
+      reasoning_effort: string | null
+      runtime_stream_key: string
+      attempt_number: number
+      created_at: Date
+      started_at: Date
+      full_prompt: string
+      turn_number: number | null
+    }>(
+      `
+        WITH linked_run AS (
+          SELECT
+            opening_run.simulation_id,
+            simulation.deck_id,
+            opening_run.llm_run_id,
+            opening_run.attempt_number,
+            NULL::integer AS turn_number
+          FROM simulation_opening_hand_llm_runs opening_run
+          JOIN simulations simulation
+            ON simulation.id = opening_run.simulation_id
+          UNION ALL
+          SELECT
+            turn_run.simulation_id,
+            simulation.deck_id,
+            turn_run.llm_run_id,
+            turn_run.attempt_number,
+            turn_run.turn_number
+          FROM simulation_turn_llm_runs turn_run
+          JOIN simulations simulation
+            ON simulation.id = turn_run.simulation_id
+          UNION ALL
+          SELECT
+            report_run.simulation_id,
+            simulation.deck_id,
+            report_run.llm_run_id,
+            report_run.attempt_number,
+            NULL::integer AS turn_number
+          FROM simulation_report_llm_runs report_run
+          JOIN simulations simulation
+            ON simulation.id = report_run.simulation_id
+        ),
+        candidate AS (
+          SELECT
+            llm_run.id,
+            linked_run.simulation_id,
+            linked_run.deck_id,
+            linked_run.attempt_number,
+            linked_run.turn_number
+          FROM llm_runs llm_run
+          JOIN linked_run
+            ON linked_run.llm_run_id = llm_run.id
+          WHERE llm_run.status = 'pending'
+            AND llm_run.queued_at IS NOT NULL
+            AND (
+              SELECT COUNT(*)::integer
+              FROM llm_runs active_run
+              WHERE active_run.status = 'streaming'
+            ) < $1
+            AND (
+              SELECT COUNT(*)::integer
+              FROM llm_runs active_run
+              WHERE active_run.status = 'streaming'
+                AND active_run.owner_user_id IS NOT DISTINCT FROM llm_run.owner_user_id
+            ) < $2
+          ORDER BY llm_run.queued_at ASC, llm_run.id ASC
+          LIMIT 1
+          FOR UPDATE OF llm_run SKIP LOCKED
+        )
+        UPDATE llm_runs llm_run
+        SET status = 'streaming',
+            started_at = COALESCE(started_at, now()),
+            updated_at = now()
+        FROM candidate
+        WHERE llm_run.id = candidate.id
+          AND llm_run.status = 'pending'
+        RETURNING
+          candidate.simulation_id,
+          candidate.deck_id,
+          llm_run.id AS llm_run_id,
+          llm_run.phase,
+          llm_run.provider,
+          llm_run.model,
+          llm_run.openrouter_model_provider,
+          llm_run.reasoning_effort,
+          llm_run.runtime_stream_key,
+          candidate.attempt_number,
+          llm_run.created_at,
+          llm_run.started_at,
+          llm_run.full_prompt,
+          candidate.turn_number
+      `,
+      [maxConcurrentRuns, maxConcurrentRunsPerUser]
+    )
+    const run = result.rows[0]
+
+    if (!run) {
+      return null
+    }
+
+    const claimedRun: ClaimedQueuedLlmRun = {
+      simulationId: run.simulation_id,
+      deckId: run.deck_id,
+      llmRunId: run.llm_run_id,
+      phase: run.phase,
+      provider: run.provider,
+      model: run.model,
+      openrouterModelProvider: run.openrouter_model_provider,
+      reasoningEffort: run.reasoning_effort,
+      runtimeStreamKey: run.runtime_stream_key,
+      attemptNumber: run.attempt_number,
+      createdAt: run.created_at.toISOString(),
+      startedAt: run.started_at.toISOString(),
+      fullPrompt: run.full_prompt,
+    }
+
+    if (run.turn_number !== null) {
+      claimedRun.turnNumber = run.turn_number
+    }
+
+    return claimedRun
+  })
+}
+
 export async function markLlmRunStreaming(llmRunId: string) {
   const result = await queryDatabase(
     `
@@ -3072,6 +3319,21 @@ export async function markLlmRunStreaming(llmRunId: string) {
       WHERE id = $1
         AND status = 'pending'
       RETURNING id
+    `,
+    [llmRunId]
+  )
+
+  return (result.rowCount ?? 0) > 0
+}
+
+export async function isLlmRunStreaming(llmRunId: string) {
+  const result = await queryDatabase(
+    `
+      SELECT 1
+      FROM llm_runs
+      WHERE id = $1
+        AND status = 'streaming'
+      LIMIT 1
     `,
     [llmRunId]
   )
@@ -3653,7 +3915,13 @@ export async function cancelStaleInFlightLlmRuns(): Promise<StaleInFlightLlmRunC
           ON turn_run.llm_run_id = llm_run.id
         LEFT JOIN simulation_report_llm_runs report_run
           ON report_run.llm_run_id = llm_run.id
-        WHERE llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+        WHERE (
+          llm_run.status IN ('streaming', 'cancel_requested')
+          OR (
+            llm_run.status = 'pending'
+            AND llm_run.queued_at IS NULL
+          )
+        )
         ORDER BY llm_run.created_at ASC, llm_run.id ASC
         FOR UPDATE OF llm_run
       `
@@ -3696,7 +3964,13 @@ export async function cancelStaleInFlightLlmRuns(): Promise<StaleInFlightLlmRunC
               failure_message = $2,
               updated_at = now()
           WHERE id = $1
-            AND status IN ('pending', 'streaming', 'cancel_requested')
+            AND (
+              status IN ('streaming', 'cancel_requested')
+              OR (
+                status = 'pending'
+                AND queued_at IS NULL
+              )
+            )
         `,
         [run.id, STALE_IN_FLIGHT_LLM_RUN_CANCELLATION_MESSAGE]
       )
@@ -3748,6 +4022,25 @@ export async function cancelStaleInFlightLlmRuns(): Promise<StaleInFlightLlmRunC
             failure_message = $1,
             updated_at = now()
         WHERE status = 'running'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM (
+              SELECT opening_run.llm_run_id
+              FROM simulation_opening_hand_llm_runs opening_run
+              WHERE opening_run.simulation_id = simulations.id
+              UNION ALL
+              SELECT turn_run.llm_run_id
+              FROM simulation_turn_llm_runs turn_run
+              WHERE turn_run.simulation_id = simulations.id
+              UNION ALL
+              SELECT report_run.llm_run_id
+              FROM simulation_report_llm_runs report_run
+              WHERE report_run.simulation_id = simulations.id
+            ) linked_run
+            JOIN llm_runs llm_run
+              ON llm_run.id = linked_run.llm_run_id
+            WHERE llm_run.status IN ('pending', 'streaming', 'cancel_requested')
+          )
         RETURNING id
       `,
       [STALE_RUNNING_SIMULATION_CANCELLATION_MESSAGE]

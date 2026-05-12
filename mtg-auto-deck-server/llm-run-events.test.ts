@@ -53,9 +53,11 @@ import {
 import {
   LlmConfigurationError,
   getEvaluationLlmRunConfig,
+  getLlmRunQueueConfig,
   getOpeningHandLlmRunConfig,
   getTurnSimulationLlmRunConfig,
 } from "./llm-config.js"
+import { canClaimQueuedLlmRunWithCapacity } from "./llm-run-queue.js"
 import {
   buildOpeningHandEvaluationInputText,
   buildTurnEvaluationInputText,
@@ -566,6 +568,85 @@ test("requires a positive shared max output token count", () => {
         OPENING_HAND_MCP_PUBLIC_URL: "https://example.com/mcp",
       }),
     /LLM_MAX_OUTPUT_TOKENS must be a positive integer\./
+  )
+})
+
+test("requires positive LLM run queue concurrency limits", () => {
+  assert.throws(
+    () => getLlmRunQueueConfig({}),
+    /LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS/
+  )
+  assert.throws(
+    () =>
+      getLlmRunQueueConfig({
+        LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS: "50",
+        LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS_PER_USER: "0",
+      }),
+    /LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS_PER_USER must be a positive integer\./
+  )
+
+  assert.deepEqual(
+    getLlmRunQueueConfig({
+      LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS: "50",
+      LLM_RUN_QUEUE_MAX_CONCURRENT_RUNS_PER_USER: "5",
+    }),
+    {
+      maxConcurrentRuns: 50,
+      maxConcurrentRunsPerUser: 5,
+    }
+  )
+})
+
+test("checks LLM run queue capacity before claiming", () => {
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: ["user-1", "user-2"],
+      candidateOwnerUserId: "user-1",
+      candidateQueuedAt: "2026-01-01T00:00:00.000Z",
+      maxConcurrentRuns: 2,
+      maxConcurrentRunsPerUser: 5,
+    }),
+    false
+  )
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: ["user-1", "user-1"],
+      candidateOwnerUserId: "user-1",
+      candidateQueuedAt: "2026-01-01T00:00:00.000Z",
+      maxConcurrentRuns: 50,
+      maxConcurrentRunsPerUser: 2,
+    }),
+    false
+  )
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: [null, null],
+      candidateOwnerUserId: null,
+      candidateQueuedAt: "2026-01-01T00:00:00.000Z",
+      maxConcurrentRuns: 50,
+      maxConcurrentRunsPerUser: 2,
+    }),
+    false
+  )
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: ["user-1", "user-1"],
+      candidateOwnerUserId: "user-2",
+      candidateQueuedAt: "2026-01-01T00:00:00.000Z",
+      maxConcurrentRuns: 50,
+      maxConcurrentRunsPerUser: 2,
+    }),
+    true
+  )
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: [],
+      candidateOwnerUserId: "user-1",
+      candidateQueuedAt: null,
+      maxConcurrentRuns: 50,
+      maxConcurrentRunsPerUser: 5,
+    }),
+    false
   )
 })
 
