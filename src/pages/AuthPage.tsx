@@ -155,9 +155,10 @@ export function AuthPage({
           if (isEmailNotVerifiedError(result.error)) {
             setVerificationEmail(email)
             setMode("verify-email")
-            await sendVerificationCode(
+            await sendVerificationCodeIfNeeded(
               email,
-              "A verification code has been sent to your email."
+              "A verification code has been sent to your email.",
+              "Enter the verification code we emailed you, or resend the code."
             )
             return
           }
@@ -180,9 +181,10 @@ export function AuthPage({
 
           setVerificationEmail(emailToVerify)
           setMode("verify-email")
-          await sendVerificationCode(
+          await sendVerificationCodeIfNeeded(
             emailToVerify,
-            "A verification code has been sent to your email."
+            "A verification code has been sent to your email.",
+            "Enter the verification code we emailed you."
           )
         }
 
@@ -361,6 +363,28 @@ export function AuthPage({
       setError("Verification code could not be sent.")
       return false
     }
+  }
+
+  async function sendVerificationCodeIfNeeded(
+    email: string,
+    sentMessage: string,
+    existingCodeMessage: string
+  ) {
+    const codeStatus = await getEmailVerificationCodeStatus()
+
+    if (codeStatus?.hasValidCode) {
+      setNotice(existingCodeMessage)
+      return true
+    }
+
+    if (!codeStatus) {
+      setNotice(
+        "Enter the verification code we emailed you, or resend the code."
+      )
+      return false
+    }
+
+    return sendVerificationCode(email, sentMessage)
   }
 
   const isSignIn = mode === "sign-in"
@@ -597,6 +621,32 @@ async function createAccount({
 
   return {
     error: await getApiErrorMessage(response, "Account could not be created."),
+  }
+}
+
+async function getEmailVerificationCodeStatus() {
+  try {
+    const response = await apiFetch(
+      `${API_BASE_URL}/api/app-auth/email-verification-code`
+    )
+
+    if (!response.ok) {
+      return null
+    }
+
+    const body = (await response.json()) as unknown
+
+    if (!body || typeof body !== "object") {
+      return null
+    }
+
+    const record = body as Record<string, unknown>
+
+    return {
+      hasValidCode: record.hasValidCode === true,
+    }
+  } catch {
+    return null
   }
 }
 

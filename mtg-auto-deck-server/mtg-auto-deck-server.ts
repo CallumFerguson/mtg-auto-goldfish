@@ -13,6 +13,7 @@ import { z } from "zod/v4"
 import {
   auth,
   ensureAuthSchema,
+  hasValidEmailVerificationOtp,
   isPasswordResetTokenValid,
 } from "./auth.js"
 import {
@@ -232,6 +233,8 @@ const TURN_SIMULATION_MCP_PATH = "/mcp/turn-simulation"
 const SIMULATION_MCP_PATH = "/mcp/simulation"
 const AUTH_PATH_PREFIX = "/api/auth"
 const APP_SIGN_UP_PATH = "/api/app-auth/sign-up"
+const APP_EMAIL_VERIFICATION_CODE_PATH =
+  "/api/app-auth/email-verification-code"
 const APP_PASSWORD_RESET_TOKEN_PATH = "/api/app-auth/password-reset-token/:token"
 const OPENING_HAND_MCP_SERVER_LABEL = "opening_hand"
 const TURN_SIMULATION_MCP_SERVER_LABEL = "turn_simulation"
@@ -4787,6 +4790,37 @@ async function main() {
       })
     }
   })
+
+  app.get(
+    APP_EMAIL_VERIFICATION_CODE_PATH,
+    async (req: Request, res: Response) => {
+      try {
+        const session = await auth.api.getSession({
+          headers: fromNodeHeaders(req.headers),
+        })
+
+        if (!session) {
+          res.status(401).json({
+            error: "Authentication required.",
+          })
+          return
+        }
+
+        res.status(200).json({
+          email: session.user.email,
+          emailVerified: session.user.emailVerified,
+          hasValidCode: session.user.emailVerified
+            ? false
+            : await hasValidEmailVerificationOtp(session.user.email),
+        })
+      } catch (error) {
+        console.error("Failed to check email verification code:", error)
+        res.status(500).json({
+          error: "Email verification code could not be checked.",
+        })
+      }
+    }
+  )
 
   app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({

@@ -101,6 +101,21 @@ export async function isPasswordResetTokenValid(token: string) {
   return Boolean(verification && verification.expiresAt > new Date())
 }
 
+export async function hasValidEmailVerificationOtp(email: string) {
+  const normalizedEmail = email.trim().toLowerCase()
+
+  if (!normalizedEmail) {
+    return false
+  }
+
+  const context = await auth.$context
+  const verification = await context.internalAdapter.findVerificationValue(
+    `email-verification-otp-${normalizedEmail}`
+  )
+
+  return Boolean(verification && verification.expiresAt > new Date())
+}
+
 type PasswordChangedNotificationUser = {
   email: string
   name?: string | null
