@@ -379,7 +379,7 @@ let llmRunQueueDrainTimer: NodeJS.Timeout | null = null
 let llmRunQueueDrainPromise: Promise<void> | null = null
 
 function createRuntimeCompletion() {
-  let resolveCompletion: () => void = () => { }
+  let resolveCompletion: () => void = () => {}
   const completionPromise = new Promise<void>((resolve) => {
     resolveCompletion = resolve
   })
@@ -391,7 +391,12 @@ function createRuntimeCompletion() {
 }
 
 function isTerminalSimulationStatus(status: SimulationSummary["status"]) {
-  return status === "completed" || status === "failed" || status === "cancelled"
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "unmanaged"
+  )
 }
 
 function shouldStreamSimulationResultsChunk(chunk: LlmRunChunkInput) {

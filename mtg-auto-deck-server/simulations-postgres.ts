@@ -8,12 +8,19 @@ type DatabaseTransactionClient = Parameters<
 
 export type SimulationStatus =
   | "pending"
+  | "unmanaged"
   | "running"
   | "completed"
   | "failed"
   | "cancelled"
 
 export type SimulationCreatedVia = "app" | "external_mcp"
+
+export function getInitialSimulationStatus(
+  createdVia: SimulationCreatedVia
+): SimulationStatus {
+  return createdVia === "external_mcp" ? "unmanaged" : "pending"
+}
 
 export type LlmRunStatus =
   | "pending"
@@ -694,6 +701,7 @@ export async function ensureSimulationsSchema() {
   await queryDatabase("CREATE EXTENSION IF NOT EXISTS pgcrypto")
   await createEnumType("simulation_status", [
     "pending",
+    "unmanaged",
     "running",
     "completed",
     "failed",
@@ -760,6 +768,13 @@ export async function ensureSimulationsSchema() {
   await queryDatabase(`
     ALTER TABLE simulations
     ADD COLUMN IF NOT EXISTS created_via simulation_created_via NOT NULL DEFAULT 'app'
+  `)
+  await queryDatabase(`
+    UPDATE simulations
+    SET status = 'unmanaged',
+        updated_at = now()
+    WHERE created_via = 'external_mcp'
+      AND status = 'pending'
   `)
   await queryDatabase(`
     CREATE TABLE IF NOT EXISTS llm_runs (
@@ -1362,6 +1377,7 @@ export async function createSimulation(
     seed,
     input.startingHandId
   )
+  const initialStatus = getInitialSimulationStatus(createdVia)
 
   const result = await queryDatabase<SimulationSummaryRow>(
     `
@@ -1374,9 +1390,10 @@ export async function createSimulation(
         auto_generate_report,
         starting_hand_id,
         library,
-        has_drawn_starting_hand
+        has_drawn_starting_hand,
+        status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
       RETURNING
         id,
         deck_id,
@@ -1402,6 +1419,7 @@ export async function createSimulation(
       input.startingHandId,
       JSON.stringify(shuffledLibrary.library),
       input.startingHandId !== null,
+      initialStatus,
     ]
   )
 

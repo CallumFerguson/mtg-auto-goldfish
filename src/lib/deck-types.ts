@@ -29,6 +29,7 @@ export type DeckResponse = {
 
 export type SimulationStatus =
   | "pending"
+  | "unmanaged"
   | "running"
   | "completed"
   | "failed"

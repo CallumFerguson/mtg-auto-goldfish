@@ -30,6 +30,7 @@ import {
   buildAppendLlmRunChunksQuery,
   canApplyLateLlmRunTerminalUpdate,
   extractLlmRunChunkCardMentionRequests,
+  getInitialSimulationStatus,
   getOpeningHandCompletionDecision,
   getSimulationCreationDecision,
   getTurnCompletionDecision,
@@ -1652,6 +1653,11 @@ test("startup stale running simulation cancellation message is explicit", () => 
     STALE_RUNNING_SIMULATION_CANCELLATION_MESSAGE,
     "Simulation was cancelled because the server restarted before it finished."
   )
+})
+
+test("external MCP simulations use unmanaged initial status", () => {
+  assert.equal(getInitialSimulationStatus("app"), "pending")
+  assert.equal(getInitialSimulationStatus("external_mcp"), "unmanaged")
 })
 
 test("new simulations choose the correct initial step", () => {
