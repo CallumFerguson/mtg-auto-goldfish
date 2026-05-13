@@ -1,5 +1,9 @@
 import { queryDatabase, withDatabaseTransaction } from "./db.js"
-import { estimateLlmTokenPriceCents } from "./openai-pricing.js"
+import {
+  estimatePresetTokenCostUsd,
+  formatPreferredLlmRunCostAsCents,
+  getOpenRouterReportedCostUsd,
+} from "./llm-pricing.js"
 import { normalizeScryfallCardNameForExactMatch } from "./scryfall-postgres.js"
 
 type DatabaseTransactionClient = Parameters<
@@ -820,6 +824,8 @@ export async function ensureSimulationsSchema() {
       request_payload jsonb NOT NULL DEFAULT '{}',
       response_metadata jsonb NOT NULL DEFAULT '{}',
       usage jsonb NOT NULL DEFAULT '{}',
+      estimated_cost_usd numeric,
+      openrouter_reported_cost_usd numeric,
 
       started_at timestamptz,
       completed_at timestamptz,
@@ -831,6 +837,26 @@ export async function ensureSimulationsSchema() {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    ADD COLUMN IF NOT EXISTS estimated_cost_usd numeric
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    ADD COLUMN IF NOT EXISTS openrouter_reported_cost_usd numeric
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    DROP CONSTRAINT IF EXISTS llm_runs_costs_nonnegative_check
+  `)
+  await queryDatabase(`
+    ALTER TABLE llm_runs
+    ADD CONSTRAINT llm_runs_costs_nonnegative_check
+      CHECK (
+        (estimated_cost_usd IS NULL OR estimated_cost_usd >= 0)
+        AND (openrouter_reported_cost_usd IS NULL OR openrouter_reported_cost_usd >= 0)
+      )
   `)
   await queryDatabase(`
     ALTER TABLE llm_runs
@@ -3522,6 +3548,10 @@ export async function completeOpeningHandLlmRun({
       simulation_id: string
       deck_id: string
       llm_run_status: LlmRunStatus
+      provider: string
+      input_token_cost_usd_per_million: string | number | null
+      cached_input_token_cost_usd_per_million: string | number | null
+      output_token_cost_usd_per_million: string | number | null
       library: unknown
       random_state: string
       mulligan_count: number
@@ -3534,6 +3564,10 @@ export async function completeOpeningHandLlmRun({
           simulation.id AS simulation_id,
           simulation.deck_id,
           llm_run.status AS llm_run_status,
+          llm_run.provider,
+          preset.input_token_cost_usd_per_million,
+          preset.cached_input_token_cost_usd_per_million,
+          preset.output_token_cost_usd_per_million,
           simulation.library,
           simulation.random_state,
           simulation.mulligan_count,
@@ -3543,6 +3577,8 @@ export async function completeOpeningHandLlmRun({
         FROM simulation_opening_hand_llm_runs opening_run
         JOIN llm_runs llm_run
           ON llm_run.id = opening_run.llm_run_id
+        LEFT JOIN llm_model_presets preset
+          ON preset.id = llm_run.llm_model_preset_id
         JOIN simulations simulation
           ON simulation.id = opening_run.simulation_id
         LEFT JOIN (
@@ -3563,6 +3599,7 @@ export async function completeOpeningHandLlmRun({
     }
 
     const snapshot = snapshotResult.rows[0]
+    const costValues = getCompletedLlmRunCostValues(snapshot, usage)
 
     if (!canApplyLateLlmRunTerminalUpdate(snapshot.llm_run_status)) {
       throw new SimulationValidationError("LLM run is no longer active.")
@@ -3600,12 +3637,20 @@ export async function completeOpeningHandLlmRun({
         SET status = 'completed',
             response_metadata = $2::jsonb,
             usage = $3::jsonb,
+            estimated_cost_usd = $4,
+            openrouter_reported_cost_usd = $5,
             completed_at = now(),
             updated_at = now()
         WHERE id = $1
           AND status IN ('pending', 'streaming')
       `,
-      [llmRunId, JSON.stringify(responseMetadata), JSON.stringify(usage)]
+      [
+        llmRunId,
+        JSON.stringify(responseMetadata),
+        JSON.stringify(usage),
+        costValues.estimatedCostUsd,
+        costValues.openrouterReportedCostUsd,
+      ]
     )
 
     const decision = getOpeningHandCompletionDecision({
@@ -3644,6 +3689,10 @@ export async function completeTurnLlmRun({
       simulation_id: string
       deck_id: string
       llm_run_status: LlmRunStatus
+      provider: string
+      input_token_cost_usd_per_million: string | number | null
+      cached_input_token_cost_usd_per_million: string | number | null
+      output_token_cost_usd_per_million: string | number | null
       turn_number: number
       library: unknown
       random_state: string
@@ -3656,6 +3705,10 @@ export async function completeTurnLlmRun({
           simulation.id AS simulation_id,
           simulation.deck_id,
           llm_run.status AS llm_run_status,
+          llm_run.provider,
+          preset.input_token_cost_usd_per_million,
+          preset.cached_input_token_cost_usd_per_million,
+          preset.output_token_cost_usd_per_million,
           turn_run.turn_number,
           simulation.library,
           simulation.random_state,
@@ -3665,6 +3718,8 @@ export async function completeTurnLlmRun({
         FROM simulation_turn_llm_runs turn_run
         JOIN llm_runs llm_run
           ON llm_run.id = turn_run.llm_run_id
+        LEFT JOIN llm_model_presets preset
+          ON preset.id = llm_run.llm_model_preset_id
         JOIN simulations simulation
           ON simulation.id = turn_run.simulation_id
         WHERE turn_run.llm_run_id = $1
@@ -3678,6 +3733,7 @@ export async function completeTurnLlmRun({
     }
 
     const snapshot = snapshotResult.rows[0]
+    const costValues = getCompletedLlmRunCostValues(snapshot, usage)
 
     if (!canApplyLateLlmRunTerminalUpdate(snapshot.llm_run_status)) {
       throw new SimulationValidationError("LLM run is no longer active.")
@@ -3707,12 +3763,20 @@ export async function completeTurnLlmRun({
         SET status = 'completed',
             response_metadata = $2::jsonb,
             usage = $3::jsonb,
+            estimated_cost_usd = $4,
+            openrouter_reported_cost_usd = $5,
             completed_at = now(),
             updated_at = now()
         WHERE id = $1
           AND status IN ('pending', 'streaming')
       `,
-      [llmRunId, JSON.stringify(responseMetadata), JSON.stringify(usage)]
+      [
+        llmRunId,
+        JSON.stringify(responseMetadata),
+        JSON.stringify(usage),
+        costValues.estimatedCostUsd,
+        costValues.openrouterReportedCostUsd,
+      ]
     )
 
     const decision = getTurnCompletionDecision({
@@ -3756,12 +3820,23 @@ export async function completeReportLlmRun({
   await withDatabaseTransaction(async (client) => {
     const snapshotResult = await client.query<{
       llm_run_status: LlmRunStatus
+      provider: string
+      input_token_cost_usd_per_million: string | number | null
+      cached_input_token_cost_usd_per_million: string | number | null
+      output_token_cost_usd_per_million: string | number | null
     }>(
       `
-        SELECT llm_run.status AS llm_run_status
+        SELECT
+          llm_run.status AS llm_run_status,
+          llm_run.provider,
+          preset.input_token_cost_usd_per_million,
+          preset.cached_input_token_cost_usd_per_million,
+          preset.output_token_cost_usd_per_million
         FROM simulation_report_llm_runs report_run
         JOIN llm_runs llm_run
           ON llm_run.id = report_run.llm_run_id
+        LEFT JOIN llm_model_presets preset
+          ON preset.id = llm_run.llm_model_preset_id
         WHERE report_run.llm_run_id = $1
         FOR UPDATE OF llm_run
       `,
@@ -3778,6 +3853,11 @@ export async function completeReportLlmRun({
       throw new SimulationValidationError("LLM run is no longer active.")
     }
 
+    const costValues = getCompletedLlmRunCostValues(
+      snapshotResult.rows[0],
+      usage
+    )
+
     await client.query(
       `
         UPDATE simulation_report_llm_runs
@@ -3793,14 +3873,51 @@ export async function completeReportLlmRun({
         SET status = 'completed',
             response_metadata = $2::jsonb,
             usage = $3::jsonb,
+            estimated_cost_usd = $4,
+            openrouter_reported_cost_usd = $5,
             completed_at = now(),
             updated_at = now()
         WHERE id = $1
           AND status IN ('pending', 'streaming')
       `,
-      [llmRunId, JSON.stringify(responseMetadata), JSON.stringify(usage)]
+      [
+        llmRunId,
+        JSON.stringify(responseMetadata),
+        JSON.stringify(usage),
+        costValues.estimatedCostUsd,
+        costValues.openrouterReportedCostUsd,
+      ]
     )
   })
+}
+
+function getCompletedLlmRunCostValues(
+  run: {
+    provider: string
+    input_token_cost_usd_per_million: string | number | null
+    cached_input_token_cost_usd_per_million: string | number | null
+    output_token_cost_usd_per_million: string | number | null
+  },
+  usage: unknown
+) {
+  return {
+    estimatedCostUsd: estimatePresetTokenCostUsd({
+      tokenCosts: {
+        inputDollarsPerMillion: toOptionalNumber(
+          run.input_token_cost_usd_per_million
+        ),
+        cachedInputDollarsPerMillion: toOptionalNumber(
+          run.cached_input_token_cost_usd_per_million
+        ),
+        outputDollarsPerMillion: toOptionalNumber(
+          run.output_token_cost_usd_per_million
+        ),
+      },
+      usage,
+    }),
+    openrouterReportedCostUsd:
+      run.provider === "openrouter" ? getOpenRouterReportedCostUsd(usage) : null,
+  }
 }
 
 export async function recordOpenRouterLlmRunGeneration({
@@ -5362,11 +5479,9 @@ type SimulationDebugLlmRunRow = {
   phase: LlmRunPhase
   provider: string
   model: string
-  usage: unknown
+  estimated_cost_usd: string | number | null
+  openrouter_reported_cost_usd: string | number | null
   reasoning_effort: string | null
-  input_token_cost_usd_per_million: string | number | null
-  cached_input_token_cost_usd_per_million: string | number | null
-  output_token_cost_usd_per_million: string | number | null
   status: LlmRunStatus
   runtime_stream_key: string | null
   created_at: Date
@@ -5451,11 +5566,9 @@ async function getSimulationDebugLlmRuns({
         llm_run.phase,
         COALESCE(preset.provider, llm_run.provider) AS provider,
         COALESCE(preset.model, llm_run.model) AS model,
-        llm_run.usage,
+        llm_run.estimated_cost_usd,
+        llm_run.openrouter_reported_cost_usd,
         COALESCE(preset.reasoning_effort, llm_run.reasoning_effort) AS reasoning_effort,
-        preset.input_token_cost_usd_per_million,
-        preset.cached_input_token_cost_usd_per_million,
-        preset.output_token_cost_usd_per_million,
         llm_run.status,
         llm_run.runtime_stream_key,
         llm_run.created_at,
@@ -5503,23 +5616,12 @@ async function getSimulationDebugLlmRuns({
         phase: row.phase,
         provider: row.provider,
         model: row.model,
-        estimatedPriceCents:
-          estimateLlmTokenPriceCents({
-            model: row.model,
-            provider: row.provider,
-            tokenCosts: {
-              inputDollarsPerMillion: toOptionalNumber(
-                row.input_token_cost_usd_per_million
-              ),
-              cachedInputDollarsPerMillion: toOptionalNumber(
-                row.cached_input_token_cost_usd_per_million
-              ),
-              outputDollarsPerMillion: toOptionalNumber(
-                row.output_token_cost_usd_per_million
-              ),
-            },
-            usage: row.usage,
-          })?.formattedCents ?? null,
+        estimatedPriceCents: formatPreferredLlmRunCostAsCents({
+          estimatedCostUsd: toOptionalNumber(row.estimated_cost_usd),
+          openrouterReportedCostUsd: toOptionalNumber(
+            row.openrouter_reported_cost_usd
+          ),
+        }),
         reasoningEffort: row.reasoning_effort || null,
         status: row.status,
         runtimeStreamKey: row.runtime_stream_key,

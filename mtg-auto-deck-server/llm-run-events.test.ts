@@ -48,9 +48,11 @@ import {
 } from "./llm-runtime-cancellation.js"
 import {
   aggregateOpenRouterUsage,
-  estimateLlmTokenPriceCents,
-  estimateOpenAiTokenPriceCents,
-} from "./openai-pricing.js"
+  estimatePresetTokenCostUsd,
+  formatPreferredLlmRunCostAsCents,
+  formatUsdCostAsCents,
+  getOpenRouterReportedCostUsd,
+} from "./llm-pricing.js"
 import {
   getEvaluationLlmRunConfig,
   getLlmRunQueueConfig,
@@ -407,61 +409,8 @@ test("extracts card mentions from opening-hand final parsed output", () => {
   )
 })
 
-test("estimates supported OpenAI model price in cents", () => {
-  const estimate = estimateOpenAiTokenPriceCents({
-    model: "gpt-5.4-mini",
-    usage: {
-      input_tokens: 100_000,
-      input_tokens_details: {
-        cached_tokens: 20_000,
-      },
-      output_tokens: 10_000,
-    },
-  })
-
-  assert.equal(estimate?.formattedCents, "10.7")
-})
-
-test("formats tiny OpenAI model price estimates below one tenth of a cent", () => {
-  const estimate = estimateOpenAiTokenPriceCents({
-    model: "gpt-5.4-nano",
-    usage: {
-      input_tokens: 100,
-      output_tokens: 100,
-    },
-  })
-
-  assert.equal(estimate?.formattedCents, "<0.1")
-})
-
-test("does not estimate unsupported OpenAI model prices", () => {
-  const estimate = estimateOpenAiTokenPriceCents({
-    model: "gpt-5",
-    usage: {
-      input_tokens: 100_000,
-      output_tokens: 10_000,
-    },
-  })
-
-  assert.equal(estimate, null)
-})
-
-test("uses OpenRouter reported usage cost when estimating LLM price", () => {
-  const estimate = estimateLlmTokenPriceCents({
-    provider: "openrouter",
-    model: "openai/gpt-5-nano",
-    usage: {
-      cost: 0.00125,
-    },
-  })
-
-  assert.equal(estimate?.formattedCents, "0.1")
-})
-
-test("uses preset token costs before provider fallback pricing", () => {
-  const estimate = estimateLlmTokenPriceCents({
-    provider: "openrouter",
-    model: "openai/gpt-5-nano",
+test("estimates preset token cost in unrounded USD", () => {
+  const costUsd = estimatePresetTokenCostUsd({
     tokenCosts: {
       inputDollarsPerMillion: 1,
       cachedInputDollarsPerMillion: 0.1,
@@ -477,20 +426,69 @@ test("uses preset token costs before provider fallback pricing", () => {
     },
   })
 
-  assert.equal(estimate?.formattedCents, "2.1")
+  assert.equal(costUsd, 0.02064)
 })
 
-test("does not estimate local llama.cpp inference prices", () => {
-  const estimate = estimateLlmTokenPriceCents({
-    provider: "llamacpp",
-    model: "local-model",
+test("requires complete preset token costs for estimates", () => {
+  const costUsd = estimatePresetTokenCostUsd({
+    tokenCosts: {
+      inputDollarsPerMillion: 1,
+      cachedInputDollarsPerMillion: null,
+      outputDollarsPerMillion: 10,
+    },
+    usage: {
+      inputTokens: 1000,
+      outputTokens: 2000,
+    },
+  })
+
+  assert.equal(costUsd, null)
+})
+
+test("handles token usage aliases and clamps cached input tokens", () => {
+  const costUsd = estimatePresetTokenCostUsd({
+    tokenCosts: {
+      inputDollarsPerMillion: 2,
+      cachedInputDollarsPerMillion: 1,
+      outputDollarsPerMillion: 4,
+    },
     usage: {
       prompt_tokens: 100,
+      prompt_tokens_details: {
+        cached_tokens: 150,
+      },
       completion_tokens: 50,
     },
   })
 
-  assert.equal(estimate, null)
+  assert.equal(costUsd?.toFixed(4), "0.0003")
+})
+
+test("extracts OpenRouter reported cost separately from preset estimates", () => {
+  const usage = {
+    inputTokens: 1000,
+    inputTokensDetails: {
+      cachedTokens: 400,
+    },
+    outputTokens: 2000,
+    cost: 0.00125,
+  }
+  const estimatedCostUsd = estimatePresetTokenCostUsd({
+    tokenCosts: {
+      inputDollarsPerMillion: 1,
+      cachedInputDollarsPerMillion: 0.1,
+      outputDollarsPerMillion: 10,
+    },
+    usage,
+  })
+
+  assert.equal(estimatedCostUsd, 0.02064)
+  assert.equal(getOpenRouterReportedCostUsd(usage), 0.00125)
+})
+
+test("formats stored USD costs as cents", () => {
+  assert.equal(formatUsdCostAsCents(0.00125), "0.1")
+  assert.equal(formatUsdCostAsCents(0.0001), "<0.1")
 })
 
 test("aggregates OpenRouter usage across agent turns", () => {
@@ -549,12 +547,38 @@ test("aggregates OpenRouter usage across agent turns", () => {
     },
   })
   assert.equal(
-    estimateLlmTokenPriceCents({
-      provider: "openrouter",
-      model: "openai/gpt-5-nano",
-      usage,
-    })?.formattedCents,
+    formatUsdCostAsCents(getOpenRouterReportedCostUsd(usage)),
     "37.5"
+  )
+})
+
+test("prefers OpenRouter reported cost over preset estimate for display", () => {
+  assert.equal(
+    formatPreferredLlmRunCostAsCents({
+      estimatedCostUsd: 0.05,
+      openrouterReportedCostUsd: 0.00125,
+    }),
+    "0.1"
+  )
+})
+
+test("falls back to estimated cost for display when OpenRouter cost is absent", () => {
+  assert.equal(
+    formatPreferredLlmRunCostAsCents({
+      estimatedCostUsd: 0.02064,
+      openrouterReportedCostUsd: null,
+    }),
+    "2.1"
+  )
+})
+
+test("returns null display price when stored costs are absent", () => {
+  assert.equal(
+    formatPreferredLlmRunCostAsCents({
+      estimatedCostUsd: null,
+      openrouterReportedCostUsd: null,
+    }),
+    null
   )
 })
 

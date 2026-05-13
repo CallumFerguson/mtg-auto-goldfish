@@ -219,8 +219,8 @@ import {
 } from "./simulation-results-stream.js"
 import {
   aggregateOpenRouterUsage,
-  estimateLlmTokenPriceCents,
-} from "./openai-pricing.js"
+  getOpenRouterReportedCostUsd,
+} from "./llm-pricing.js"
 import {
   buildOpeningHandEvaluationInputText,
   buildOpeningHandEvaluationPrompt,
@@ -868,13 +868,15 @@ function logLlmApiCallFinished({
   usage: unknown
 }) {
   const tokenUsage = getLlmTokenUsageSummary(usage)
-  const priceEstimate = estimateLlmTokenPriceCents({ model, provider, usage })
-  const priceEstimateText = priceEstimate
-    ? `${priceEstimate.formattedCents}c`
-    : "unsupported"
+  const openrouterReportedCostUsd =
+    provider === "openrouter" ? getOpenRouterReportedCostUsd(usage) : null
+  const openrouterReportedCostText =
+    openrouterReportedCostUsd === null
+      ? ""
+      : ` openrouterReportedCostUsd=${openrouterReportedCostUsd}`
 
   console.log(
-    `${formatProviderName(provider)} API call finished: phase=${phase} llmRunId=${llmRunId} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} cachedInputTokens=${tokenUsage.cachedInput} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output} estimatedPrice=${priceEstimateText}`
+    `${formatProviderName(provider)} API call finished: phase=${phase} llmRunId=${llmRunId} model=${model} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} cachedInputTokens=${tokenUsage.cachedInput} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output}${openrouterReportedCostText}`
   )
 }
 

@@ -1,79 +1,26 @@
-type OpenAiTokenPrice = {
-  inputDollarsPerMillion: number
-  cachedInputDollarsPerMillion: number | null
-  outputDollarsPerMillion: number
-}
-
 export type TokenPrice = {
   inputDollarsPerMillion: number | null
   cachedInputDollarsPerMillion: number | null
   outputDollarsPerMillion: number | null
 }
 
-export type OpenAiPriceEstimate = {
-  cents: number
-  formattedCents: string
-}
-
-const OPENAI_TOKEN_PRICES: Record<string, OpenAiTokenPrice> = {
-  "gpt-5.5": {
-    inputDollarsPerMillion: 5,
-    cachedInputDollarsPerMillion: 0.5,
-    outputDollarsPerMillion: 30,
-  },
-  "gpt-5.5-pro": {
-    inputDollarsPerMillion: 30,
-    cachedInputDollarsPerMillion: null,
-    outputDollarsPerMillion: 180,
-  },
-  "gpt-5.4": {
-    inputDollarsPerMillion: 2.5,
-    cachedInputDollarsPerMillion: 0.25,
-    outputDollarsPerMillion: 15,
-  },
-  "gpt-5.4-mini": {
-    inputDollarsPerMillion: 0.75,
-    cachedInputDollarsPerMillion: 0.075,
-    outputDollarsPerMillion: 4.5,
-  },
-  "gpt-5.4-nano": {
-    inputDollarsPerMillion: 0.2,
-    cachedInputDollarsPerMillion: 0.02,
-    outputDollarsPerMillion: 1.25,
-  },
-  "gpt-5.4-pro": {
-    inputDollarsPerMillion: 30,
-    cachedInputDollarsPerMillion: null,
-    outputDollarsPerMillion: 180,
-  },
-}
-
-export function estimateOpenAiTokenPriceCents({
-  model,
+export function estimatePresetTokenCostUsd({
+  tokenCosts,
   usage,
 }: {
-  model: string
+  tokenCosts: TokenPrice
   usage: unknown
-}): OpenAiPriceEstimate | null {
-  const normalizedModel = normalizeSupportedOpenAiModel(model)
+}) {
+  const inputRate = getCostValue(tokenCosts.inputDollarsPerMillion)
+  const cachedInputRate = getCostValue(
+    tokenCosts.cachedInputDollarsPerMillion
+  )
+  const outputRate = getCostValue(tokenCosts.outputDollarsPerMillion)
 
-  if (!normalizedModel) {
+  if (inputRate === null || cachedInputRate === null || outputRate === null) {
     return null
   }
 
-  return estimateTokenPriceCents({
-    price: OPENAI_TOKEN_PRICES[normalizedModel],
-    usage,
-  })
-}
-
-export function estimateTokenPriceCents({
-  price,
-  usage,
-}: {
-  price: OpenAiTokenPrice
-  usage: unknown
-}): OpenAiPriceEstimate | null {
   const usageRecord = asRecord(usage)
   const inputTokens = getNumberProperty(
     usageRecord,
@@ -95,68 +42,59 @@ export function estimateTokenPriceCents({
   }
 
   const inputDetails = asRecord(
-    usageRecord.input_tokens_details ?? usageRecord.inputTokensDetails
+    getFirstDefinedProperty(usageRecord, [
+      "input_tokens_details",
+      "inputTokensDetails",
+      "prompt_tokens_details",
+      "promptTokensDetails",
+    ])
   )
   const cachedInputTokens = Math.min(
     getNumberProperty(inputDetails, "cached_tokens", "cachedTokens") ?? 0,
     inputTokens
   )
   const standardInputTokens = inputTokens - cachedInputTokens
-  const cachedInputRate =
-    price.cachedInputDollarsPerMillion ?? price.inputDollarsPerMillion
-  const dollars =
-    (standardInputTokens * price.inputDollarsPerMillion) / 1_000_000 +
-    (cachedInputTokens * cachedInputRate) / 1_000_000 +
-    (outputTokens * price.outputDollarsPerMillion) / 1_000_000
-  const cents = dollars * 100
 
-  return {
-    cents,
-    formattedCents: formatPriceEstimateCents(cents),
-  }
+  return (
+    (standardInputTokens * inputRate) / 1_000_000 +
+    (cachedInputTokens * cachedInputRate) / 1_000_000 +
+    (outputTokens * outputRate) / 1_000_000
+  )
 }
 
-export function estimateLlmTokenPriceCents({
-  model,
-  provider,
-  tokenCosts,
-  usage,
-}: {
-  model: string
-  provider: string
-  tokenCosts?: TokenPrice
-  usage: unknown
-}): OpenAiPriceEstimate | null {
+export function getOpenRouterReportedCostUsd(usage: unknown) {
+  const costUsd = getNumberProperty(asRecord(usage), "cost")
+
+  return costUsd !== null && costUsd >= 0 ? costUsd : null
+}
+
+export function formatUsdCostAsCents(costUsd: number | null | undefined) {
   if (
-    tokenCosts?.inputDollarsPerMillion !== null &&
-    tokenCosts?.inputDollarsPerMillion !== undefined &&
-    tokenCosts.outputDollarsPerMillion !== null &&
-    tokenCosts.outputDollarsPerMillion !== undefined
+    costUsd === null ||
+    costUsd === undefined ||
+    !Number.isFinite(costUsd) ||
+    costUsd < 0
   ) {
-    const presetEstimate = estimateTokenPriceCents({
-      price: {
-        inputDollarsPerMillion: tokenCosts.inputDollarsPerMillion,
-        cachedInputDollarsPerMillion:
-          tokenCosts.cachedInputDollarsPerMillion,
-        outputDollarsPerMillion: tokenCosts.outputDollarsPerMillion,
-      },
-      usage,
-    })
-
-    if (presetEstimate !== null) {
-      return presetEstimate
-    }
+    return null
   }
 
-  if (provider === "openai") {
-    return estimateOpenAiTokenPriceCents({ model, usage })
+  const cents = costUsd * 100
+
+  if (cents < 0.1) {
+    return "<0.1"
   }
 
-  if (provider === "openrouter") {
-    return estimateOpenRouterUsageCostCents(usage)
-  }
+  return cents.toFixed(1)
+}
 
-  return null
+export function formatPreferredLlmRunCostAsCents({
+  estimatedCostUsd,
+  openrouterReportedCostUsd,
+}: {
+  estimatedCostUsd: number | null
+  openrouterReportedCostUsd: number | null
+}) {
+  return formatUsdCostAsCents(openrouterReportedCostUsd ?? estimatedCostUsd)
 }
 
 export function aggregateOpenRouterUsage(
@@ -228,45 +166,10 @@ export function aggregateOpenRouterUsage(
   return aggregate
 }
 
-function estimateOpenRouterUsageCostCents(
-  usage: unknown
-): OpenAiPriceEstimate | null {
-  const usageRecord = asRecord(usage)
-  const costDollars = getNumberProperty(usageRecord, "cost")
-
-  if (costDollars === null) {
-    return null
-  }
-
-  const cents = costDollars * 100
-
-  return {
-    cents,
-    formattedCents: formatPriceEstimateCents(cents),
-  }
-}
-
-function normalizeSupportedOpenAiModel(model: string) {
-  const normalizedModel = model.trim().toLowerCase()
-
-  for (const supportedModel of Object.keys(OPENAI_TOKEN_PRICES)) {
-    if (
-      normalizedModel === supportedModel ||
-      normalizedModel.startsWith(`${supportedModel}-202`)
-    ) {
-      return supportedModel
-    }
-  }
-
-  return null
-}
-
-function formatPriceEstimateCents(cents: number) {
-  if (cents < 0.1) {
-    return "<0.1"
-  }
-
-  return cents.toFixed(1)
+function getCostValue(value: number | null) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
