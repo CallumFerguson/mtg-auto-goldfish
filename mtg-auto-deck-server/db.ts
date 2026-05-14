@@ -58,7 +58,7 @@ function getDatabasePoolConfig(): pg.PoolConfig {
 
   if (missingVariables.length > 0) {
     throw new Error(
-      `Missing Postgres environment variable(s): ${missingVariables.join(", ")}. Add them to your repo-root .env file.`
+      `Missing Postgres environment variable(s): ${missingVariables.join(", ")}. Add them to mtg-auto-deck-server/.env.`
     )
   }
 

@@ -266,7 +266,7 @@ function getRequiredEnvironmentVariable(
 
   if (!value) {
     throw new LlmConfigurationError(
-      `Missing LLM environment variable(s): ${environmentVariable}. Add it to your repo-root .env file.`
+      `Missing LLM environment variable(s): ${environmentVariable}. Add it to mtg-auto-deck-server/.env.`
     )
   }
 

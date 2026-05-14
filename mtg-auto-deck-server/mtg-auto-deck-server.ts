@@ -1,4 +1,4 @@
-﻿import "dotenv/config"
+﻿import "./environment.js"
 import express, { type Request, type Response } from "express"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"

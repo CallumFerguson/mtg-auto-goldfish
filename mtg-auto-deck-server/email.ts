@@ -353,7 +353,7 @@ function getRequiredEnvironmentVariable(environmentVariable: string) {
 
   if (!value) {
     throw new Error(
-      `Missing email environment variable: ${environmentVariable}. Add it to your repo-root .env file.`
+      `Missing email environment variable: ${environmentVariable}. Add it to mtg-auto-deck-server/.env.`
     )
   }
 

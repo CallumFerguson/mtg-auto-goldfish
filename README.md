@@ -9,10 +9,10 @@
 1. Copy the example environment file:
 
    ```sh
-   cp .env.example .env
+   cp mtg-auto-deck-server/.env.example mtg-auto-deck-server/.env
    ```
 
-2. Fill in the variables in `.env`.
+2. Fill in the variables in `mtg-auto-deck-server/.env`.
 
    For user accounts, set `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
    `APP_PUBLIC_URL`, and the `SMTP_*` variables used for auth email.

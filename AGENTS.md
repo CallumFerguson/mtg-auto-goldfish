@@ -14,7 +14,7 @@
 
 ## Security
 
-- Never read or change the .env file
+- Never read or change a .env file
 - If there is a change you would like to make to it, notify the user and tell them what to change
 - Treat `.env` as strictly hands-off, even when the user is asking about env vars, setup, API keys, or requests a full env template.
 - Do not open `.env`, do not patch `.env`, do not rewrite `.env`, and do not include `.env` in scripted file edits.
