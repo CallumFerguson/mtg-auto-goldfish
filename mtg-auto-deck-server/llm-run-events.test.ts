@@ -50,6 +50,7 @@ import {
   aggregateOpenRouterUsage,
   estimatePresetTokenCostUsd,
   formatPreferredLlmRunCostAsCents,
+  formatUsdCostAsCentLabel,
   formatUsdCostAsCents,
   getOpenRouterReportedCostUsd,
 } from "./llm-pricing.js"
@@ -490,6 +491,11 @@ test("extracts OpenRouter reported cost separately from preset estimates", () =>
 test("formats stored USD costs as cents", () => {
   assert.equal(formatUsdCostAsCents(0.00125), "0.1")
   assert.equal(formatUsdCostAsCents(0.0001), "<0.1")
+  assert.equal(formatUsdCostAsCents(0.0009), "0.1")
+  assert.equal(formatUsdCostAsCents(0), "0.0")
+  assert.equal(formatUsdCostAsCentLabel(0.00125), "0.1c")
+  assert.equal(formatUsdCostAsCentLabel(0.0001), "<0.1c")
+  assert.equal(formatUsdCostAsCentLabel(null), null)
 })
 
 test("aggregates OpenRouter usage across agent turns", () => {
@@ -785,6 +791,9 @@ function createOpenAiPreset() {
     model: "gpt-5.4-mini",
     reasoningEffort: "medium" as const,
     openrouterModelProvider: null,
+    inputTokenCostUsdPerMillion: 1,
+    cachedInputTokenCostUsdPerMillion: 0.1,
+    outputTokenCostUsdPerMillion: 10,
   }
 }
 
@@ -795,6 +804,9 @@ function createOpenRouterPreset() {
     model: "openai/gpt-5-nano",
     reasoningEffort: "high" as const,
     openrouterModelProvider: "openai",
+    inputTokenCostUsdPerMillion: 1,
+    cachedInputTokenCostUsdPerMillion: 0.1,
+    outputTokenCostUsdPerMillion: 10,
   }
 }
 
@@ -805,6 +817,9 @@ function createLlamaCppPreset() {
     model: "qwen3-8b-q4_k_m.gguf",
     reasoningEffort: "none" as const,
     openrouterModelProvider: null,
+    inputTokenCostUsdPerMillion: null,
+    cachedInputTokenCostUsdPerMillion: null,
+    outputTokenCostUsdPerMillion: null,
   }
 }
 

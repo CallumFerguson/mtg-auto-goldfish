@@ -1,4 +1,5 @@
 import { z } from "zod/v4"
+import type { TokenPrice } from "./llm-pricing.js"
 
 export const llmProviderSchema = z.enum(["openai", "openrouter", "llamacpp"])
 export const reasoningEffortSchema = z.enum([
@@ -20,6 +21,7 @@ type BaseLlmRunConfig = {
   modelPresetId: string
   maxOutputTokens: number
   provider: LlmProvider
+  tokenCosts: TokenPrice
 }
 
 type ReasoningEffortLlmRunConfig = BaseLlmRunConfig & {
@@ -36,6 +38,9 @@ export type LlmModelPresetRunConfig = {
   model: string
   reasoningEffort: ReasoningEffort
   openrouterModelProvider: string | null
+  inputTokenCostUsdPerMillion: number | null
+  cachedInputTokenCostUsdPerMillion: number | null
+  outputTokenCostUsdPerMillion: number | null
 }
 
 export type OpenAiRunConfig = ConfiguredModelLlmRunConfig & {
@@ -180,6 +185,7 @@ function getLlmRunConfig(
     environment,
     "LLM_MAX_OUTPUT_TOKENS"
   )
+  const tokenCosts = getPresetTokenCosts(preset)
 
   if (preset.provider === "openai") {
     return {
@@ -189,6 +195,7 @@ function getLlmRunConfig(
       modelPresetId: preset.id,
       provider: preset.provider,
       reasoningEffort: preset.reasoningEffort,
+      tokenCosts,
     }
   }
 
@@ -207,6 +214,7 @@ function getLlmRunConfig(
         environment,
         "LLAMACPP_STOP_WHEN_STEP_COUNT"
       ),
+      tokenCosts,
     }
   }
 
@@ -222,6 +230,15 @@ function getLlmRunConfig(
       environment,
       "OPENROUTER_STOP_WHEN_STEP_COUNT"
     ),
+    tokenCosts,
+  }
+}
+
+function getPresetTokenCosts(preset: LlmModelPresetRunConfig): TokenPrice {
+  return {
+    inputDollarsPerMillion: preset.inputTokenCostUsdPerMillion,
+    cachedInputDollarsPerMillion: preset.cachedInputTokenCostUsdPerMillion,
+    outputDollarsPerMillion: preset.outputTokenCostUsdPerMillion,
   }
 }
 

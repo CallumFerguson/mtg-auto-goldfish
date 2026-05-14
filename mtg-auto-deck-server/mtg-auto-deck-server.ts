@@ -219,7 +219,10 @@ import {
 } from "./simulation-results-stream.js"
 import {
   aggregateOpenRouterUsage,
+  estimatePresetTokenCostUsd,
+  formatUsdCostAsCentLabel,
   getOpenRouterReportedCostUsd,
+  type TokenPrice,
 } from "./llm-pricing.js"
 import {
   buildOpeningHandEvaluationInputText,
@@ -860,25 +863,31 @@ function logLlmApiCallFinished({
   model,
   phase,
   provider,
+  tokenCosts,
   usage,
 }: {
   llmRunId: string
   model: string
   phase: LlmRunPhase
   provider: string
+  tokenCosts: TokenPrice
   usage: unknown
 }) {
   const tokenUsage = getLlmTokenUsageSummary(usage)
+  const estimatedCostUsd = estimatePresetTokenCostUsd({
+    tokenCosts,
+    usage,
+  })
   const openrouterReportedCostUsd =
     provider === "openrouter" ? getOpenRouterReportedCostUsd(usage) : null
-  const openrouterReportedCostText =
-    openrouterReportedCostUsd === null
-      ? ""
-      : ` openrouterReportedCostUsd=${openrouterReportedCostUsd}`
 
   console.log(
-    `${formatProviderName(provider)} API call finished: phase=${phase} llmRunId=${llmRunId} model=${model} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} cachedInputTokens=${tokenUsage.cachedInput} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output}${openrouterReportedCostText}`
+    `${formatProviderName(provider)} API call finished: phase=${phase} llmRunId=${llmRunId} model=${model} totalTokens=${tokenUsage.total} inputTokens=${tokenUsage.input} cachedInputTokens=${tokenUsage.cachedInput} reasoningTokens=${tokenUsage.reasoning} outputTokens=${tokenUsage.output} estimatedCost=${formatLlmApiCallCost(estimatedCostUsd)} openrouterCost=${formatLlmApiCallCost(openrouterReportedCostUsd)}`
   )
+}
+
+function formatLlmApiCallCost(costUsd: number | null) {
+  return formatUsdCostAsCentLabel(costUsd) ?? "null"
 }
 
 function logLlmApiCallCancelled({
@@ -2710,6 +2719,10 @@ function getLlmModelPresetRunConfig(preset: LlmModelPreset) {
     model: preset.model,
     reasoningEffort: preset.reasoningEffort,
     openrouterModelProvider: preset.openrouterModelProvider,
+    inputTokenCostUsdPerMillion: preset.inputTokenCostUsdPerMillion,
+    cachedInputTokenCostUsdPerMillion:
+      preset.cachedInputTokenCostUsdPerMillion,
+    outputTokenCostUsdPerMillion: preset.outputTokenCostUsdPerMillion,
   }
 }
 
@@ -3397,6 +3410,7 @@ async function collectOpenAiLlmStream({
     model: requestPayload.model,
     phase,
     provider: config.provider,
+    tokenCosts: config.tokenCosts,
     usage,
   })
 
@@ -3574,6 +3588,7 @@ async function collectOpenRouterLlmStream({
     model: requestPayload.model,
     phase,
     provider: config.provider,
+    tokenCosts: config.tokenCosts,
     usage,
   })
 
@@ -3665,6 +3680,7 @@ async function collectLlamaCppLlmStream({
         model: requestPayload.model,
         phase,
         provider: config.provider,
+        tokenCosts: config.tokenCosts,
         usage: result.usage,
       })
 
@@ -3727,6 +3743,7 @@ async function collectRunEvaluationCompletion({
       model: config.model,
       phase: "other",
       provider: config.provider,
+      tokenCosts: config.tokenCosts,
       usage: asRecord(response).usage ?? {},
     })
 
@@ -3764,6 +3781,7 @@ async function collectRunEvaluationCompletion({
       model: config.model,
       phase: "other",
       provider: config.provider,
+      tokenCosts: config.tokenCosts,
       usage: asRecord(result).usage ?? {},
     })
 
@@ -3792,6 +3810,7 @@ async function collectRunEvaluationCompletion({
     model: config.model,
     phase: "other",
     provider: config.provider,
+    tokenCosts: config.tokenCosts,
     usage: asRecord(result).usage ?? {},
   })
 

@@ -79,12 +79,21 @@ export function formatUsdCostAsCents(costUsd: number | null | undefined) {
   }
 
   const cents = costUsd * 100
+  const roundedCents = Math.round(cents * 10) / 10
 
-  if (cents < 0.1) {
+  if (cents > 0 && roundedCents === 0) {
     return "<0.1"
   }
 
-  return cents.toFixed(1)
+  return roundedCents.toFixed(1)
+}
+
+export function formatUsdCostAsCentLabel(
+  costUsd: number | null | undefined
+) {
+  const cents = formatUsdCostAsCents(costUsd)
+
+  return cents === null ? null : `${cents}c`
 }
 
 export function formatPreferredLlmRunCostAsCents({
