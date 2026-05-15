@@ -1,19 +1,4 @@
-export const BILLING_TIER_LIMITS = {
-  free: {
-    maxConcurrentLlmRuns: 1,
-    maxTurnSimulationsPerDay: 3,
-  },
-  plus: {
-    maxConcurrentLlmRuns: 1,
-    maxTurnSimulationsPerDay: 25,
-  },
-  pro: {
-    maxConcurrentLlmRuns: 5,
-    maxTurnSimulationsPerDay: 100,
-  },
-} as const
-
-export type BillingTier = keyof typeof BILLING_TIER_LIMITS
+export type BillingTier = "free" | "plus" | "pro"
 
 export const BILLING_TIER_LABELS = {
   free: "Free",
