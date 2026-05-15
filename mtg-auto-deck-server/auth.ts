@@ -1,7 +1,9 @@
 import { betterAuth, type BetterAuthPlugin } from "better-auth"
+import { stripe } from "@better-auth/stripe"
 import { createAuthMiddleware } from "better-auth/api"
 import { getMigrations } from "better-auth/db/migration"
 import { admin, emailOTP } from "better-auth/plugins"
+import Stripe from "stripe"
 
 import { getDatabasePool } from "./db.js"
 import {
@@ -9,8 +11,16 @@ import {
   sendPasswordResetEmail,
   sendVerificationCodeEmail,
 } from "./email.js"
+import { getStripeSubscriptionPlans } from "./subscription-tiers.js"
 
 const PASSWORD_RESET_TOKEN_EXPIRES_IN_SECONDS = 5 * 60
+const STRIPE_API_VERSION = "2026-03-25.dahlia"
+const stripeClient = new Stripe(
+  getRequiredEnvironmentVariable("STRIPE_SECRET_KEY"),
+  {
+    apiVersion: STRIPE_API_VERSION,
+  }
+)
 
 const passwordChangeNotificationPlugin = {
   id: "password-change-notification",
@@ -99,6 +109,18 @@ export const auth = betterAuth({
     admin({
       adminRoles: ["admin"],
       defaultRole: "user",
+    }),
+    stripe({
+      createCustomerOnSignUp: true,
+      stripeClient,
+      stripeWebhookSecret: getRequiredEnvironmentVariable(
+        "STRIPE_WEBHOOK_SECRET"
+      ),
+      subscription: {
+        enabled: true,
+        plans: getStripeSubscriptionPlans,
+        requireEmailVerification: true,
+      },
     }),
     impersonationAuditLogPlugin,
     passwordChangeNotificationPlugin,
@@ -197,7 +219,9 @@ function logImpersonationStarted(response: unknown) {
 }
 
 function logImpersonationStopped(context: unknown, response: unknown) {
-  const contextSession = getAuthResponseSession(getRecordProperty(context, "session"))
+  const contextSession = getAuthResponseSession(
+    getRecordProperty(context, "session")
+  )
   const contextUser = getAuthResponseUser(getRecordProperty(context, "session"))
   const restoredAdmin = getAuthResponseUser(response)
 
@@ -276,7 +300,7 @@ function getRequiredEnvironmentVariable(environmentVariable: string) {
 
   if (!value) {
     throw new Error(
-      `Missing auth environment variable: ${environmentVariable}. Add it to mtg-auto-deck-server/.env.`
+      `Missing server environment variable: ${environmentVariable}. Add it to mtg-auto-deck-server/.env.`
     )
   }
 

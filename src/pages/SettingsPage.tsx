@@ -1,14 +1,17 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import {
   ArrowLeft,
+  CreditCard,
+  ExternalLink,
   KeyRound,
   LogOut,
   Mail,
   Settings,
   ShieldCheck,
+  Sparkles,
   X,
 } from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 
 import { AccountMenu } from "@/components/AccountMenu"
 import { SignOutConfirmModal } from "@/components/SignOutConfirmModal"
@@ -16,6 +19,11 @@ import { Button } from "@/components/ui/button"
 import { authClient, type AuthUser } from "@/lib/auth-client"
 import { clearPasswordInputs } from "@/lib/password-form"
 import { getPasswordRangeError } from "@/lib/password-validation"
+import {
+  BILLING_TIER_LABELS,
+  isPaidBillingTier,
+  type BillingTier,
+} from "@/lib/subscription-tiers"
 
 type SettingsPageProps = {
   adminOptionsEnabled: boolean
@@ -26,6 +34,16 @@ type SettingsPageProps = {
   user: AuthUser
 }
 
+type BillingSubscription = {
+  id: string
+  plan: string
+  status: string
+  cancelAtPeriodEnd?: boolean
+  stripeSubscriptionId?: string
+}
+
+const ACTIVE_BILLING_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"])
+
 export function SettingsPage({
   adminOptionsEnabled,
   isImpersonating,
@@ -35,10 +53,35 @@ export function SettingsPage({
   user,
 }: SettingsPageProps) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
   const [passwordNotice, setPasswordNotice] = useState<string | null>(null)
   const [isSignOutConfirmOpen, setIsSignOutConfirmOpen] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
+  const [billingTier, setBillingTier] = useState<BillingTier>("free")
+  const [billingNotice, setBillingNotice] = useState<string | null>(null)
+  const [billingError, setBillingError] = useState<string | null>(null)
+  const [isBillingLoading, setIsBillingLoading] = useState(true)
+  const [pendingBillingAction, setPendingBillingAction] = useState<
+    BillingTier | "portal" | null
+  >(null)
+
+  useEffect(() => {
+    const billingResult = searchParams.get("billing")
+
+    if (!billingResult) {
+      return
+    }
+
+    setBillingNotice(getBillingResultNotice(billingResult))
+    const nextSearchParams = new URLSearchParams(searchParams)
+    nextSearchParams.delete("billing")
+    setSearchParams(nextSearchParams, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  useEffect(() => {
+    void loadBillingState()
+  }, [])
 
   async function handleSignOut() {
     setIsSigningOut(true)
@@ -54,6 +97,108 @@ export function SettingsPage({
       setIsSignOutConfirmOpen(false)
     } finally {
       setIsSigningOut(false)
+    }
+  }
+
+  async function loadBillingState() {
+    setIsBillingLoading(true)
+    setBillingError(null)
+
+    try {
+      const result = await authClient.subscription.list({
+        query: {},
+      })
+
+      if (result.error) {
+        setBillingError(
+          getAuthErrorMessage(result.error, "Subscription could not be loaded.")
+        )
+        return
+      }
+
+      const subscriptions = Array.isArray(result.data) ? result.data : []
+      const activeSubscription = getActiveBillingSubscription(subscriptions)
+
+      setBillingTier(getBillingTierFromSubscription(activeSubscription))
+    } catch {
+      setBillingError("Subscription could not be loaded.")
+    } finally {
+      setIsBillingLoading(false)
+    }
+  }
+
+  async function handleStartSubscription(plan: "plus" | "pro") {
+    setPendingBillingAction(plan)
+    setBillingError(null)
+    setBillingNotice(null)
+
+    try {
+      const result = await authClient.subscription.upgrade({
+        cancelUrl: getBillingReturnUrl("cancel"),
+        disableRedirect: true,
+        plan,
+        returnUrl: getBillingReturnUrl("portal"),
+        successUrl: getBillingReturnUrl("success"),
+      })
+
+      if (result.error) {
+        setBillingError(
+          getAuthErrorMessage(
+            result.error,
+            "Stripe Checkout could not be started."
+          )
+        )
+        return
+      }
+
+      const redirectUrl = getStripeRedirectUrl(result.data)
+
+      if (!redirectUrl) {
+        setBillingError("Stripe Checkout could not be started.")
+        return
+      }
+
+      window.location.assign(redirectUrl)
+    } catch {
+      setBillingError("Stripe Checkout could not be started.")
+    } finally {
+      setPendingBillingAction(null)
+    }
+  }
+
+  async function handleManageSubscription() {
+    setPendingBillingAction("portal")
+    setBillingError(null)
+    setBillingNotice(null)
+
+    try {
+      const result = await authClient.subscription.billingPortal({
+        disableRedirect: true,
+        returnUrl: getBillingReturnUrl("portal"),
+      })
+
+      if (result.error) {
+        setBillingError(
+          getAuthErrorMessage(
+            result.error,
+            "Stripe Billing Portal could not be opened."
+          )
+        )
+        return
+      }
+
+      const redirectUrl = getStripeRedirectUrl(result.data)
+
+      if (!redirectUrl) {
+        setBillingError("Stripe Billing Portal could not be opened.")
+        return
+      }
+
+      window.location.assign(redirectUrl)
+    } catch {
+      setBillingError("Stripe Billing Portal could not be opened.")
+    } finally {
+      setPendingBillingAction(null)
     }
   }
 
@@ -138,6 +283,66 @@ export function SettingsPage({
             </div>
           </section>
 
+          <section
+            className="overflow-hidden rounded-lg border border-border bg-card/55 shadow-2xl shadow-black/20"
+            aria-label="Billing settings"
+          >
+            <div className="flex flex-col gap-5 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-4">
+                <CreditCard
+                  className="mt-1 size-6 shrink-0 text-foreground"
+                  aria-hidden
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">
+                    Subscription
+                  </p>
+                  <p className="mt-1 text-xs text-sky-100">
+                    Current tier:{" "}
+                    <span className="font-semibold text-foreground">
+                      {isBillingLoading
+                        ? "Loading..."
+                        : BILLING_TIER_LABELS[billingTier]}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <BillingActions
+                billingTier={billingTier}
+                isBillingLoading={isBillingLoading}
+                isImpersonating={isImpersonating}
+                onManageSubscription={handleManageSubscription}
+                onStartSubscription={handleStartSubscription}
+                pendingBillingAction={pendingBillingAction}
+              />
+            </div>
+
+            {isImpersonating ? (
+              <p className="border-t border-border px-5 py-3 text-xs text-sky-100">
+                Billing actions are disabled while impersonating.
+              </p>
+            ) : null}
+
+            {billingNotice ? (
+              <p
+                className="border-t border-sky-300/25 bg-sky-400/10 px-5 py-3 text-sm text-sky-100"
+                role="status"
+              >
+                {billingNotice}
+              </p>
+            ) : null}
+
+            {billingError ? (
+              <p
+                className="border-t border-destructive/40 bg-destructive/10 px-5 py-3 text-sm text-destructive"
+                role="alert"
+              >
+                {billingError}
+              </p>
+            ) : null}
+          </section>
+
           {passwordNotice ? (
             <p
               className="rounded-md border border-sky-300/30 bg-sky-400/10 px-3 py-2 text-sm text-sky-100"
@@ -188,6 +393,64 @@ export function SettingsPage({
         />
       ) : null}
     </main>
+  )
+}
+
+function BillingActions({
+  billingTier,
+  isBillingLoading,
+  isImpersonating,
+  onManageSubscription,
+  onStartSubscription,
+  pendingBillingAction,
+}: {
+  billingTier: BillingTier
+  isBillingLoading: boolean
+  isImpersonating: boolean
+  onManageSubscription: () => void
+  onStartSubscription: (plan: "plus" | "pro") => void
+  pendingBillingAction: BillingTier | "portal" | null
+}) {
+  const isDisabled =
+    isBillingLoading || isImpersonating || pendingBillingAction !== null
+
+  if (isPaidBillingTier(billingTier)) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        className="w-fit sm:self-center"
+        onClick={onManageSubscription}
+        disabled={isDisabled}
+      >
+        <ExternalLink data-icon="inline-start" />
+        {pendingBillingAction === "portal"
+          ? "Opening..."
+          : "Manage subscription"}
+      </Button>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2 sm:justify-end">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => onStartSubscription("plus")}
+        disabled={isDisabled}
+      >
+        <Sparkles data-icon="inline-start" />
+        {pendingBillingAction === "plus" ? "Opening..." : "Start Plus"}
+      </Button>
+      <Button
+        type="button"
+        onClick={() => onStartSubscription("pro")}
+        disabled={isDisabled}
+      >
+        <Sparkles data-icon="inline-start" />
+        {pendingBillingAction === "pro" ? "Opening..." : "Start Pro"}
+      </Button>
+    </div>
   )
 }
 
@@ -387,6 +650,60 @@ function ErrorMessage({ error }: { error: string | null }) {
       {error}
     </p>
   ) : null
+}
+
+function getActiveBillingSubscription(
+  subscriptions: readonly BillingSubscription[]
+) {
+  return (
+    subscriptions.find((subscription) =>
+      ACTIVE_BILLING_SUBSCRIPTION_STATUSES.has(subscription.status)
+    ) ?? null
+  )
+}
+
+function getBillingTierFromSubscription(
+  subscription: BillingSubscription | null
+): BillingTier {
+  const plan = subscription?.plan.trim().toLowerCase()
+
+  if (plan === "plus" || plan === "pro") {
+    return plan
+  }
+
+  return "free"
+}
+
+function getBillingReturnUrl(result: string) {
+  return `${window.location.origin}/settings?billing=${encodeURIComponent(
+    result
+  )}`
+}
+
+function getBillingResultNotice(result: string) {
+  if (result === "success") {
+    return "Subscription updated."
+  }
+
+  if (result === "cancel") {
+    return "Subscription checkout canceled."
+  }
+
+  if (result === "portal") {
+    return "Billing portal closed."
+  }
+
+  return null
+}
+
+function getStripeRedirectUrl(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return null
+  }
+
+  const url = (data as Record<string, unknown>).url
+
+  return typeof url === "string" && url.trim() ? url : null
 }
 
 function getAuthErrorMessage(error: unknown, fallbackMessage: string) {

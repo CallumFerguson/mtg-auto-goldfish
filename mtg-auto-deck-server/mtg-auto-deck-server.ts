@@ -1,9 +1,9 @@
 ﻿import "./environment.js"
-import express, { type Request, type Response } from "express"
+import express, { type Express, type Request, type Response } from "express"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
+import { localhostHostValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { OpenRouter, stepCountIs, tool, type Tool } from "@openrouter/agent"
@@ -252,9 +252,9 @@ const TURN_SIMULATION_MCP_PATH = "/mcp/turn-simulation"
 const SIMULATION_MCP_PATH = "/mcp/simulation"
 const AUTH_PATH_PREFIX = "/api/auth"
 const APP_SIGN_UP_PATH = "/api/app-auth/sign-up"
-const APP_EMAIL_VERIFICATION_CODE_PATH =
-  "/api/app-auth/email-verification-code"
-const APP_PASSWORD_RESET_TOKEN_PATH = "/api/app-auth/password-reset-token/:token"
+const APP_EMAIL_VERIFICATION_CODE_PATH = "/api/app-auth/email-verification-code"
+const APP_PASSWORD_RESET_TOKEN_PATH =
+  "/api/app-auth/password-reset-token/:token"
 const OPENING_HAND_MCP_SERVER_LABEL = "opening_hand"
 const TURN_SIMULATION_MCP_SERVER_LABEL = "turn_simulation"
 const STREAM_FLUSH_INTERVAL_MS = 1000
@@ -436,7 +436,7 @@ let llmRunQueueDrainTimer: NodeJS.Timeout | null = null
 let llmRunQueueDrainPromise: Promise<void> | null = null
 
 function createRuntimeCompletion() {
-  let resolveCompletion: () => void = () => { }
+  let resolveCompletion: () => void = () => {}
   const completionPromise = new Promise<void>((resolve) => {
     resolveCompletion = resolve
   })
@@ -4861,7 +4861,9 @@ async function main() {
   const port = DEFAULT_PORT
   const allowedOrigins = DEFAULT_ALLOWED_ORIGINS
   const simulationMcpServerEnabled = getSimulationMcpServerEnabled()
-  const app = createMcpExpressApp({ host })
+  const app = express()
+
+  app.use(localhostHostValidation())
 
   app.use((req: Request, res: Response, next) => {
     applyCors(req, res, allowedOrigins)
@@ -6962,7 +6964,7 @@ function getAllowedRequestHeaders(
 }
 
 function registerMcpEndpoint(
-  app: ReturnType<typeof createMcpExpressApp>,
+  app: Express,
   path: string,
   createScopedServer: (authContext?: LlmRunMcpTokenContext) => McpServer,
   authOptions?: {
