@@ -33,28 +33,30 @@ export function UsageLimitRows({
   return (
     <div className={cn("mt-2 grid gap-1", className)}>
       {usageLimits.map((usageLimit) => (
-        <p
+        <div
           key={usageLimit.kind}
-          className={cn("truncate text-xs text-muted-foreground", rowClassName)}
+          className={cn(
+            "grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3 text-xs text-muted-foreground",
+            rowClassName
+          )}
         >
-          {formatUsageLimitLabel(usageLimit)}
-        </p>
+          <span className="truncate pl-4 font-bold text-foreground">
+            {usageLimit.label}
+          </span>
+          <span className="flex min-w-0 items-baseline justify-end gap-2 text-right tabular-nums">
+            <span>{usageLimit.remainingPercent}%</span>
+            <span>{formatUsageLimitReset(usageLimit)}</span>
+          </span>
+        </div>
       ))}
     </div>
   )
 }
 
-function formatUsageLimitLabel(usageLimit: UsageLimitWindow) {
-  const resetLabel =
-    usageLimit.kind === "weekly"
-      ? formatWeeklyResetDate(usageLimit.resetAt)
-      : formatFiveHourResetTime(usageLimit.resetAt)
-  const resetText =
-    usageLimit.kind === "weekly"
-      ? `resets ${resetLabel}`
-      : `resets at ${resetLabel}`
-
-  return `${usageLimit.label} - ${usageLimit.remainingPercent}% remaining, ${resetText}`
+function formatUsageLimitReset(usageLimit: UsageLimitWindow) {
+  return usageLimit.kind === "weekly"
+    ? formatWeeklyResetDate(usageLimit.resetAt)
+    : formatFiveHourResetTime(usageLimit.resetAt)
 }
 
 function formatFiveHourResetTime(resetAt: string) {

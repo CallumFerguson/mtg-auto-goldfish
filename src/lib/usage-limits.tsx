@@ -61,7 +61,6 @@ export function UsageLimitsProvider({
 
     setIsUsageLimitsLoading(true)
     setUsageLimitsError(null)
-    console.log("[usage-limits] fetching limits from server")
 
     try {
       const response = await apiFetch(`${API_BASE_URL}/usage-limits`, {
