@@ -180,13 +180,7 @@ export function SettingsPage({
     setBillingNotice(null)
 
     try {
-      const result = await authClient.subscription.upgrade({
-        cancelUrl: getBillingReturnUrl("cancel"),
-        disableRedirect: true,
-        plan,
-        returnUrl: getBillingReturnUrl("portal"),
-        successUrl: getBillingReturnUrl("success"),
-      })
+      const result = await startStripeCheckout(plan)
 
       if (result.error) {
         setBillingError(
@@ -459,6 +453,26 @@ export function SettingsPage({
       ) : null}
     </main>
   )
+}
+
+async function startStripeCheckout(plan: "plus" | "pro") {
+  const result = await requestStripeCheckout(plan)
+
+  if (!isMissingStripeCustomerError(result.error)) {
+    return result
+  }
+
+  return await requestStripeCheckout(plan)
+}
+
+async function requestStripeCheckout(plan: "plus" | "pro") {
+  return await authClient.subscription.upgrade({
+    cancelUrl: getBillingReturnUrl("cancel"),
+    disableRedirect: true,
+    plan,
+    returnUrl: getBillingReturnUrl("portal"),
+    successUrl: getBillingReturnUrl("success"),
+  })
 }
 
 function BillingActions({
@@ -916,6 +930,16 @@ function isInvalidPasswordError(error: unknown) {
     code === "INVALID_PASSWORD" ||
     message?.toLowerCase().includes("invalid password") === true ||
     message?.toLowerCase().includes("current password") === true
+  )
+}
+
+function isMissingStripeCustomerError(error: unknown) {
+  const code = getStringErrorProperty(error, "code")
+  const message = getStringErrorProperty(error, "message")?.toLowerCase()
+
+  return (
+    code === "resource_missing" ||
+    message?.includes("no such customer") === true
   )
 }
 

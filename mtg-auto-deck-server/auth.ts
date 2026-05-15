@@ -1,6 +1,6 @@
 import { betterAuth, type BetterAuthPlugin } from "better-auth"
 import { stripe } from "@better-auth/stripe"
-import { createAuthMiddleware } from "better-auth/api"
+import { createAuthMiddleware, sessionMiddleware } from "better-auth/api"
 import { getMigrations } from "better-auth/db/migration"
 import { admin, emailOTP } from "better-auth/plugins"
 import Stripe from "stripe"
@@ -15,12 +15,85 @@ import { getStripeSubscriptionPlans } from "./subscription-tiers.js"
 
 const PASSWORD_RESET_TOKEN_EXPIRES_IN_SECONDS = 5 * 60
 const STRIPE_API_VERSION = "2026-03-25.dahlia"
+const STRIPE_USER_CUSTOMER_TYPE = "user"
+const STRIPE_ORGANIZATION_CUSTOMER_TYPE = "organization"
 const stripeClient = new Stripe(
   getRequiredEnvironmentVariable("STRIPE_SECRET_KEY"),
   {
     apiVersion: STRIPE_API_VERSION,
   }
 )
+
+const staleStripeCustomerRepairPlugin = {
+  id: "stale-stripe-customer-repair",
+  hooks: {
+    before: [
+      {
+        matcher: (context) =>
+          context.path === "/subscription/upgrade" ||
+          context.path === "/subscription/billing-portal",
+        handler: createAuthMiddleware(
+          { use: [sessionMiddleware] },
+          async (ctx) => {
+            const customerType = getCustomerType(ctx.body)
+
+            if (customerType === STRIPE_ORGANIZATION_CUSTOMER_TYPE) {
+              return
+            }
+
+            const session = getStripeBillingSession(ctx.context.session)
+            const stripeCustomerId = session?.user.stripeCustomerId?.trim()
+
+            if (!session || !stripeCustomerId) {
+              return
+            }
+
+            const stripeCustomer =
+              await retrieveActiveStripeCustomer(stripeCustomerId)
+
+            if (stripeCustomer) {
+              return
+            }
+
+            const replacementCustomer =
+              (await findStripeCustomerByEmail(session.user.email, () => {
+                ctx.context.logger.warn(
+                  "Stripe customers.search failed, falling back to customers.list"
+                )
+              })) ?? (await createStripeCustomerForUser(session.user))
+
+            await ctx.context.internalAdapter.updateUser(session.user.id, {
+              stripeCustomerId: replacementCustomer.id,
+            })
+
+            ctx.context.logger.info(
+              `Repaired stale Stripe customer ${stripeCustomerId} for user ${session.user.id}; using ${replacementCustomer.id}`
+            )
+
+            const repairedSession = {
+              ...session,
+              user: {
+                ...session.user,
+                stripeCustomerId: replacementCustomer.id,
+              },
+            }
+
+            setSessionStripeCustomerId(
+              ctx.context.session,
+              replacementCustomer.id
+            )
+
+            return {
+              context: {
+                session: repairedSession,
+              },
+            }
+          }
+        ),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin
 
 const passwordChangeNotificationPlugin = {
   id: "password-change-notification",
@@ -110,6 +183,7 @@ export const auth = betterAuth({
       adminRoles: ["admin"],
       defaultRole: "user",
     }),
+    staleStripeCustomerRepairPlugin,
     stripe({
       createCustomerOnSignUp: true,
       stripeClient,
@@ -159,9 +233,142 @@ export async function hasValidEmailVerificationOtp(email: string) {
   return Boolean(verification && verification.expiresAt > new Date())
 }
 
+type StripeBillingUser = Record<string, unknown> & {
+  email: string
+  id: string
+  name?: string | null
+  stripeCustomerId?: string | null
+}
+
+type StripeBillingSession = {
+  session: unknown
+  user: StripeBillingUser
+}
+
 type PasswordChangedNotificationUser = {
   email: string
   name?: string | null
+}
+
+async function retrieveActiveStripeCustomer(stripeCustomerId: string) {
+  try {
+    const customer = await stripeClient.customers.retrieve(stripeCustomerId)
+
+    return isDeletedStripeCustomer(customer) ? null : customer
+  } catch (error) {
+    if (isMissingStripeCustomerError(error)) {
+      return null
+    }
+
+    throw error
+  }
+}
+
+async function findStripeCustomerByEmail(
+  email: string,
+  onSearchFallback: () => void
+) {
+  try {
+    const searchResult = await stripeClient.customers.search({
+      query: `email:"${escapeStripeSearchValue(email)}" AND -metadata["customerType"]:"${STRIPE_ORGANIZATION_CUSTOMER_TYPE}"`,
+      limit: 1,
+    })
+
+    return searchResult.data[0] ?? null
+  } catch {
+    onSearchFallback()
+  }
+
+  for await (const customer of stripeClient.customers.list({
+    email,
+    limit: 100,
+  })) {
+    if (customer.metadata?.customerType !== STRIPE_ORGANIZATION_CUSTOMER_TYPE) {
+      return customer
+    }
+  }
+
+  return null
+}
+
+async function createStripeCustomerForUser(user: StripeBillingUser) {
+  return await stripeClient.customers.create({
+    email: user.email,
+    name: user.name ?? user.email,
+    metadata: {
+      customerType: STRIPE_USER_CUSTOMER_TYPE,
+      userId: user.id,
+    },
+  })
+}
+
+function getStripeBillingSession(
+  session: unknown
+): StripeBillingSession | null {
+  if (!session || typeof session !== "object") {
+    return null
+  }
+
+  const sessionRecord = session as { session?: unknown; user?: unknown }
+  const userRecord = getRecordProperty(sessionRecord, "user")
+  const id = getStringProperty(userRecord, "id")
+  const email = getStringProperty(userRecord, "email")
+
+  if (!id || !email) {
+    return null
+  }
+
+  return {
+    session: sessionRecord.session,
+    user: {
+      ...userRecord,
+      email,
+      id,
+      name: getStringProperty(userRecord, "name"),
+      stripeCustomerId: getStringProperty(userRecord, "stripeCustomerId"),
+    },
+  }
+}
+
+function setSessionStripeCustomerId(
+  session: unknown,
+  stripeCustomerId: string
+) {
+  const user = getRecordProperty(session, "user")
+
+  if (user) {
+    const mutableUser = user as Record<string, unknown>
+
+    mutableUser.stripeCustomerId = stripeCustomerId
+  }
+}
+
+function getCustomerType(body: unknown) {
+  const customerType = getStringProperty(body, "customerType")
+
+  return customerType === STRIPE_ORGANIZATION_CUSTOMER_TYPE
+    ? STRIPE_ORGANIZATION_CUSTOMER_TYPE
+    : STRIPE_USER_CUSTOMER_TYPE
+}
+
+function isDeletedStripeCustomer(
+  customer: Stripe.Customer | Stripe.DeletedCustomer
+): customer is Stripe.DeletedCustomer {
+  return "deleted" in customer && customer.deleted === true
+}
+
+function isMissingStripeCustomerError(error: unknown) {
+  const code = getStringProperty(error, "code")
+  const message = getStringProperty(error, "message")?.toLowerCase()
+
+  return (
+    code === "resource_missing" ||
+    message?.includes("no such customer") === true
+  )
+}
+
+function escapeStripeSearchValue(value: string) {
+  return value.replace(/"/g, '\\"')
 }
 
 async function sendPasswordChangedNotification({
