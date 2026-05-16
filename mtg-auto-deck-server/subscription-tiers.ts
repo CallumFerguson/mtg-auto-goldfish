@@ -5,7 +5,7 @@ export const BILLING_TIER_LIMITS = {
     maxConcurrentLlmRuns: 1,
   },
   plus: {
-    maxConcurrentLlmRuns: 1,
+    maxConcurrentLlmRuns: 2,
   },
   pro: {
     maxConcurrentLlmRuns: 5,

@@ -878,6 +878,18 @@ test("requires a positive LLM run queue global concurrency limit", () => {
 })
 
 test("checks LLM run queue capacity before claiming", () => {
+  assert.deepEqual(
+    {
+      free: BILLING_TIER_LIMITS.free.maxConcurrentLlmRuns,
+      plus: BILLING_TIER_LIMITS.plus.maxConcurrentLlmRuns,
+      pro: BILLING_TIER_LIMITS.pro.maxConcurrentLlmRuns,
+    },
+    {
+      free: 1,
+      plus: 2,
+      pro: 5,
+    }
+  )
   assert.equal(
     canClaimQueuedLlmRunWithCapacity({
       activeOwnerUserIds: ["user-1", "user-2"],
@@ -901,6 +913,16 @@ test("checks LLM run queue capacity before claiming", () => {
   assert.equal(
     canClaimQueuedLlmRunWithCapacity({
       activeOwnerUserIds: ["user-1"],
+      candidateMaxConcurrentRuns: BILLING_TIER_LIMITS.plus.maxConcurrentLlmRuns,
+      candidateOwnerUserId: "user-1",
+      candidateQueuedAt: "2026-01-01T00:00:00.000Z",
+      maxConcurrentRuns: 50,
+    }),
+    true
+  )
+  assert.equal(
+    canClaimQueuedLlmRunWithCapacity({
+      activeOwnerUserIds: ["user-1", "user-1"],
       candidateMaxConcurrentRuns: BILLING_TIER_LIMITS.plus.maxConcurrentLlmRuns,
       candidateOwnerUserId: "user-1",
       candidateQueuedAt: "2026-01-01T00:00:00.000Z",

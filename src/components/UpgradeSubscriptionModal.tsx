@@ -35,7 +35,7 @@ const PRICING_PLANS = [
     description: "More room to test and iterate.",
     features: [
       "Access to more intelligent simulations",
-      "Run 1 simulation at a time",
+      "Run up to 2 simulations at a time",
     ],
     cta: "Upgrade to Plus",
     tier: "plus",
@@ -46,7 +46,7 @@ const PRICING_PLANS = [
     cadence: "/mo",
     description: "Test and iterate faster.",
     features: [
-      "Access to the most intellegent simulations",
+      "Access to the most intelligent simulations",
       "Higher usage limits",
       "Run up to 5 simulations at a time",
     ],
