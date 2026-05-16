@@ -45,7 +45,6 @@ export function DeckPage({
   const [isDeleteDeckOpen, setIsDeleteDeckOpen] = useState(false)
   const [isDeletingDeck, setIsDeletingDeck] = useState(false)
   const [deleteDeckError, setDeleteDeckError] = useState<string | null>(null)
-  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
   const [usageUpgradeRequestId, setUsageUpgradeRequestId] = useState(0)
 
   const loadDeck = useCallback(async () => {
@@ -203,10 +202,8 @@ export function DeckPage({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <AccountMenu
                 adminOptionsEnabled={adminOptionsEnabled}
-                isOpen={isAccountMenuOpen}
                 isImpersonating={isImpersonating}
                 onAdminOptionsEnabledChange={onAdminOptionsEnabledChange}
-                onOpenChange={setIsAccountMenuOpen}
                 onSignedOut={onSignedOut}
                 onStopImpersonating={onStopImpersonating}
                 usageUpgradeRequestId={usageUpgradeRequestId}
@@ -256,7 +253,6 @@ export function DeckPage({
                 onUpgradeUsage={() => {
                   setUsageUpgradeRequestId((currentId) => currentId + 1)
                 }}
-                onViewUsage={() => setIsAccountMenuOpen(true)}
                 selectedSimulationIdFromUrl={initialSimulationId}
               />
             </div>

@@ -30,27 +30,23 @@ import { useUsageLimitsPolling } from "@/lib/usage-limits"
 
 export function AccountMenu({
   adminOptionsEnabled,
-  isOpen: controlledIsOpen,
   isImpersonating,
   onAdminOptionsEnabledChange,
-  onOpenChange,
   onSignedOut,
   onStopImpersonating,
   usageUpgradeRequestId = 0,
   user,
 }: {
   adminOptionsEnabled: boolean
-  isOpen?: boolean
   isImpersonating: boolean
   onAdminOptionsEnabledChange: (isEnabled: boolean) => void
-  onOpenChange?: (isOpen: boolean) => void
   onSignedOut: () => void
   onStopImpersonating: () => Promise<void> | void
   usageUpgradeRequestId?: number
   user: AuthUser
 }) {
   const navigate = useNavigate()
-  const [uncontrolledIsOpen, setUncontrolledIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(false)
   const [isSignOutConfirmOpen, setIsSignOutConfirmOpen] = useState(false)
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -72,17 +68,6 @@ export function AccountMenu({
       : !hasLoadedBillingTier && billingTierError
         ? "Unavailable"
         : `${BILLING_TIER_LABELS[billingTier]} tier`
-  const isOpen = controlledIsOpen ?? uncontrolledIsOpen
-  const setIsOpen = useCallback(
-    (nextIsOpen: boolean) => {
-      if (controlledIsOpen === undefined) {
-        setUncontrolledIsOpen(nextIsOpen)
-      }
-
-      onOpenChange?.(nextIsOpen)
-    },
-    [controlledIsOpen, onOpenChange]
-  )
   const shouldShowUsageUpgradeAction =
     !isImpersonating &&
     hasLoadedBillingTier &&

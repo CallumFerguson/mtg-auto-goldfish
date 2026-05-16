@@ -21,7 +21,6 @@ import {
   ClipboardCheck,
   ClipboardCopy,
   Dices,
-  ExternalLink,
   Eye,
   EyeOff,
   FileText,
@@ -47,6 +46,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { UsageLimitRows } from "@/components/UsageLimitRows"
 import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { readApiError } from "@/lib/api-error"
 import { useBillingTier } from "@/lib/billing-tier-state"
@@ -125,12 +125,12 @@ type OpeningHandCardOption = {
 
 type SimulationResultsAction =
   | {
-      kind: "opening_hand"
-    }
+    kind: "opening_hand"
+  }
   | {
-      kind: "turn"
-      turnNumber: number
-    }
+    kind: "turn"
+    turnNumber: number
+  }
 
 const DEFAULT_TURNS_TO_SIMULATE = "1"
 const ACTIVITY_PANEL_EXIT_FALLBACK_MS = 350
@@ -557,13 +557,56 @@ function getOpeningHandCardOptions(
     )
 }
 
+function UsageLimitReachedNotice({
+  onUpgradeUsage,
+  shouldShowUsageUpgradeAction,
+}: {
+  onUpgradeUsage: () => void
+  shouldShowUsageUpgradeAction: boolean
+}) {
+  const { refreshBillingTier } = useBillingTier()
+  const { refreshUsageLimits } = useUsageLimits()
+
+  useEffect(() => {
+    void refreshBillingTier()
+    void refreshUsageLimits()
+  }, [refreshBillingTier, refreshUsageLimits])
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <Gauge className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden />
+        <div className="min-w-0">
+          <p className="font-semibold text-foreground">Usage limit reached</p>
+          <p className="mt-1 text-xs text-amber-100/80">
+            Try again after your available usage refreshes
+          </p>
+          <UsageLimitRows
+            className="mt-3 max-w-xl"
+            rowClassName="text-amber-100/80"
+          />
+        </div>
+      </div>
+      {shouldShowUsageUpgradeAction ? (
+        <Button
+          type="button"
+          className="w-fit sm:self-center"
+          onClick={onUpgradeUsage}
+        >
+          <Sparkles data-icon="inline-start" />
+          Upgrade
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 export function DeckSimulation({
   canUpgradeUsage,
   cards,
   deckId,
   isAdmin,
   onUpgradeUsage,
-  onViewUsage,
   selectedSimulationIdFromUrl,
 }: {
   canUpgradeUsage: boolean
@@ -571,7 +614,6 @@ export function DeckSimulation({
   deckId: string
   isAdmin: boolean
   onUpgradeUsage: () => void
-  onViewUsage: () => void
   selectedSimulationIdFromUrl: string | null
 }) {
   const navigate = useNavigate()
@@ -1083,11 +1125,10 @@ export function DeckSimulation({
           >
             <div className="simulation-sidebar-surface sticky top-0 z-10 px-2 pt-2 pb-1">
               <button
-                className={`flex h-11 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium transition-colors ${
-                  isNewSimulationSelected
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                }`}
+                className={`flex h-11 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium transition-colors ${isNewSimulationSelected
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                  }`}
                 type="button"
                 aria-pressed={isNewSimulationSelected}
                 onClick={() => {
@@ -1100,9 +1141,8 @@ export function DeckSimulation({
                 New simulation
               </button>
               <div
-                className={`absolute right-0 bottom-0 left-0 border-b border-border transition-opacity ${
-                  isSimulationListScrolled ? "opacity-100" : "opacity-0"
-                }`}
+                className={`absolute right-0 bottom-0 left-0 border-b border-border transition-opacity ${isSimulationListScrolled ? "opacity-100" : "opacity-0"
+                  }`}
               />
             </div>
 
@@ -1130,12 +1170,11 @@ export function DeckSimulation({
                   {simulations.map((simulation) => (
                     <li key={simulation.id} className="group relative">
                       <button
-                        className={`h-11 w-full rounded-md pr-11 pl-3 text-left text-sm font-medium transition-colors ${
-                          !isNewSimulationSelected &&
+                        className={`h-11 w-full rounded-md pr-11 pl-3 text-left text-sm font-medium transition-colors ${!isNewSimulationSelected &&
                           selectedSimulationId === simulation.id
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                        }`}
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                          }`}
                         type="button"
                         aria-pressed={
                           !isNewSimulationSelected &&
@@ -1150,14 +1189,13 @@ export function DeckSimulation({
                         {getSimulationLabel(simulation)}
                       </button>
                       {simulation.activeLlmRunCount > 0 &&
-                      (isNewSimulationSelected ||
-                        selectedSimulationId !== simulation.id) ? (
+                        (isNewSimulationSelected ||
+                          selectedSimulationId !== simulation.id) ? (
                         <div
-                          className={`pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-muted-foreground transition-opacity group-hover:opacity-0 ${
-                            openSimulationMenuId === simulation.id
-                              ? "opacity-0"
-                              : "opacity-100"
-                          }`}
+                          className={`pointer-events-none absolute inset-y-0 right-1 flex items-center px-2 text-muted-foreground transition-opacity group-hover:opacity-0 ${openSimulationMenuId === simulation.id
+                            ? "opacity-0"
+                            : "opacity-100"
+                            }`}
                           aria-hidden="true"
                         >
                           <svg
@@ -1179,11 +1217,10 @@ export function DeckSimulation({
                         </div>
                       ) : null}
                       <div
-                        className={`absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${
-                          openSimulationMenuId === simulation.id
-                            ? "opacity-100"
-                            : ""
-                        }`}
+                        className={`absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${openSimulationMenuId === simulation.id
+                          ? "opacity-100"
+                          : ""
+                          }`}
                       >
                         <Button
                           type="button"
@@ -1266,11 +1303,10 @@ export function DeckSimulation({
                       </legend>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
-                            seedMode === "random"
-                              ? "border-ring bg-accent text-accent-foreground"
-                              : "border-border bg-background/35 text-muted-foreground"
-                          }`}
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${seedMode === "random"
+                            ? "border-ring bg-accent text-accent-foreground"
+                            : "border-border bg-background/35 text-muted-foreground"
+                            }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1282,11 +1318,10 @@ export function DeckSimulation({
                           Random seed
                         </label>
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
-                            seedMode === "set"
-                              ? "border-ring bg-accent text-accent-foreground"
-                              : "border-border bg-background/35 text-muted-foreground"
-                          }`}
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${seedMode === "set"
+                            ? "border-ring bg-accent text-accent-foreground"
+                            : "border-border bg-background/35 text-muted-foreground"
+                            }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1456,22 +1491,19 @@ export function DeckSimulation({
                     </div>
 
                     <div
-                      className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm transition-colors ${
-                        canAutoGenerateReport && autoGenerateReport
-                          ? "border-ring bg-accent text-accent-foreground"
-                          : "border-border bg-background/35 text-muted-foreground"
-                      } ${
-                        canAutoGenerateReport
+                      className={`flex items-center gap-3 rounded-md border px-3 py-3 text-sm transition-colors ${canAutoGenerateReport && autoGenerateReport
+                        ? "border-ring bg-accent text-accent-foreground"
+                        : "border-border bg-background/35 text-muted-foreground"
+                        } ${canAutoGenerateReport
                           ? ""
                           : "cursor-not-allowed opacity-50"
-                      }`}
+                        }`}
                     >
                       <button
-                        className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:ring-3 focus:ring-ring/25 focus:outline-none disabled:cursor-not-allowed ${
-                          canAutoGenerateReport && autoGenerateReport
-                            ? "border-sky-300/70 bg-sky-500/70"
-                            : "border-border bg-muted/55"
-                        }`}
+                        className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:ring-3 focus:ring-ring/25 focus:outline-none disabled:cursor-not-allowed ${canAutoGenerateReport && autoGenerateReport
+                          ? "border-sky-300/70 bg-sky-500/70"
+                          : "border-border bg-muted/55"
+                          }`}
                         type="button"
                         role="switch"
                         aria-checked={
@@ -1484,11 +1516,10 @@ export function DeckSimulation({
                         }
                       >
                         <span
-                          className={`absolute top-1/2 left-1 size-4 -translate-y-1/2 rounded-full bg-foreground shadow-sm shadow-black/30 transition-transform ${
-                            canAutoGenerateReport && autoGenerateReport
-                              ? "translate-x-5"
-                              : "translate-x-0"
-                          }`}
+                          className={`absolute top-1/2 left-1 size-4 -translate-y-1/2 rounded-full bg-foreground shadow-sm shadow-black/30 transition-transform ${canAutoGenerateReport && autoGenerateReport
+                            ? "translate-x-5"
+                            : "translate-x-0"
+                            }`}
                         />
                       </button>
                       <span className="font-medium">
@@ -1502,11 +1533,10 @@ export function DeckSimulation({
                       </legend>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
-                            openingHandMode === "simulate"
-                              ? "border-ring bg-accent text-accent-foreground"
-                              : "border-border bg-background/35 text-muted-foreground"
-                          }`}
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${openingHandMode === "simulate"
+                            ? "border-ring bg-accent text-accent-foreground"
+                            : "border-border bg-background/35 text-muted-foreground"
+                            }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1518,11 +1548,10 @@ export function DeckSimulation({
                           Simulate opening hand
                         </label>
                         <label
-                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${
-                            openingHandMode === "provide"
-                              ? "border-ring bg-accent text-accent-foreground"
-                              : "border-border bg-background/35 text-muted-foreground"
-                          }`}
+                          className={`flex items-center gap-2 rounded-md border px-3 py-3 text-sm transition-colors ${openingHandMode === "provide"
+                            ? "border-ring bg-accent text-accent-foreground"
+                            : "border-border bg-background/35 text-muted-foreground"
+                            }`}
                         >
                           <input
                             className="size-4 accent-sky-300"
@@ -1667,7 +1696,6 @@ export function DeckSimulation({
               }
               onSimulationUpdated={updateSimulation}
               onUpgradeUsage={onUpgradeUsage}
-              onViewUsage={onViewUsage}
               simulation={selectedSimulation}
               startingHand={selectedSimulationStartingHand}
               startingHandLoadError={startingHandLoadError}
@@ -2078,7 +2106,6 @@ function SimulationDetails({
   onOpenDetails,
   onSimulationUpdated,
   onUpgradeUsage,
-  onViewUsage,
   simulation,
   startingHand,
   startingHandLoadError,
@@ -2092,7 +2119,6 @@ function SimulationDetails({
   onOpenDetails: () => void
   onSimulationUpdated: (simulation: Simulation) => void
   onUpgradeUsage: () => void
-  onViewUsage: () => void
   simulation: Simulation
   startingHand: StartingHand | null
   startingHandLoadError: string | null
@@ -2562,9 +2588,9 @@ function SimulationDetails({
         turnLlmRuns: currentResultsInfo.turnLlmRuns.map((run) =>
           run.llmRunId === evaluation.turnLlmRunId
             ? {
-                ...run,
-                turnEvaluation: evaluation,
-              }
+              ...run,
+              turnEvaluation: evaluation,
+            }
             : run
         ),
       }
@@ -2585,9 +2611,9 @@ function SimulationDetails({
         openingHandLlmRuns: currentResultsInfo.openingHandLlmRuns.map((run) =>
           run.llmRunId === evaluation.openingHandLlmRunId
             ? {
-                ...run,
-                openingHandEvaluation: evaluation,
-              }
+              ...run,
+              openingHandEvaluation: evaluation,
+            }
             : run
         ),
       }
@@ -2780,7 +2806,6 @@ function SimulationDetails({
               onOpeningHandEvaluationSaved={handleOpeningHandEvaluationSaved}
               onTurnEvaluationSaved={handleTurnEvaluationSaved}
               onUpgradeUsage={onUpgradeUsage}
-              onViewUsage={onViewUsage}
               openingHandRunError={openingHandRunError}
               reportRunError={reportRunError}
               resultsInfo={resultsInfo}
@@ -3055,7 +3080,6 @@ function SimulationResultsPanel({
   onOpeningHandEvaluationSaved,
   onTurnEvaluationSaved,
   onUpgradeUsage,
-  onViewUsage,
   openingHandRunError,
   reportRunError,
   resultsInfo,
@@ -3088,7 +3112,6 @@ function SimulationResultsPanel({
   onOpeningHandEvaluationSaved: (evaluation: OpeningHandEvaluation) => void
   onTurnEvaluationSaved: (evaluation: TurnEvaluation) => void
   onUpgradeUsage: () => void
-  onViewUsage: () => void
   openingHandRunError: string | null
   reportRunError: string | null
   resultsInfo: SimulationResultsInfo
@@ -3243,9 +3266,9 @@ function SimulationResultsPanel({
 
       return run
         ? {
-            resultKind: "opening_hand" as const,
-            run,
-          }
+          resultKind: "opening_hand" as const,
+          run,
+        }
         : null
     }
 
@@ -3256,9 +3279,9 @@ function SimulationResultsPanel({
 
     return run
       ? {
-          resultKind: "turn" as const,
-          run,
-        }
+        resultKind: "turn" as const,
+        run,
+      }
       : null
   }, [
     evaluationRunSelection,
@@ -3412,9 +3435,8 @@ function SimulationResultsPanel({
           return (
             <section
               key={run.llmRunId}
-              className={`grid gap-3 rounded-md border border-border bg-background/35 p-3 ${
-                run.resultKind === "report" ? "order-last" : ""
-              }`}
+              className={`grid gap-3 rounded-md border border-border bg-background/35 p-3 ${run.resultKind === "report" ? "order-last" : ""
+                }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -3527,8 +3549,8 @@ function SimulationResultsPanel({
               ) : null}
 
               {run.resultEntries.length > 0 ||
-              finishedThinkingStatus ||
-              hasLiveReport ? (
+                finishedThinkingStatus ||
+                hasLiveReport ? (
                 <SimulationResultChunkCards
                   run={run}
                   entries={run.resultEntries}
@@ -3553,41 +3575,33 @@ function SimulationResultsPanel({
                 />
               ) : run.resultEntries.length === 0 && !run.gameState ? (
                 <div
-                  className={`rounded-md border px-3 py-2 text-sm ${
-                    emptyRunFailureMessage
+                  className={`rounded-md border px-3 py-2 text-sm ${isUsageLimitFailure
+                    ? "border-amber-300/30 bg-amber-400/10 text-amber-100"
+                    : emptyRunFailureMessage
                       ? "border-destructive/40 bg-destructive/10 text-destructive"
                       : "border-border bg-black/20 text-muted-foreground"
-                  }`}
-                  role={emptyRunFailureMessage ? "alert" : undefined}
+                    }`}
+                  role={
+                    isUsageLimitFailure
+                      ? "status"
+                      : emptyRunFailureMessage
+                        ? "alert"
+                        : undefined
+                  }
                 >
-                  <p>
-                    {emptyRunFailureMessage ??
-                      "No user-facing events have been saved for this run yet."}
-                  </p>
                   {isUsageLimitFailure ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="border-destructive/30 bg-background/35 text-foreground hover:bg-muted/45"
-                        onClick={onViewUsage}
-                      >
-                        <Gauge data-icon="inline-start" />
-                        View usage
-                      </Button>
-                      {shouldShowUsageUpgradeAction ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={onUpgradeUsage}
-                        >
-                          <ExternalLink data-icon="inline-start" />
-                          Upgrade for more usage
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
+                    <UsageLimitReachedNotice
+                      onUpgradeUsage={onUpgradeUsage}
+                      shouldShowUsageUpgradeAction={
+                        shouldShowUsageUpgradeAction
+                      }
+                    />
+                  ) : (
+                    <p>
+                      {emptyRunFailureMessage ??
+                        "No user-facing events have been saved for this run yet."}
+                    </p>
+                  )}
                 </div>
               ) : null}
             </section>
@@ -4181,9 +4195,8 @@ function getEvaluationModelPresetLabel(
     return "Evaluation model preset unavailable"
   }
 
-  return `${getLlmModelPresetLabel(evaluation.llmModelPreset)}${
-    evaluation.llmModelPreset.isEnabled ? "" : " (disabled)"
-  }`
+  return `${getLlmModelPresetLabel(evaluation.llmModelPreset)}${evaluation.llmModelPreset.isEnabled ? "" : " (disabled)"
+    }`
 }
 
 function TurnEvaluationMetric({
@@ -4399,9 +4412,9 @@ function SimulationResultThinkingStatus({
     activeToolCallName === null
       ? null
       : getKnownSimulationResultToolLabel({
-          mcpFunctionName: activeToolCallName,
-          state: "active",
-        })
+        mcpFunctionName: activeToolCallName,
+        state: "active",
+      })
   const activeElapsedText =
     runStartTimeMs === null || isFinished || isPending
       ? null
@@ -4535,8 +4548,8 @@ function SimulationRunActivityPanel({
     runStartTimeMs === null
       ? null
       : formatMinutesSeconds(
-          (runFinishedTimeMs ?? currentTimeMs) - runStartTimeMs
-        )
+        (runFinishedTimeMs ?? currentTimeMs) - runStartTimeMs
+      )
   const terminalActivityStatus = useMemo(
     () =>
       getSimulationRunTerminalActivityStatus({
@@ -4729,9 +4742,8 @@ function SimulationRunActivityPanel({
 
   return (
     <div
-      className={`h-full min-h-0 shrink-0 overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none ${
-        isOpen ? "w-[clamp(18rem,30vw,24rem)]" : "w-0"
-      }`}
+      className={`h-full min-h-0 shrink-0 overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none ${isOpen ? "w-[clamp(18rem,30vw,24rem)]" : "w-0"
+        }`}
       onTransitionEnd={handlePanelTransitionEnd}
     >
       <aside
@@ -4913,15 +4925,15 @@ function SimulationRunActivityTerminalStatus({
 
 type SimulationRunActivityTimelineItem =
   | {
-      id: string
-      type: "reasoning"
-      block: Extract<SimulationRunActivityBlock, { type: "reasoning" }>
-    }
+    id: string
+    type: "reasoning"
+    block: Extract<SimulationRunActivityBlock, { type: "reasoning" }>
+  }
   | {
-      id: string
-      type: "tool_call_group"
-      blocks: Extract<SimulationRunActivityBlock, { type: "tool_call" }>[]
-    }
+    id: string
+    type: "tool_call_group"
+    blocks: Extract<SimulationRunActivityBlock, { type: "tool_call" }>[]
+  }
 
 function getSimulationRunActivityTimelineItems(
   blocks: readonly SimulationRunActivityBlock[]
@@ -5684,7 +5696,7 @@ function isMcpCallFailure(chunk: SimulationDebugLlmRunChunk) {
 
   return (
     getPayloadString(asPayloadRecord(chunk.payload).item, "status") ===
-      "failed" || getMcpCallErrorPayload(chunk) !== null
+    "failed" || getMcpCallErrorPayload(chunk) !== null
   )
 }
 
@@ -5869,7 +5881,7 @@ function SimulationDebugRunGroup({
             </div>
 
             {run.provider === "openrouter" &&
-            (run.openrouterGenerations?.length ?? 0) > 0 ? (
+              (run.openrouterGenerations?.length ?? 0) > 0 ? (
               <OpenRouterGenerationsTable
                 deckId={deckId}
                 generations={run.openrouterGenerations ?? []}
@@ -5930,19 +5942,19 @@ function SimulationDebugRunGroup({
 
 type OpenRouterGenerationLookupState =
   | {
-      status: "loading"
-    }
+    status: "loading"
+  }
   | {
-      status: "loaded"
-      providerName: string | null
-      providerEntry: unknown | null
-      providerSlug: string | null
-      result: unknown
-    }
+    status: "loaded"
+    providerName: string | null
+    providerEntry: unknown | null
+    providerSlug: string | null
+    result: unknown
+  }
   | {
-      status: "error"
-      error: string
-    }
+    status: "error"
+    error: string
+  }
 
 function OpenRouterGenerationsTable({
   deckId,
@@ -6665,13 +6677,12 @@ function CreateStartingHandModal({
                     return (
                       <li key={card.id}>
                         <label
-                          className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
-                            isSelected
-                              ? "bg-accent text-accent-foreground"
-                              : isDisabled
-                                ? "text-muted-foreground/55"
-                                : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                          }`}
+                          className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${isSelected
+                            ? "bg-accent text-accent-foreground"
+                            : isDisabled
+                              ? "text-muted-foreground/55"
+                              : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                            }`}
                         >
                           <input
                             className="size-4 accent-sky-300"

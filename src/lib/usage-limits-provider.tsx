@@ -39,10 +39,7 @@ export function UsageLimitsProvider({
     setUsageLimits([])
     setUsageLimitsError(null)
     setIsUsageLimitsLoading(false)
-
-    if (!userId) {
-      prefetchedUserIdRef.current = null
-    }
+    prefetchedUserIdRef.current = null
   }, [userId])
 
   const refreshUsageLimits = useCallback(async () => {
