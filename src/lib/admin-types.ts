@@ -7,6 +7,8 @@ export type AdminUser = {
   banned: boolean
   banReason: string | null
   banExpires: string | null
+  recentLlmRunCostUsd: number
+  totalLlmRunCostUsd: number
   createdAt: string
   updatedAt: string
 }
@@ -14,4 +16,6 @@ export type AdminUser = {
 export type AdminUsersResponse = {
   users: AdminUser[]
   total: number
+  recentLlmRunCostUsd: number
+  totalLlmRunCostUsd: number
 }

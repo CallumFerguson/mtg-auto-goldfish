@@ -5082,8 +5082,18 @@ async function main() {
 
     try {
       const users = await listAdminUsers()
+      const totalLlmRunCostUsd = users.reduce(
+        (totalCost, user) => totalCost + user.totalLlmRunCostUsd,
+        0
+      )
+      const recentLlmRunCostUsd = users.reduce(
+        (totalCost, user) => totalCost + user.recentLlmRunCostUsd,
+        0
+      )
 
       res.status(200).json({
+        recentLlmRunCostUsd,
+        totalLlmRunCostUsd,
         users,
         total: users.length,
       })

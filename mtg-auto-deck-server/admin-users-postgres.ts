@@ -9,6 +9,8 @@ export type AdminUserSummary = {
   banned: boolean
   banReason: string | null
   banExpires: string | null
+  recentLlmRunCostUsd: number
+  totalLlmRunCostUsd: number
   createdAt: string
   updatedAt: string
 }
@@ -33,6 +35,8 @@ type AdminUserRow = {
   banned: boolean | null
   banReason: string | null
   banExpires: Date | null
+  recentLlmRunCostUsd: string | number
+  totalLlmRunCostUsd: string | number
   createdAt: Date
   updatedAt: Date
 }
@@ -52,23 +56,63 @@ type AdminUserLlmRunRow = {
 }
 
 export async function listAdminUsers() {
-  const result = await queryDatabase<AdminUserRow>(`
-    SELECT
-      id,
-      email,
-      "emailVerified" AS "emailVerified",
-      name,
-      role,
-      banned,
-      "banReason" AS "banReason",
-      "banExpires" AS "banExpires",
-      "createdAt" AS "createdAt",
-      "updatedAt" AS "updatedAt"
-    FROM "user"
-    ORDER BY "createdAt" DESC, lower(email) ASC
-  `)
+  const query = buildListAdminUsersQuery(new Date())
+  const result = await queryDatabase<AdminUserRow>(query.text, query.values)
 
   return result.rows.map(toAdminUserSummary)
+}
+
+export function buildListAdminUsersQuery(now: Date) {
+  const recentStartedAt = new Date(now.getTime() - 60 * 60 * 1000)
+
+  return {
+    text: `
+      WITH priced_llm_runs AS (
+        SELECT
+          owner_user_id,
+          started_at,
+          COALESCE(openrouter_reported_cost_usd, estimated_cost_usd) AS cost_usd
+        FROM llm_runs
+        WHERE owner_user_id IS NOT NULL
+          AND status IN ('completed', 'failed', 'cancelled')
+          AND COALESCE(openrouter_reported_cost_usd, estimated_cost_usd) IS NOT NULL
+      ),
+      user_llm_costs AS (
+        SELECT
+          owner_user_id,
+          SUM(cost_usd) AS total_llm_run_cost_usd,
+          SUM(
+            CASE
+              WHEN started_at >= $1 THEN cost_usd
+              ELSE 0
+            END
+          ) AS recent_llm_run_cost_usd
+        FROM priced_llm_runs
+        GROUP BY owner_user_id
+      )
+      SELECT
+        app_user.id,
+        app_user.email,
+        app_user."emailVerified" AS "emailVerified",
+        app_user.name,
+        app_user.role,
+        app_user.banned,
+        app_user."banReason" AS "banReason",
+        app_user."banExpires" AS "banExpires",
+        COALESCE(user_llm_costs.recent_llm_run_cost_usd, 0) AS "recentLlmRunCostUsd",
+        COALESCE(user_llm_costs.total_llm_run_cost_usd, 0) AS "totalLlmRunCostUsd",
+        app_user."createdAt" AS "createdAt",
+        app_user."updatedAt" AS "updatedAt"
+      FROM "user" app_user
+      LEFT JOIN user_llm_costs
+        ON user_llm_costs.owner_user_id = app_user.id
+      ORDER BY
+        COALESCE(user_llm_costs.recent_llm_run_cost_usd, 0) DESC,
+        COALESCE(user_llm_costs.total_llm_run_cost_usd, 0) DESC,
+        lower(app_user.email) ASC
+    `,
+    values: [recentStartedAt],
+  }
 }
 
 export async function listActiveAdminUserSimulations(
@@ -213,6 +257,8 @@ function toAdminUserSummary(row: AdminUserRow): AdminUserSummary {
     banned: row.banned ?? false,
     banReason: row.banReason,
     banExpires: formatDate(row.banExpires),
+    recentLlmRunCostUsd: toNumber(row.recentLlmRunCostUsd),
+    totalLlmRunCostUsd: toNumber(row.totalLlmRunCostUsd),
     createdAt: formatDate(row.createdAt) ?? "",
     updatedAt: formatDate(row.updatedAt) ?? "",
   }
@@ -220,6 +266,12 @@ function toAdminUserSummary(row: AdminUserRow): AdminUserSummary {
 
 function formatDate(value: Date | null) {
   return value ? value.toISOString() : null
+}
+
+function toNumber(value: string | number) {
+  const parsedValue = Number(value)
+
+  return Number.isFinite(parsedValue) ? parsedValue : 0
 }
 
 async function deleteUserVerificationValues(

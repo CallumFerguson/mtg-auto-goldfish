@@ -73,6 +73,7 @@ import {
   getUsageLimitWindowBounds,
   roundUsageRemainingPercent,
 } from "./usage-limits-postgres.js"
+import { buildListAdminUsersQuery } from "./admin-users-postgres.js"
 import {
   buildOpeningHandEvaluationInputText,
   buildTurnEvaluationInputText,
@@ -764,6 +765,29 @@ test("builds usage spend query for terminal started runs", () => {
   assert.match(
     normalizedSql,
     /COALESCE\(openrouter_reported_cost_usd, estimated_cost_usd\) IS NOT NULL/
+  )
+})
+
+test("builds admin user LLM cost aggregate query", () => {
+  const query = buildListAdminUsersQuery(
+    new Date("2026-05-16T10:30:00.000Z")
+  )
+  const normalizedSql = query.text.replace(/\s+/g, " ")
+
+  assert.deepEqual(query.values, [new Date("2026-05-16T09:30:00.000Z")])
+  assert.match(
+    normalizedSql,
+    /COALESCE\(openrouter_reported_cost_usd, estimated_cost_usd\) AS cost_usd/
+  )
+  assert.match(
+    normalizedSql,
+    /COALESCE\(openrouter_reported_cost_usd, estimated_cost_usd\) IS NOT NULL/
+  )
+  assert.match(normalizedSql, /status IN \('completed', 'failed', 'cancelled'\)/)
+  assert.match(normalizedSql, /WHEN started_at >= \$1 THEN cost_usd/)
+  assert.match(
+    normalizedSql,
+    /ORDER BY COALESCE\(user_llm_costs\.recent_llm_run_cost_usd, 0\) DESC, COALESCE\(user_llm_costs\.total_llm_run_cost_usd, 0\) DESC, lower\(app_user\.email\) ASC/
   )
 })
 

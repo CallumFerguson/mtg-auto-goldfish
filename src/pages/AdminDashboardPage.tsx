@@ -337,6 +337,8 @@ function AdminUsersSection({
   const navigate = useNavigate()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [total, setTotal] = useState(0)
+  const [totalLlmRunCostUsd, setTotalLlmRunCostUsd] = useState(0)
+  const [recentLlmRunCostUsd, setRecentLlmRunCostUsd] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [openUserMenuId, setOpenUserMenuId] = useState<string | null>(null)
@@ -366,6 +368,8 @@ function AdminUsersSection({
       const data = (await response.json()) as AdminUsersResponse
       setUsers(data.users)
       setTotal(data.total)
+      setTotalLlmRunCostUsd(data.totalLlmRunCostUsd ?? 0)
+      setRecentLlmRunCostUsd(data.recentLlmRunCostUsd ?? 0)
     } catch {
       setLoadError("Users could not be loaded.")
     } finally {
@@ -404,6 +408,12 @@ function AdminUsersSection({
         currentUsers.filter((user) => user.id !== userToDelete.id)
       )
       setTotal((currentTotal) => Math.max(0, currentTotal - 1))
+      setTotalLlmRunCostUsd((currentCost) =>
+        Math.max(0, currentCost - userToDelete.totalLlmRunCostUsd)
+      )
+      setRecentLlmRunCostUsd((currentCost) =>
+        Math.max(0, currentCost - userToDelete.recentLlmRunCostUsd)
+      )
       setUserToDelete(null)
     } catch {
       setDeleteUserError("User could not be deleted.")
@@ -446,7 +456,7 @@ function AdminUsersSection({
 
   return (
     <section className="min-w-0 space-y-4">
-      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 rounded-lg border border-border bg-card/70 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex items-center gap-2">
             <UsersRound className="size-5 shrink-0 text-sky-300" aria-hidden />
@@ -458,18 +468,28 @@ function AdminUsersSection({
               : `${total} ${total === 1 ? "account" : "accounts"}`}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void loadUsers()}
-          disabled={isLoading}
-        >
-          <RefreshCw
-            data-icon="inline-start"
-            className={isLoading ? "animate-spin" : undefined}
-          />
-          Refresh
-        </Button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <AdminCostSummary label="Last hour">
+              {formatUsdCost(recentLlmRunCostUsd)}
+            </AdminCostSummary>
+            <AdminCostSummary label="All time">
+              {formatUsdCost(totalLlmRunCostUsd)}
+            </AdminCostSummary>
+          </dl>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void loadUsers()}
+            disabled={isLoading}
+          >
+            <RefreshCw
+              data-icon="inline-start"
+              className={isLoading ? "animate-spin" : undefined}
+            />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {impersonateUserError ? (
@@ -505,8 +525,8 @@ function AdminUsersSection({
                   <TableHeader>Account</TableHeader>
                   <TableHeader>Verified</TableHeader>
                   <TableHeader>Role</TableHeader>
-                  <TableHeader>Created</TableHeader>
-                  <TableHeader>Updated</TableHeader>
+                  <TableHeader>Last hour</TableHeader>
+                  <TableHeader>Total cost</TableHeader>
                   <TableHeader>
                     <span className="sr-only">Actions</span>
                   </TableHeader>
@@ -534,8 +554,16 @@ function AdminUsersSection({
                     <TableCell>
                       <RoleBadge role={user.role} />
                     </TableCell>
-                    <TableCell>{formatDateTime(user.createdAt)}</TableCell>
-                    <TableCell>{formatDateTime(user.updatedAt)}</TableCell>
+                    <TableCell>
+                      <CostText>
+                        {formatUsdCost(user.recentLlmRunCostUsd)}
+                      </CostText>
+                    </TableCell>
+                    <TableCell>
+                      <CostText>
+                        {formatUsdCost(user.totalLlmRunCostUsd)}
+                      </CostText>
+                    </TableCell>
                     <TableCell>
                       <AdminUserActionsMenu
                         currentUserId={currentUserId}
@@ -600,11 +628,15 @@ function AdminUsersSection({
                   <AdminUserDetail label="Verified">
                     <VerificationBadge isVerified={user.emailVerified} />
                   </AdminUserDetail>
-                  <AdminUserDetail label="Created">
-                    {formatDateTime(user.createdAt)}
+                  <AdminUserDetail label="Last hour">
+                    <CostText>
+                      {formatUsdCost(user.recentLlmRunCostUsd)}
+                    </CostText>
                   </AdminUserDetail>
-                  <AdminUserDetail label="Updated">
-                    {formatDateTime(user.updatedAt)}
+                  <AdminUserDetail label="Total cost">
+                    <CostText>
+                      {formatUsdCost(user.totalLlmRunCostUsd)}
+                    </CostText>
                   </AdminUserDetail>
                 </dl>
               </li>
@@ -1762,6 +1794,35 @@ function formatOptionalCost(value: number | null) {
   return value === null ? "n/a" : `$${value.toFixed(6).replace(/0+$/u, "").replace(/\.$/u, "")}`
 }
 
+function formatUsdCost(value: number) {
+  return `$${(Number.isFinite(value) ? value : 0).toFixed(2)}`
+}
+
+function AdminCostSummary({
+  children,
+  label,
+}: {
+  children: ReactNode
+  label: string
+}) {
+  return (
+    <div className="grid gap-0.5">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="font-mono text-sm font-semibold text-foreground">
+        {children}
+      </dd>
+    </div>
+  )
+}
+
+function CostText({ children }: { children: ReactNode }) {
+  return (
+    <span className="font-mono text-sm font-medium text-foreground">
+      {children}
+    </span>
+  )
+}
+
 function TableHeader({ children }: { children: ReactNode }) {
   return (
     <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
@@ -1881,17 +1942,4 @@ function getAuthClientErrorMessage(error: unknown, fallbackMessage: string) {
   return typeof message === "string" && message.trim()
     ? message
     : fallbackMessage
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return value || "Unknown"
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date)
 }
