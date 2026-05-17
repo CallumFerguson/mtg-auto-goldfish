@@ -3566,11 +3566,21 @@ export async function claimNextQueuedLlmRun({
       return null
     }
 
+    const claimStartedAtResult = await client.query<{ claim_started_at: Date }>(
+      "SELECT clock_timestamp() AS claim_started_at"
+    )
+    const claimStartedAt = claimStartedAtResult.rows[0]?.claim_started_at
+
+    if (!claimStartedAt) {
+      throw new Error("Failed to resolve LLM run claim timestamp.")
+    }
+
     if (run.owner_user_id !== null) {
       const usageDecision =
         await ensureUserUsageLimitWindowsForRunStartWithClient(
           client,
-          run.owner_user_id
+          run.owner_user_id,
+          claimStartedAt
         )
 
       if (!usageDecision.allowed) {
@@ -3607,20 +3617,13 @@ export async function claimNextQueuedLlmRun({
       }
     }
 
+    const claimRunQuery = buildClaimQueuedLlmRunStreamingQuery(
+      run.llm_run_id,
+      claimStartedAt
+    )
     const claimedResult = await client.query<{
       started_at: Date
-    }>(
-      `
-        UPDATE llm_runs
-        SET status = 'streaming',
-            started_at = COALESCE(started_at, now()),
-            updated_at = now()
-        WHERE id = $1
-          AND status = 'pending'
-        RETURNING started_at
-      `,
-      [run.llm_run_id]
-    )
+    }>(claimRunQuery.text, claimRunQuery.values)
     const claimed = claimedResult.rows[0]
 
     if (!claimed) {
@@ -3650,6 +3653,24 @@ export async function claimNextQueuedLlmRun({
 
     return claimedRun
   })
+}
+
+export function buildClaimQueuedLlmRunStreamingQuery(
+  llmRunId: string,
+  startedAt: Date
+) {
+  return {
+    text: `
+      UPDATE llm_runs
+      SET status = 'streaming',
+          started_at = COALESCE(started_at, $2::timestamptz),
+          updated_at = $2::timestamptz
+      WHERE id = $1
+        AND status = 'pending'
+      RETURNING started_at
+    `,
+    values: [llmRunId, startedAt],
+  }
 }
 
 export function buildFailQueuedLlmRunUsageLimitQuery(

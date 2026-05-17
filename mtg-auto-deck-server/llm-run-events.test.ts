@@ -28,6 +28,7 @@ import {
   STALE_RUNNING_SIMULATION_CANCELLATION_MESSAGE,
   TURN_EVALUATION_UPSERT_SQL,
   buildAppendLlmRunChunksQuery,
+  buildClaimQueuedLlmRunStreamingQuery,
   buildFailQueuedLlmRunUsageLimitQuery,
   buildPartialLlmRunCostSnapshotQuery,
   canApplyLateLlmRunTerminalUpdate,
@@ -828,6 +829,45 @@ test("checks usage limit gate before starting queued runs", () => {
       exhaustedWindowKinds: ["five_hour"],
     }
   )
+})
+
+test("builds queued LLM run claim query with explicit claim timestamp", () => {
+  const claimStartedAt = new Date("2026-05-15T12:00:00.123Z")
+  const query = buildClaimQueuedLlmRunStreamingQuery(
+    "00000000-0000-0000-0000-000000000001",
+    claimStartedAt
+  )
+  const normalizedSql = query.text.replace(/\s+/g, " ")
+
+  assert.deepEqual(query.values, [
+    "00000000-0000-0000-0000-000000000001",
+    claimStartedAt,
+  ])
+  assert.match(
+    normalizedSql,
+    /started_at = COALESCE\(started_at, \$2::timestamptz\)/
+  )
+  assert.match(normalizedSql, /updated_at = \$2::timestamptz/)
+  assert.doesNotMatch(
+    normalizedSql,
+    /started_at = COALESCE\(started_at, now\(\)\)/
+  )
+})
+
+test("uses the same claim timestamp for first usage window and queued run start", () => {
+  const claimStartedAt = new Date("2026-05-15T12:00:00.123Z")
+  const window = getStartedUsageLimitWindowBounds({
+    durationMs: 5 * 60 * 60 * 1000,
+    existingWindow: null,
+    now: claimStartedAt,
+  })
+  const claimRunQuery = buildClaimQueuedLlmRunStreamingQuery(
+    "00000000-0000-0000-0000-000000000001",
+    claimStartedAt
+  )
+
+  assert.equal(window.startedAt.toISOString(), claimStartedAt.toISOString())
+  assert.equal(claimRunQuery.values[1], claimStartedAt)
 })
 
 test("builds usage-limit queue failure query with null stored costs", () => {
