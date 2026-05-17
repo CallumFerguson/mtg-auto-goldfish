@@ -295,6 +295,16 @@ function isActiveLlmRunStatus(status: string) {
   )
 }
 
+function getLlmRunEstimatedPriceText(
+  run: Pick<SimulationDebugLlmRun, "estimatedPriceCents" | "status">
+) {
+  if (isActiveLlmRunStatus(run.status) || !run.estimatedPriceCents) {
+    return null
+  }
+
+  return `${run.estimatedPriceCents} cents`
+}
+
 function isTerminalLlmRunStatus(status: string) {
   return status === "completed" || status === "failed" || status === "cancelled"
 }
@@ -3417,7 +3427,7 @@ function SimulationResultsPanel({
           const runMetadata = [
             run.status,
             run.model,
-            run.estimatedPriceCents ? `${run.estimatedPriceCents} cents` : null,
+            getLlmRunEstimatedPriceText(run),
             finishedDurationText ? `took ${finishedDurationText}` : null,
             run.failureMessage ? run.failureMessage : null,
             run.outdated ? "outdated" : null,
@@ -5858,11 +5868,11 @@ function SimulationDebugRunGroup({
               <p className="text-muted-foreground">
                 Model: <span className="text-foreground">{run.model}</span>
               </p>
-              {run.estimatedPriceCents ? (
+              {getLlmRunEstimatedPriceText(run) ? (
                 <p className="text-muted-foreground">
                   Estimated price:{" "}
                   <span className="text-foreground">
-                    {run.estimatedPriceCents} cents
+                    {getLlmRunEstimatedPriceText(run)}
                   </span>
                 </p>
               ) : null}
