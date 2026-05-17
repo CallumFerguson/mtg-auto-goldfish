@@ -806,7 +806,7 @@ test("selects preferred usage cost source", () => {
   )
 })
 
-test("builds usage spend query for terminal started runs", () => {
+test("builds usage spend query for started runs with cost", () => {
   const query = buildUsageWindowSpentUsdQuery({
     ownerUserId: "user-1",
     startedAt: new Date("2026-05-15T12:00:00.000Z"),
@@ -819,7 +819,8 @@ test("builds usage spend query for terminal started runs", () => {
     new Date("2026-05-15T12:00:00.000Z"),
     new Date("2026-05-15T17:00:00.000Z"),
   ])
-  assert.match(normalizedSql, /status IN \('completed', 'failed', 'cancelled'\)/)
+  assert.doesNotMatch(normalizedSql, /phase IN/)
+  assert.doesNotMatch(normalizedSql, /status IN/)
   assert.match(
     normalizedSql,
     /SUM\(COALESCE\(openrouter_reported_cost_usd, estimated_cost_usd\)\)/

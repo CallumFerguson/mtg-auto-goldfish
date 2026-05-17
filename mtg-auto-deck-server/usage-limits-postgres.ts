@@ -432,8 +432,6 @@ export function buildUsageWindowSpentUsdQuery({
         COALESCE(SUM(COALESCE(openrouter_reported_cost_usd, estimated_cost_usd)), 0) AS spent_cost_usd
       FROM llm_runs
       WHERE owner_user_id = $1
-        AND phase IN ('opening_hand', 'turn', 'report')
-        AND status IN ('completed', 'failed', 'cancelled')
         AND started_at >= $2
         AND started_at < $3
         AND COALESCE(openrouter_reported_cost_usd, estimated_cost_usd) IS NOT NULL
