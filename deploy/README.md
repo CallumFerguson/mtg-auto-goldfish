@@ -187,18 +187,18 @@ Postgres                 -> same Droplet, localhost only
 
 10. Install and reload the Caddy config:
 
-   ```sh
-   sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
-   sudo caddy validate --config /etc/caddy/Caddyfile
-   sudo systemctl reload caddy
-   ```
+    ```sh
+    sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile
+    sudo caddy validate --config /etc/caddy/Caddyfile
+    sudo systemctl reload caddy
+    ```
 
 11. Verify the API:
 
-   ```sh
-   curl -fsS http://127.0.0.1:3001/health
-   curl -fsS https://api.example.com/health
-   ```
+    ```sh
+    curl -fsS http://127.0.0.1:3001/health
+    curl -fsS https://api.example.com/health
+    ```
 
 12. Bootstrap the first admin user.
 
