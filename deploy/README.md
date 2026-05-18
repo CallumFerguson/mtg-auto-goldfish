@@ -259,10 +259,25 @@ Deploy backend updates on the Droplet:
 cd /opt/mtg-auto-deck
 sudo -u mtgapp git fetch --all --prune
 sudo -u mtgapp git pull --ff-only
+```
+
+Optionally back up the database before restarting the updated server:
+
+```sh
 sudo install -d -o postgres -g postgres -m 700 /var/backups/mtg-auto-deck
 sudo -u postgres pg_dump -Fc mtg_auto_deck -f /var/backups/mtg-auto-deck/mtg-auto-deck-$(date +%F-%H%M).dump
+```
+
+Optionally refresh installed packages before building if new packages were
+added or existing packages were updated:
+
+```sh
 sudo -u mtgapp npm ci
-sudo -u mtgapp npm run test
+```
+
+Then build, restart, and verify the API:
+
+```sh
 sudo -u mtgapp npm run server:build
 sudo systemctl restart mtg-auto-deck-server
 curl -fsS https://api.example.com/health
