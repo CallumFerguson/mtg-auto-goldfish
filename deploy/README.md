@@ -87,7 +87,9 @@ Postgres                 -> same Droplet, localhost only
    ```
 
    At the `postgres=#` prompt, run the database setup commands. Replace the
-   password placeholder first:
+   password placeholder first.
+
+   Do not copy and paste the whole block. Run one line at a time:
 
    ```sql
    CREATE USER mtg_auto_deck WITH PASSWORD 'REPLACE_WITH_LONG_RANDOM_PASSWORD';
