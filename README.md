@@ -1,5 +1,9 @@
 # MTG Auto Deck
 
+[Try it for free here](https://mtgautodeck.com/)
+
+## Screenshots
+
 ![Simulation screenshot](docs/simulation-screenshot.png)
 
 ![Simulation screenshot 2](docs/simulation-screenshot-2.png)
