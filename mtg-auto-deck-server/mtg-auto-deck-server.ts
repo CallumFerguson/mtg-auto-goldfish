@@ -15,6 +15,7 @@ import {
   ensureAuthSchema,
   hasValidEmailVerificationOtp,
   isPasswordResetTokenValid,
+  refreshStripeBillingForUser,
 } from "./auth.js"
 import {
   deleteAdminUser,
@@ -426,6 +427,7 @@ type AuthenticatedUser = {
   email: string
   emailVerified: boolean
   id: string
+  impersonatedBy?: string | null
   role?: string | null
 }
 
@@ -5064,6 +5066,10 @@ async function main() {
         id: session.user.id,
         email: session.user.email,
         emailVerified: session.user.emailVerified,
+        impersonatedBy:
+          typeof session.session.impersonatedBy === "string"
+            ? session.session.impersonatedBy
+            : null,
         role: session.user.role ?? null,
       })
       next()
@@ -5071,6 +5077,26 @@ async function main() {
       console.error("Failed to authenticate request:", error)
       res.status(500).json({
         error: "Authentication could not be verified.",
+      })
+    }
+  })
+
+  app.post("/billing/refresh", async (req: Request, res: Response) => {
+    const user = getAuthenticatedUser(req)
+
+    if (user.impersonatedBy) {
+      res.status(403).json({
+        error: "Billing refresh is disabled while impersonating.",
+      })
+      return
+    }
+
+    try {
+      res.status(200).json(await refreshStripeBillingForUser(user))
+    } catch (error) {
+      console.error("Failed to refresh billing:", error)
+      res.status(500).json({
+        error: "Billing could not be refreshed.",
       })
     }
   })

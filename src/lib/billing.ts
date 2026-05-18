@@ -1,5 +1,8 @@
 import { authClient } from "@/lib/auth-client"
+import { API_BASE_URL, apiFetch } from "@/lib/api"
 import { APP_PUBLIC_URL } from "@/lib/app-url"
+import { readApiError } from "@/lib/api-error"
+import type { BillingTier } from "@/lib/subscription-tiers"
 
 export function getBillingReturnUrl(result: string) {
   return `${APP_PUBLIC_URL}/settings?billing=${encodeURIComponent(
@@ -38,6 +41,25 @@ export async function openStripeBillingPortal() {
     disableRedirect: true,
     returnUrl: getBillingReturnUrl("portal"),
   })
+}
+
+export async function refreshStripeBilling() {
+  const response = await apiFetch(`${API_BASE_URL}/billing/refresh`, {
+    cache: "no-store",
+    method: "POST",
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(response, "Billing could not be refreshed.")
+    )
+  }
+
+  return (await response.json()) as {
+    activeSubscriptionCount: number
+    billingTier: BillingTier
+    stripeCustomerId: string
+  }
 }
 
 export function getStripeRedirectUrl(data: unknown) {

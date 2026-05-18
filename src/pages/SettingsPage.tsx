@@ -7,6 +7,7 @@ import {
   KeyRound,
   LogOut,
   Mail,
+  RefreshCw,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -29,6 +30,7 @@ import {
   getStripeRedirectUrl,
   getStringErrorProperty,
   openStripeBillingPortal,
+  refreshStripeBilling,
   startStripeCheckout,
 } from "@/lib/billing"
 import { useBillingTier, useBillingTierPolling } from "@/lib/billing-tier-state"
@@ -39,7 +41,7 @@ import {
   isPaidBillingTier,
   type BillingTier,
 } from "@/lib/subscription-tiers"
-import { useUsageLimitsPolling } from "@/lib/usage-limits"
+import { useUsageLimits, useUsageLimitsPolling } from "@/lib/usage-limits"
 
 type SettingsPageProps = {
   adminOptionsEnabled: boolean
@@ -69,10 +71,18 @@ export function SettingsPage({
   const [billingActionError, setBillingActionError] = useState<string | null>(
     null
   )
+  const [isRefreshingBilling, setIsRefreshingBilling] = useState(false)
   const [pendingBillingAction, setPendingBillingAction] =
     useState<PendingBillingAction>(null)
-  const { billingTier, billingTierError, hasLoadedBillingTier } =
-    useBillingTier()
+  const {
+    billingTier,
+    billingTierError,
+    hasLoadedBillingTier,
+    refreshBillingTier,
+  } = useBillingTier()
+  const { refreshUsageLimits } = useUsageLimits()
+  const isBillingRefreshDisabled =
+    isImpersonating || isRefreshingBilling || pendingBillingAction !== null
   const billingTierLabel =
     !hasLoadedBillingTier && !billingTierError
       ? "Loading..."
@@ -185,6 +195,33 @@ export function SettingsPage({
     }
   }
 
+  async function handleRefreshBilling() {
+    setIsRefreshingBilling(true)
+    setBillingActionError(null)
+    setBillingNotice(null)
+
+    try {
+      const refreshResult = await refreshStripeBilling()
+      const [nextBillingTier] = await Promise.all([
+        refreshBillingTier(),
+        refreshUsageLimits(),
+      ])
+      const refreshedTier = nextBillingTier ?? refreshResult.billingTier
+
+      setBillingNotice(
+        `Billing refreshed. Current tier: ${BILLING_TIER_LABELS[refreshedTier]}.`
+      )
+    } catch (error) {
+      setBillingActionError(
+        error instanceof Error
+          ? error.message
+          : "Billing could not be refreshed."
+      )
+    } finally {
+      setIsRefreshingBilling(false)
+    }
+  }
+
   return (
     <main className="min-h-svh bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
@@ -276,16 +313,32 @@ export function SettingsPage({
                   className="mt-1 size-6 shrink-0 text-foreground"
                   aria-hidden
                 />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">
-                    Subscription
-                  </p>
-                  <p className="mt-1 text-xs text-sky-100">
-                    Current tier:{" "}
-                    <span className="font-semibold text-foreground">
-                      {billingTierLabel}
-                    </span>
-                  </p>
+                <div className="flex min-w-0 items-start gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">
+                      Subscription
+                    </p>
+                    <p className="mt-1 text-xs text-sky-100">
+                      Current tier:{" "}
+                      <span className="font-semibold text-foreground">
+                        {billingTierLabel}
+                      </span>
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="mt-0.5"
+                    aria-label="Refresh billing"
+                    title="Refresh billing"
+                    onClick={handleRefreshBilling}
+                    disabled={isBillingRefreshDisabled}
+                  >
+                    <RefreshCw
+                      className={isRefreshingBilling ? "animate-spin" : undefined}
+                    />
+                  </Button>
                 </div>
               </div>
 
@@ -293,6 +346,7 @@ export function SettingsPage({
                 billingTier={billingTier}
                 isBillingTierReady={hasLoadedBillingTier}
                 isImpersonating={isImpersonating}
+                isRefreshingBilling={isRefreshingBilling}
                 onManageSubscription={handleManageSubscription}
                 onOpenUpgradeModal={handleOpenUpgradeModal}
                 pendingBillingAction={pendingBillingAction}
@@ -417,6 +471,7 @@ function BillingActions({
   billingTier,
   isBillingTierReady,
   isImpersonating,
+  isRefreshingBilling,
   onManageSubscription,
   onOpenUpgradeModal,
   pendingBillingAction,
@@ -424,35 +479,43 @@ function BillingActions({
   billingTier: BillingTier
   isBillingTierReady: boolean
   isImpersonating: boolean
+  isRefreshingBilling: boolean
   onManageSubscription: () => void
   onOpenUpgradeModal: () => void
   pendingBillingAction: PendingBillingAction
 }) {
   const isDisabled =
-    !isBillingTierReady || isImpersonating || pendingBillingAction !== null
+    !isBillingTierReady ||
+    isImpersonating ||
+    isRefreshingBilling ||
+    pendingBillingAction !== null
 
   if (isPaidBillingTier(billingTier)) {
     return (
-      <Button
-        type="button"
-        variant="outline"
-        className="w-fit sm:self-center"
-        onClick={onManageSubscription}
-        disabled={isDisabled}
-      >
-        <ExternalLink data-icon="inline-start" />
-        {pendingBillingAction === "portal"
-          ? "Opening..."
-          : "Manage subscription"}
-      </Button>
+      <div className="flex flex-wrap gap-2 sm:justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          className="w-fit sm:self-center"
+          onClick={onManageSubscription}
+          disabled={isDisabled}
+        >
+          <ExternalLink data-icon="inline-start" />
+          {pendingBillingAction === "portal"
+            ? "Opening..."
+            : "Manage subscription"}
+        </Button>
+      </div>
     )
   }
 
   return (
-    <Button type="button" onClick={onOpenUpgradeModal} disabled={isDisabled}>
-      <Sparkles data-icon="inline-start" />
-      Upgrade
-    </Button>
+    <div className="flex flex-wrap gap-2 sm:justify-end">
+      <Button type="button" onClick={onOpenUpgradeModal} disabled={isDisabled}>
+        <Sparkles data-icon="inline-start" />
+        Upgrade
+      </Button>
+    </div>
   )
 }
 
