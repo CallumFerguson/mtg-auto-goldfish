@@ -18,9 +18,12 @@ import {
   refreshStripeBillingForUser,
 } from "./auth.js"
 import {
+  AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE,
   deleteAdminUser,
+  getConfiguredAutoAdminEmail,
   listActiveAdminUserSimulations,
   listAdminUsers,
+  promoteAdminUserByEmail,
 } from "./admin-users-postgres.js"
 import {
   createLlmModelPreset,
@@ -4870,6 +4873,7 @@ async function main() {
   const queueConfig = getLlmRunQueueConfig()
   await verifyDatabaseConnection()
   await ensureAuthSchema()
+  await promoteConfiguredAutoAdminUserOnStartup()
   await ensureFreshScryfallOracleCards()
   await ensureDecksSchema()
   await ensureStartingHandsSchema()
@@ -6670,6 +6674,31 @@ async function main() {
     }
     startLlmRunQueue(queueConfig)
   })
+}
+
+async function promoteConfiguredAutoAdminUserOnStartup() {
+  const autoAdminEmail = getConfiguredAutoAdminEmail()
+
+  if (!autoAdminEmail) {
+    return
+  }
+
+  const promotion = await promoteAdminUserByEmail(autoAdminEmail)
+
+  if (!promotion) {
+    console.info(
+      `${AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE} is configured, but no matching user exists yet. A matching new user will be promoted when created.`
+    )
+    return
+  }
+
+  if (promotion.wasPromoted) {
+    console.info("Auto-promoted configured admin user on startup:", {
+      email: promotion.email,
+      environmentVariable: AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE,
+      userId: promotion.id,
+    })
+  }
 }
 
 function getExactMatchOracleId(

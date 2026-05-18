@@ -26,6 +26,16 @@ export type AdminUserDeletionResult = {
   deletedUserId: string
 }
 
+export type AdminUserRolePromotionResult = {
+  email: string
+  id: string
+  previousRole: string | null
+  role: string | null
+  wasPromoted: boolean
+}
+
+export const AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE = "AUTO_ADMIN_EMAIL"
+
 type AdminUserRow = {
   id: string
   email: string
@@ -55,11 +65,91 @@ type AdminUserLlmRunRow = {
   id: string
 }
 
+type AdminUserRoleRow = {
+  email: string
+  id: string
+  role: string | null
+}
+
 export async function listAdminUsers() {
   const query = buildListAdminUsersQuery(new Date())
   const result = await queryDatabase<AdminUserRow>(query.text, query.values)
 
   return result.rows.map(toAdminUserSummary)
+}
+
+export function getConfiguredAutoAdminEmail() {
+  return normalizeEmail(
+    process.env[AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE] ?? null
+  )
+}
+
+export function isConfiguredAutoAdminEmail(email: string | null | undefined) {
+  const configuredEmail = getConfiguredAutoAdminEmail()
+
+  return Boolean(configuredEmail && normalizeEmail(email) === configuredEmail)
+}
+
+export async function promoteAdminUserByEmail(
+  email: string
+): Promise<AdminUserRolePromotionResult | null> {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return null
+  }
+
+  return withDatabaseTransaction(async (client) => {
+    const userResult = await client.query<AdminUserRoleRow>(
+      `
+        SELECT id, email, role
+        FROM "user"
+        WHERE lower(email) = lower($1)
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [normalizedEmail]
+    )
+    const user = userResult.rows[0]
+
+    if (!user) {
+      return null
+    }
+
+    if (isAdminRole(user.role)) {
+      return {
+        email: user.email,
+        id: user.id,
+        previousRole: user.role,
+        role: user.role,
+        wasPromoted: false,
+      }
+    }
+
+    const updateResult = await client.query<AdminUserRoleRow>(
+      `
+        UPDATE "user"
+        SET role = 'admin',
+            "updatedAt" = NOW()
+        WHERE id = $1
+        RETURNING id, email, role
+      `,
+      [user.id]
+    )
+    const updatedUser = updateResult.rows[0]
+
+    if (!updatedUser) {
+      return null
+    }
+
+    return {
+      email: updatedUser.email,
+      id: updatedUser.id,
+      previousRole: user.role,
+      role: updatedUser.role,
+      wasPromoted: true,
+    }
+  })
 }
 
 export function buildListAdminUsersQuery(now: Date) {
@@ -317,4 +407,17 @@ async function deleteUserImpersonationSessions(
 
 function escapeSqlLikePattern(value: string) {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`)
+}
+
+function normalizeEmail(email: string | null | undefined) {
+  const normalizedEmail = email?.trim().toLowerCase()
+
+  return normalizedEmail || null
+}
+
+function isAdminRole(role: string | null) {
+  return (role?.trim() || "user")
+    .split(",")
+    .map((rolePart) => rolePart.trim().toLowerCase())
+    .includes("admin")
 }

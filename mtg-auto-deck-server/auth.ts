@@ -12,6 +12,11 @@ import {
   sendVerificationCodeEmail,
 } from "./email.js"
 import {
+  isConfiguredAutoAdminEmail,
+  promoteAdminUserByEmail,
+  AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE,
+} from "./admin-users-postgres.js"
+import {
   getStripeSubscriptionPlans,
   type BillingTier,
 } from "./subscription-tiers.js"
@@ -139,6 +144,43 @@ const impersonationAuditLogPlugin = {
   },
 } satisfies BetterAuthPlugin
 
+const configuredAutoAdminPromotionPlugin = {
+  id: "configured-auto-admin-promotion",
+  hooks: {
+    after: [
+      {
+        matcher: (context) =>
+          context.path === "/sign-up/email" ||
+          context.path === "/admin/create-user",
+        handler: createAuthMiddleware(async (ctx) => {
+          const user = getAuthResponseUser(ctx.context.returned)
+
+          if (!user?.email || !isConfiguredAutoAdminEmail(user.email)) {
+            return
+          }
+
+          try {
+            const promotion = await promoteAdminUserByEmail(user.email)
+
+            if (promotion?.wasPromoted) {
+              console.info("Auto-promoted configured admin user:", {
+                email: promotion.email,
+                environmentVariable: AUTO_ADMIN_EMAIL_ENVIRONMENT_VARIABLE,
+                userId: promotion.id,
+              })
+            }
+          } catch (error) {
+            console.error(
+              "Failed to auto-promote configured admin user:",
+              error
+            )
+          }
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin
+
 export const auth = betterAuth({
   appName: "MTG Auto Deck",
   baseURL: getRequiredEnvironmentVariable("BETTER_AUTH_URL"),
@@ -201,6 +243,7 @@ export const auth = betterAuth({
       },
     }),
     impersonationAuditLogPlugin,
+    configuredAutoAdminPromotionPlugin,
     passwordChangeNotificationPlugin,
   ],
   secret: getRequiredEnvironmentVariable("BETTER_AUTH_SECRET"),
