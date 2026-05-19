@@ -56,6 +56,7 @@ import {
   listDecks,
   updateDeckDetails,
 } from "./decks-postgres.js"
+import { ensureStarterDeckCopiesSchema } from "./starter-decks-postgres.js"
 import { ensureFreshScryfallOracleCards } from "./scryfall-cache.js"
 import {
   appendLlmRunChunkAtNextSequence,
@@ -4876,6 +4877,7 @@ async function main() {
   await promoteConfiguredAutoAdminUserOnStartup()
   await ensureFreshScryfallOracleCards()
   await ensureDecksSchema()
+  await ensureStarterDeckCopiesSchema()
   await ensureStartingHandsSchema()
   await ensureSavedSeedsSchema()
   await ensureLlmModelPresetsSchema()

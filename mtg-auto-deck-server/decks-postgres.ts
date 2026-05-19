@@ -78,6 +78,7 @@ export async function ensureDecksSchema() {
       description text,
       format text NOT NULL DEFAULT 'commander',
       owner_user_id text REFERENCES "user"(id) ON DELETE CASCADE,
+      is_starter boolean NOT NULL DEFAULT false,
 
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
@@ -86,6 +87,10 @@ export async function ensureDecksSchema() {
   await queryDatabase(`
     ALTER TABLE decks
     ADD COLUMN IF NOT EXISTS owner_user_id text REFERENCES "user"(id) ON DELETE CASCADE
+  `)
+  await queryDatabase(`
+    ALTER TABLE decks
+    ADD COLUMN IF NOT EXISTS is_starter boolean NOT NULL DEFAULT false
   `)
   await queryDatabase(`
     ALTER TABLE decks
@@ -127,6 +132,11 @@ export async function ensureDecksSchema() {
     CREATE INDEX IF NOT EXISTS decks_owner_user_id_updated_at_idx
       ON decks (owner_user_id, updated_at DESC)
       WHERE owner_user_id IS NOT NULL
+  `)
+  await queryDatabase(`
+    CREATE INDEX IF NOT EXISTS decks_starter_updated_at_idx
+      ON decks (updated_at DESC, id)
+      WHERE is_starter = true
   `)
 }
 

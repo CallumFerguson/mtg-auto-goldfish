@@ -16,7 +16,7 @@
     "server:watch": "tsx watch --include \"mtg-auto-deck-server/**/*.ts\" mtg-auto-deck-server/mtg-auto-deck-server.ts",
     "server:start": "node dist-server/mtg-auto-deck-server.js",
     "test:openrouter-agent": "node tests/openrouter-agent-square-root.mjs",
-    "test": "npm run server:build && node dist-server/llm-run-events.test.js && node dist-server/llamacpp-chat.test.js && node dist-server/simulation-results-stream.test.js && tsc -p tsconfig.stream-test.json && node node_modules/.tmp/stream-test/tests/simulation-results-stream.test.js",
+    "test": "npm run server:build && node dist-server/llm-run-events.test.js && node dist-server/llamacpp-chat.test.js && node dist-server/simulation-results-stream.test.js && node dist-server/starter-decks-postgres.test.js && tsc -p tsconfig.stream-test.json && node node_modules/.tmp/stream-test/tests/simulation-results-stream.test.js",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "preview:cloudflare": "npm run build:client && wrangler dev"

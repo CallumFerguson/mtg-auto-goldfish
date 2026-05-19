@@ -20,6 +20,7 @@ import {
   getStripeSubscriptionPlans,
   type BillingTier,
 } from "./subscription-tiers.js"
+import { copyStarterDecksForUser } from "./starter-decks-postgres.js"
 
 const PASSWORD_RESET_TOKEN_EXPIRES_IN_SECONDS = 5 * 60
 const STRIPE_API_VERSION = "2026-03-25.dahlia"
@@ -181,6 +182,35 @@ const configuredAutoAdminPromotionPlugin = {
   },
 } satisfies BetterAuthPlugin
 
+const starterDeckCopyPlugin = {
+  id: "starter-deck-copy",
+  hooks: {
+    after: [
+      {
+        matcher: (context) =>
+          context.path === "/sign-up/email" ||
+          context.path === "/admin/create-user",
+        handler: createAuthMiddleware(async (ctx) => {
+          const user = getAuthResponseUser(ctx.context.returned)
+
+          if (!user?.id) {
+            return
+          }
+
+          try {
+            await copyStarterDecksForUser(user.id)
+          } catch (error) {
+            console.error("Failed to copy starter decks for new user:", {
+              error,
+              userId: user.id,
+            })
+          }
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin
+
 export const auth = betterAuth({
   appName: "MTG Auto Deck",
   baseURL: getRequiredEnvironmentVariable("BETTER_AUTH_URL"),
@@ -244,6 +274,7 @@ export const auth = betterAuth({
     }),
     impersonationAuditLogPlugin,
     configuredAutoAdminPromotionPlugin,
+    starterDeckCopyPlugin,
     passwordChangeNotificationPlugin,
   ],
   secret: getRequiredEnvironmentVariable("BETTER_AUTH_SECRET"),
