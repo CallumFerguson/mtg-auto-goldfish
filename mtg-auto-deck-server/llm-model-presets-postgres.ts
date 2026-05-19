@@ -117,7 +117,7 @@ export async function ensureLlmModelPresetsSchema() {
     ADD COLUMN IF NOT EXISTS is_default boolean NOT NULL DEFAULT false
   `)
   await ensureLlmModelPresetConstraints()
-  await ensureLlmModelPresetImmutabilityTrigger()
+  await dropLlmModelPresetImmutabilityTrigger()
   await queryDatabase(`
     CREATE UNIQUE INDEX IF NOT EXISTS llm_model_presets_one_default_idx
       ON llm_model_presets ((is_default))
@@ -531,35 +531,13 @@ async function ensureLlmModelPresetConstraints() {
   `)
 }
 
-async function ensureLlmModelPresetImmutabilityTrigger() {
-  await queryDatabase(`
-    CREATE OR REPLACE FUNCTION prevent_llm_model_preset_immutable_update()
-    RETURNS trigger AS $$
-    BEGIN
-      IF OLD.provider IS DISTINCT FROM NEW.provider
-        OR OLD.model IS DISTINCT FROM NEW.model
-        OR OLD.reasoning_effort IS DISTINCT FROM NEW.reasoning_effort
-        OR OLD.openrouter_model_provider IS DISTINCT FROM NEW.openrouter_model_provider
-        OR OLD.input_token_cost_usd_per_million IS DISTINCT FROM NEW.input_token_cost_usd_per_million
-        OR OLD.cached_input_token_cost_usd_per_million IS DISTINCT FROM NEW.cached_input_token_cost_usd_per_million
-        OR OLD.output_token_cost_usd_per_million IS DISTINCT FROM NEW.output_token_cost_usd_per_million
-      THEN
-        RAISE EXCEPTION 'LLM model preset configuration fields are immutable';
-      END IF;
-
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-  `)
+async function dropLlmModelPresetImmutabilityTrigger() {
   await queryDatabase(`
     DROP TRIGGER IF EXISTS llm_model_presets_immutable_fields_trigger
     ON llm_model_presets
   `)
   await queryDatabase(`
-    CREATE TRIGGER llm_model_presets_immutable_fields_trigger
-    BEFORE UPDATE ON llm_model_presets
-    FOR EACH ROW
-    EXECUTE FUNCTION prevent_llm_model_preset_immutable_update()
+    DROP FUNCTION IF EXISTS prevent_llm_model_preset_immutable_update()
   `)
 }
 
